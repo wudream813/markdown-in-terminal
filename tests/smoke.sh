@@ -28,5 +28,11 @@ echo "== maths modes =="
 echo "== protocols (pty) =="
 python3 tools/pty_test.py
 
+echo "== resize =="
+python3 tools/resize_test.py "$BIN"
+
+echo "== interrupted from the outside (SIGTERM) =="
+python3 tools/panic_test.py "$BIN"
+
 echo
 echo "all smoke tests passed"

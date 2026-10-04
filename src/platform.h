@@ -17,6 +17,17 @@ bool stdout_is_tty();
 bool raw_begin(std::string* err = nullptr);
 void raw_end();
 
+// Registers a callback that runs when the process is killed from the outside:
+// SIGINT/SIGTERM/SIGHUP on POSIX, Ctrl-C/Ctrl-Break/console close/logoff on
+// Windows.  It runs in a signal/console context, so it may only use
+// plat::write_out() and similar async-signal-safe calls, and must not return.
+void set_panic_hook(void (*fn)());
+
+// Test hook: when MDT_DEBUG_SIGNAL=<ms> is set, deliver the platform's "user
+// killed us" event after that delay - SIGTERM on POSIX, a Ctrl-Break console
+// event on Windows - so the emergency restore path can be tested by a script.
+void maybe_install_debug_signal();
+
 // Current text area in cells; pixel sizes are 0 when the terminal does not
 // report them (then CSI 16 t / CSI 14 t probing fills them in).
 bool window_size(int& cols, int& rows, int& px_w, int& px_h);

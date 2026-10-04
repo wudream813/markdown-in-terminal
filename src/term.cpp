@@ -166,6 +166,11 @@ bool Terminal::init(const std::string& gfx_override) {
     fprintf(stderr, "mdt: not running on a terminal (stdin/stdout must be a tty)\n");
     return false;
   }
+  // Install the emergency restore before the terminal is modified at all, so
+  // even a signal that arrives mid-switch leaves a usable shell behind.
+  plat::set_panic_hook(&Terminal::panic_restore);
+  plat::maybe_install_debug_signal();
+
   std::string rerr;
   if (!plat::raw_begin(&rerr)) {
     fprintf(stderr, "mdt: cannot switch the terminal to raw mode (%s)\n", rerr.c_str());
@@ -270,6 +275,15 @@ void Terminal::query_capabilities(int timeout_ms) {
     inbuf_.append(resp, esc, std::string::npos);
     break;
   }
+}
+
+// Byte-for-byte the same sequence shutdown() writes, but in a static buffer so
+// it can be emitted from a signal handler.
+static const char kPanicExit[] =
+    "\x1b[?2026l\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[0m\x1b[?1049l";
+
+void Terminal::panic_restore() {
+  plat::write_out(kPanicExit, sizeof(kPanicExit) - 1);
 }
 
 void Terminal::shutdown() {

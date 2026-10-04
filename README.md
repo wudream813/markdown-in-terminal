@@ -32,6 +32,9 @@ self-contained binary.
   of disappearing. `m` toggles between typeset and plain maths live.
 * **Runs on Windows too.** The same source builds a self-contained `mdt.exe`
   with MinGW-w64 (one `make windows`); see the cross compilation section below.
+* **Leaves the terminal usable.** Normal exit, `kill`, Ctrl-C/Ctrl-Break and a
+  closed console window all hand the terminal back: alt screen off, mouse
+  reporting off, cursor shown, tty modes (termios / `SetConsoleMode`) restored.
 * Terminal abilities are probed at run time: cell size in pixels (`CSI 16 t`),
   window size (`CSI 14 t`), sixel support (DA1), kitty graphics support
   (`\x1b_Gi=…,a=q`). The em/cell ratio follows the user's real font.
@@ -99,10 +102,13 @@ sh tests/windows.sh          # text output, maths, PNG export, themes, console m
 
 `tests/windows.sh` diffs `--dump` against the native build byte for byte
 (Wine's console adds CRs, which the test strips), renders maths through the
-embedded QuickJS+MathJax engine, checks all four themes and runs
-`tools/wine_pty_test.py`, which drives the console inside a pty and asserts
-that the alt screen, mouse reporting, capability probing and the status line
-all work.
+embedded QuickJS+MathJax engine, checks all four themes and drives the console
+inside a pty (`tools/wine_pty_test.py`): alt screen, mouse reporting,
+capability probing and the status line. `tools/panic_test.py` then interrupts
+the running program and asserts that it hands the terminal back (same script
+on both platforms, exit code 143 for SIGTERM / 130 for Ctrl-Break).
+A GitHub Actions workflow (`.github/workflows/build.yml`) runs the Linux build,
+the Windows cross build and both test batteries.
 
 Checked in this repository: `x86_64-w64-mingw32` 14.2.0 + wine 10.0 —
 `--dump` output identical to the Linux build (121 lines), `--screenshot` PNG
@@ -233,6 +239,10 @@ the final geometry is exact.
   10 1703+ conhost); it turns VT processing on itself, so `cmd.exe` works too.
   Kitty/iTerm2 protocols are a POSIX-terminal thing — on Windows you get sixel
   (Windows Terminal 1.22+, WezTerm, mintty) or the Unicode maths fallback.
+* Resizes: POSIX uses SIGWINCH, Windows polls `GetConsoleScreenBufferInfo`
+  (conhost and Windows Terminal update it on resize). Wine's console reports a
+  fixed size and never follows pty resizes, so `tools/resize_test.py` skips the
+  resize steps there (`MDT_RESIZE_SKIP=1`) and CI only checks the geometry.
 
 MIT licensed. Vendored components keep their own licences
 (stb — public domain/MIT, QuickJS-NG — MIT, MathJax — Apache-2.0).

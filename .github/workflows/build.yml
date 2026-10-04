@@ -1,0 +1,55 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux (native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make -j"$(nproc)"
+      - name: Check for warnings in src/
+        run: |
+          make clean
+          make -j"$(nproc)" 2>&1 | tee build.log
+          ! grep -E "warning:|error:" build.log | grep -v "vendor/"
+      - name: Tests
+        run: sh tests/smoke.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdt-linux-x86_64
+          path: build/mdt
+
+  windows:
+    name: Windows (MinGW-w64 cross build + wine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW-w64 and wine
+        run: |
+          sudo apt-get update
+          # fonts-dejavu-core: wine ships no fonts of its own, and mdt needs
+          # one for --screenshot (tests/windows.sh seeds the wine prefix)
+          sudo apt-get install -y --no-install-recommends mingw-w64 wine64 zip file fonts-dejavu-core
+      - name: Cross compile (x86-64)
+        run: make windows -j"$(nproc)"
+      - name: Cross compile (32 bit, compile check only)
+        run: make windows32 -j"$(nproc)"
+      - name: Tests under wine
+        run: sh tests/windows.sh
+        env:
+          WINEDEBUG: "-all"
+      - name: Package
+        run: sh tools/build_windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdt-windows
+          path: |
+            release/mdt-*-win64.zip
+            build/win/mdt.exe

@@ -8,7 +8,11 @@
 // ===========================================================================
 #if !defined(_WIN32)
 
+#include <cerrno>
+#include <cstdint>
+#include <ctime>
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
@@ -23,6 +27,41 @@ namespace plat {
 static volatile sig_atomic_t g_winch = 0;
 static void on_winch(int) { g_winch = 1; }
 static struct termios* g_saved = nullptr;
+static void (*g_panic)() = nullptr;
+
+// SIGTERM/SIGHUP/SIGINT land here when mdt is killed from the outside (or the
+// terminal window is closed).  Restore the tty before dying, otherwise the
+// shell is left in raw mode with the alt screen still active.
+extern "C" void mdt_panic_handler(int sig) {
+  if (g_panic) g_panic();
+  if (g_saved) tcsetattr(STDIN_FILENO, TCSAFLUSH, g_saved);
+  _exit(128 + sig);
+}
+
+void set_panic_hook(void (*fn)()) {
+  g_panic = fn;
+  signal(SIGINT, mdt_panic_handler);
+  signal(SIGTERM, mdt_panic_handler);
+  signal(SIGHUP, mdt_panic_handler);
+  signal(SIGQUIT, mdt_panic_handler);
+}
+
+static void* debug_signal_thread(void* arg) {
+  struct timespec ts;
+  ts.tv_sec = (time_t)((intptr_t)arg / 1000);
+  ts.tv_nsec = (long)(((intptr_t)arg % 1000) * 1000000L);
+  nanosleep(&ts, nullptr);
+  raise(SIGTERM);
+  return nullptr;
+}
+
+void maybe_install_debug_signal() {
+  const char* v = getenv("MDT_DEBUG_SIGNAL");
+  if (!v || !*v) return;
+  int ms = atoi(v) > 0 ? atoi(v) : 1000;
+  pthread_t t;
+  if (pthread_create(&t, nullptr, debug_signal_thread, (void*)(intptr_t)ms) == 0) pthread_detach(t);
+}
 
 bool stdin_is_tty() { return isatty(STDIN_FILENO) == 1; }
 bool stdout_is_tty() { return isatty(STDOUT_FILENO) == 1; }
@@ -93,8 +132,12 @@ bool wait_input(int timeout_ms) {
 
 int read_input(char* buf, size_t n) {
   ssize_t r = read(STDIN_FILENO, buf, n);
-  if (r < 0) return 0;
-  return (int)r;  // 0 == EOF on POSIX
+  if (r > 0) return (int)r;
+  // Negative == closed/EOF, 0 == nothing available yet.  Reporting EOF as 0
+  // would make the event loop spin at 100% once the tty disappears.
+  if (r == 0) return -1;
+  if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+  return -1;
 }
 
 bool write_out(const char* data, size_t n) {
@@ -133,7 +176,9 @@ void system_font_dirs(std::string& windows_fonts, std::string& user_fonts) {
 
 #include <windows.h>
 
+#include <cstdint>
 #include <io.h>
+#include <process.h>
 #include <stdlib.h>
 
 #include <algorithm>
@@ -151,6 +196,56 @@ static UINT g_saved_in_cp = 0;
 static bool g_modes_saved = false;
 static int g_last_cols = 0, g_last_rows = 0;
 static bool g_have_last = false;
+static void (*g_panic)() = nullptr;
+
+// Windows calls this from a separate thread when the user hits Ctrl-C /
+// Ctrl-Break, closes the console window or logs off.  Without it the console
+// would stay in raw mode + alt screen with echo disabled.
+static bool g_panic_ran = false;
+
+static BOOL WINAPI console_ctrl_handler(DWORD type) {
+  switch (type) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+      g_panic_ran = true;
+      if (g_panic) g_panic();
+      raw_end();
+      // Ctrl-C/Ctrl-Break mean "stop": same 128+n convention as POSIX.
+      if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT) ExitProcess(130);
+      return TRUE;  // close/logoff/shutdown: Windows terminates us right after
+    default:
+      return FALSE;
+  }
+}
+
+void set_panic_hook(void (*fn)()) {
+  g_panic = fn;
+  SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
+}
+
+static DWORD WINAPI debug_signal_thread(LPVOID arg) {
+  Sleep((DWORD)(uintptr_t)arg);
+  // Ask the console for a Ctrl-Break, which is what a user pressing the key
+  // combination produces (and unlike Ctrl-C it is not swallowed by input modes).
+  GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0);
+  Sleep(500);
+  // Wine (and any host without working console events) reports success without
+  // dispatching to the handler; call it directly so the restore path is still
+  // exercised there.  On Windows this line is never reached.
+  if (!g_panic_ran) console_ctrl_handler(CTRL_BREAK_EVENT);
+  return 0;
+}
+
+void maybe_install_debug_signal() {
+  const char* v = getenv("MDT_DEBUG_SIGNAL");
+  if (!v || !*v) return;
+  DWORD ms = (DWORD)(atoi(v) > 0 ? atoi(v) : 1000);
+  HANDLE h = CreateThread(nullptr, 0, debug_signal_thread, (LPVOID)(uintptr_t)ms, 0, nullptr);
+  if (h) CloseHandle(h);
+}
 
 bool stdin_is_tty() { return _isatty(_fileno(stdin)) != 0; }
 bool stdout_is_tty() { return _isatty(_fileno(stdout)) != 0; }
@@ -180,7 +275,9 @@ bool raw_begin(std::string* err) {
   out_mode |= ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING |
               DISABLE_NEWLINE_AUTO_RETURN;
   if (!SetConsoleMode(g_in, in_mode) || !SetConsoleMode(g_out, out_mode)) {
-    if (err) *err = "cannot enable virtual terminal mode";
+    if (err)
+      *err = "cannot enable virtual terminal processing (needs Windows 10 1703+, "
+             "or Windows Terminal / WezTerm / mintty)";
     return false;
   }
   return true;
@@ -257,7 +354,9 @@ bool write_out(const char* data, size_t n) {
   HANDLE h = g_out != INVALID_HANDLE_VALUE ? g_out : GetStdHandle(STD_OUTPUT_HANDLE);
   size_t off = 0;
   while (off < n) {
-    DWORD chunk = (DWORD)std::min<size_t>(n - off, (size_t)(1 << 20));
+    // conhost refuses (or crawls on) very large console writes; 64 KB is the
+    // size its own buffered writer uses.
+    DWORD chunk = (DWORD)std::min<size_t>(n - off, (size_t)(64 * 1024));
     DWORD written = 0;
     if (!WriteFile(h, data + off, chunk, &written, nullptr) || written == 0) {
       // fall back to the CRT for redirected output

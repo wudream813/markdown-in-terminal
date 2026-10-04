@@ -115,6 +115,10 @@ class Terminal {
   // Low-level helpers
   void set_title(const std::string& t);
   void set_clipboard(const std::string& s);
+  // Emergency restore from a signal / console-control context: leaves the alt
+  // screen and gives the tty back.  Only async-signal-safe calls inside.
+  static void panic_restore();
+
   std::string enter_alt_screen();
   std::string leave_alt_screen();
 
