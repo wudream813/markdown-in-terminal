@@ -11,6 +11,11 @@ namespace mdt {
 
 enum class GfxProto { None, Kitty, Iterm2, Sixel };
 
+// Compatibility mode (--compat): no graphics, no DEC 2026 synchronized output,
+// no kitty keyboard protocol, no capability probes - for terminals whose
+// support for those is broken or half-implemented.
+void set_compat_mode(bool on);
+
 const char* gfx_name(GfxProto p);
 
 struct TermCaps {
@@ -73,6 +78,10 @@ class Screen {
   void invalidate() { force_full_ = true; }
   bool using_terminal_bg() const { return use_default_bg_; }
   void set_cursor_hidden(bool hidden) { cursor_hidden_ = hidden; }
+  // Terminals that mishandle DEC 2026 (synchronized output) can switch it off.
+  void set_sync_update(bool on) {
+    if (no_sync_update_ != !on) { no_sync_update_ = !on; force_full_ = true; }
+  }
 
  private:
   std::string emit_sgr(const Cell& c, const Cell& prev);
@@ -81,6 +90,7 @@ class Screen {
   bool force_full_ = true;
   bool cursor_hidden_ = true;
   bool use_default_bg_ = false;
+  bool no_sync_update_ = false;
   RGB def_fg_, def_bg_;
 };
 

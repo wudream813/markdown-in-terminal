@@ -36,12 +36,30 @@ self-contained binary.
   so it also works in terminals without SGR mouse mode), clicking the
   scrollbar in the right margin jumps through the document, and clicking
   links/headings/outline entries works as before.
-* **Forgiving with HTML-escaped Markdown.** Files that came out of an HTML
-  pipeline ("copy as markdown", CMS exports) arrive with every Markdown
-  character written as a character reference - `&#35;` for `#`, `&#x09;` for a
-  tab. mdt detects that shape and decodes the source before parsing, so
-  headings, bold/italic, links, lists, tables and code-block indentation come
-  back. `--entities=off` turns it off, `--entities=force` always decodes.
+* **Forgiving with generated Markdown.** Files that came out of a generator
+  instead of somebody's hands are recognised and repaired before parsing:
+  * *HTML-escaped sources* ("copy as markdown", CMS exports): every Markdown
+    character arrives as a character reference - `&#35;` for `#`, `&#x09;`
+    for a tab. `--entities=off|force` controls the decoding.
+  * *Backslash-escaped sources*: every syntax character is escaped - `\#`,
+    `\-`, `\*`, `1\.`. Detected and unescaped (double escapes such as `\\#`
+    too), so headings, lists, tables and emphasis come back.
+    `--escapes=off|force` controls it.
+  * *HTML inside a `.md` file*: `<p>`, `<h2>`, `<ul><li>`, `<table>`, `<pre>`
+    and inline tags are converted to the Markdown they stand for, including
+    `<strong>`/`<em>`/`<code>`/`<a href>`/`<img>`; prose placeholders such as
+    `<that>`, `<T>` or `a < b` are left alone.
+  * *CJK markers without the CommonMark space*: `#标题`, `-项目`, `1.项目`,
+    `>引用`. Accepted for a document that is written that way throughout and
+    that contains no space-separated marker at all (`--loose=off|on` overrides).
+  The status bar shows which repairs were applied (`+entities`, `+escapes`,
+  `+loose`).
+* **Blocks nested in list items** keep their shape: quotes keep their bar,
+  tables are drawn as a frame indented under the bullet, and any other block
+  falls back to its text instead of disappearing.
+* **Compact frame output.** Only changed cells are sent, with one cursor jump
+  per run and one SGR per style change (a heading costs one escape sequence,
+  not one per character). Nothing needs re-drawing that has not changed.
 * **Leaves the terminal usable.** Normal exit, `kill`, Ctrl-C/Ctrl-Break and a
   closed console window all hand the terminal back: alt screen off, mouse
   reporting off, cursor shown, tty modes (termios / `SetConsoleMode`) restored.
@@ -248,6 +266,10 @@ the final geometry is exact.
 | `--terminal-bg` | emit SGR 49 for the page background, so the terminal's own colour/transparency shows through |
 | `--no-scrollbar` | hide the scrollbar |
 | `--entities=auto\|off\|force` | control the HTML-entity decoding described above |
+| `--escapes=auto\|off\|force` | control the backslash-escape repair described above |
+| `--loose=auto\|off\|on` | accept `#标题` / `-项目` / `1.项目` without a space |
+| `--compat` | no graphics, no DEC 2026 synchronized output, no keyboard-protocol push, no capability probe - for terminals whose support for those is broken |
+| `--diag` | print what mdt sees of the file (encoding, escapes, block census, first characters) and of the terminal; works without a tty |
 
 ## Notes / limitations
 
@@ -257,8 +279,8 @@ the final geometry is exact.
   of a cell), kitty and iTerm2 images are placed on the baseline.
 * Reference-style links `[text][ref]` are parsed but the definitions are not
   resolved yet; `_italic_`/`**bold**` inside words follow the CommonMark rules.
-* HTML blocks are reduced to their text content, and tables inside block quotes
-  are simplified.
+* HTML blocks are converted to the Markdown they stand for; unknown tags are
+  dropped while their text is kept.
 * On Windows the reader needs a VT-capable terminal (Windows Terminal, Windows
   10 1703+ conhost); it turns VT processing on itself, so `cmd.exe` works too.
   Kitty/iTerm2 protocols are a POSIX-terminal thing — on Windows you get sixel

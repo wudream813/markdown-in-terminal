@@ -62,6 +62,8 @@ struct LinkRef {
 struct MdDocument {
   std::vector<Block> blocks;
   bool entities_unescaped = false;  // the source looked HTML-escaped and was decoded
+  int backslashes_removed = 0;      // >0 when the source looked backslash-escaped
+  bool loose_markers = false;       // "#标题" / "-项目" style markers were accepted
   std::string title;               // first h1 if present
   std::vector<LinkRef> links;      // all links in document order
   std::vector<std::pair<int, std::string>> outline;  // (block index, heading text)
@@ -69,12 +71,20 @@ struct MdDocument {
 
 struct MdOptions {
   enum Entities { EntOff = 0, EntAuto = 1, EntForce = 2 };
+  enum Escapes { EscOff = 0, EscAuto = 1, EscForce = 2 };
   int entities = EntAuto;    // decode HTML character references (see md.cpp)
+  int escapes = EscAuto;     // drop markdown backslash escapes a generator left in
   bool math = true;          // recognise $...$ / $$...$$
   bool tables = true;
   bool strikethrough = true;
   bool autolink = true;
   bool task_lists = true;
+  // CJK authors often write "#标题" / "-项目" / ">引用" without the space that
+  // CommonMark requires after the marker.  In LooseAuto the parser accepts that
+  // only for a document that uses no space-separated marker at all (see
+  // looks_unspaced_markers()).
+  enum Loose { LooseOff = 0, LooseAuto = 1, LooseOn = 2 };
+  int loose = LooseAuto;
 };
 
 class MarkdownParser {
@@ -82,6 +92,10 @@ class MarkdownParser {
   MdDocument parse(const std::string& text, const MdOptions& opt = MdOptions());
   // Parse inline markup only (used for headings in the TOC, table cells, ...).
   std::vector<Span> parse_inline(const std::string& text, int line_no = 0);
+
+ public:
+  int html_depth_ = 0;      // recursion guard for HTML -> Markdown conversion
+  bool loose_markers_ = false;  // accept "#标题" / "-项目" / "1.项目" (see MdOptions::loose)
 
  private:
   MdOptions opt_;

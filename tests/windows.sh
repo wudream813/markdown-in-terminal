@@ -86,7 +86,26 @@ done
 echo "== HTML-escaped source =="
 "$WINE" "$EXE" --dump --width=64 tests/fixtures/escaped.md 2>/dev/null | tr -d '\r' > "$TMP/escaped.txt"
 grep -q "HTML-escaped Markdown" "$TMP/escaped.txt" && echo "   heading restored"
-grep -q "\u2022 first item" "$TMP/escaped.txt" && echo "   list restored"
+grep -q "â¢ first item" "$TMP/escaped.txt" && echo "   list restored"
+
+echo "== every fixture renders identically on Windows =="
+for f in tests/fixtures/*.md; do
+  base=$(basename "$f")
+  ./build/mdt --dump --width=72 "$f" > "$TMP/nat.txt" 2>/dev/null
+  "$WINE" "$EXE" --dump --width=72 "$f" 2>/dev/null | tr -d '\r' > "$TMP/win.txt"
+  if diff -q "$TMP/nat.txt" "$TMP/win.txt" >/dev/null; then
+    echo "   $base ok"
+  else
+    echo "   $base DIFFERS:"; diff "$TMP/nat.txt" "$TMP/win.txt" | head -10; exit 1
+  fi
+done
+"$WINE" "$EXE" --dump --width=64 tests/fixtures/backslash.md 2>/dev/null | tr -d '\r' > "$TMP/bs.txt"
+grep -q "Project documentation" "$TMP/bs.txt" && echo "   backslash-escaped source restored"
+grep -q "• first step" "$TMP/bs.txt" && echo "   escaped bullets restored"
+"$WINE" "$EXE" --dump --width=64 tests/fixtures/nested-blocks.md 2>/dev/null | tr -d '\r' > "$TMP/nb.txt"
+grep -q "Col A" "$TMP/nb.txt" && echo "   table inside a list item drawn"
+"$WINE" "$EXE" --dump --width=64 tests/fixtures/cjk-loose.md 2>/dev/null | tr -d '\r' > "$TMP/cjk.txt"
+grep -q "项目说明" "$TMP/cjk.txt" && echo "   CJK markers without spaces restored"
 
 echo "== mouse + scrollbar (pty) =="
 python3 tools/mouse_test.py "$EXE" "$WINE" || exit 1

@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <cstring>
 
+#include <map>
+#include <set>
+
 namespace mdt {
 
 namespace {
@@ -108,6 +111,358 @@ bool looks_entity_escaped(const std::string& s) {
   }
   // Escaped punctuation in a line of text is a strong signal; a few &amp; are not.
   return syntax >= 3 || total >= 40;
+}
+
+
+
+// Whether a document was run through a markdown generator that escaped every
+// syntax character ("\#", "\-", "\*", "1\.") - such a file parses as one long
+// paragraph of punctuation-spotted prose, which is what the reader then shows.
+// Escaped markdown examples exist in the wild too, so the test is deliberately
+// conservative and can be switched off with --escapes=off.
+bool looks_backslash_escaped(const std::string& text) {
+  static const std::string kPunct = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+  static const std::string kSyntax = "#-*+>|`_[]()!~.";
+  int total = 0, syntax = 0, block = 0, lines_with = 0, nonblank = 0;
+  for (const std::string& ln : split_lines(text)) {
+    if (trim(ln).empty()) continue;
+    nonblank++;
+    bool has = false;
+    for (size_t i = 0; i + 1 < ln.size(); i++) {
+      if (ln[i] != '\\') continue;
+      if (kPunct.find(ln[i + 1]) == std::string::npos) continue;
+      total++;
+      has = true;
+      if (kSyntax.find(ln[i + 1]) != std::string::npos) syntax++;
+      i++;
+    }
+    if (has) lines_with++;
+    std::string t = trim(ln);
+    if (t.size() >= 2 && t[0] == '\\' && std::string("#-*+>").find(t[1]) != std::string::npos) {
+      block++;  // an escaped heading marker or bullet at the start of a line
+    } else {
+      size_t d = 0;
+      while (d < t.size() && isdigit((unsigned char)t[d])) d++;
+      if (d > 0 && d + 1 < t.size() && t[d] == '\\' && t[d + 1] == '.') block++;  // "1\. item"
+    }
+  }
+  if (block >= 2) return true;   // headings/bullets are escaped: structure is lost
+  if (syntax >= 6) return true;  // plenty of escaped syntax characters
+  if (total >= 12 && lines_with * 2 >= nonblank) return true;  // escaped line by line
+  return false;
+}
+
+// Remove the backslashes of markdown escapes (CommonMark: a backslash escapes
+// ASCII punctuation).  "\a" or a Windows path "C:\Users" is left alone.
+std::string unescape_backslashes(const std::string& s, int* removed) {
+  static const std::string kPunct = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+  std::string o;
+  o.reserve(s.size());
+  int n = 0;
+  for (size_t i = 0; i < s.size(); i++) {
+    if (s[i] == '\\' && i + 1 < s.size() && kPunct.find(s[i + 1]) != std::string::npos) {
+      i++;
+      o += s[i];
+      n++;
+      continue;
+    }
+    o += s[i];
+  }
+  if (removed) *removed = n;
+  return o;
+}
+
+// ---------------------------------------------------------------- HTML ------
+// Markdown files that came out of a web page, a word processor or a "copy as
+// markdown" tool are often HTML inside a .md file: <p>, <ul><li>, <table>,
+// <pre>, <strong>, <a href>.  Left alone they render as one dim blob (or, for
+// block level tags, as nothing at all).  The converter below turns that HTML
+// back into the Markdown it stands for, so the normal renderer applies the
+// structure, and the receiver re-parses it.
+std::string html_attr(const std::string& attrs, const char* name) {
+  std::string low = to_lower(attrs);
+  size_t p = low.find(std::string(name) + "=");
+  if (p == std::string::npos) return "";
+  size_t v = p + strlen(name) + 1;
+  if (v >= attrs.size()) return "";
+  char q = attrs[v];
+  if (q == '"' || q == '\'') {
+    size_t e = attrs.find(q, v + 1);
+    if (e == std::string::npos) return "";
+    return attrs.substr(v + 1, e - v - 1);
+  }
+  size_t e = attrs.find_first_of(" \t\r\n>", v);
+  return attrs.substr(v, e == std::string::npos ? std::string::npos : e - v);
+}
+
+// The inline stripper must not eat prose placeholders such as <that>, <T> or
+// "a <not a tag> b": only names that are actually HTML tags are treated as
+// markup, everything else stays visible.
+bool is_known_html_tag(const std::string& name) {
+  static const std::set<std::string> kTags = {
+      "a", "abbr", "address", "area", "article", "aside", "audio", "b", "base",
+      "bdi", "bdo", "blockquote", "body", "br", "button", "canvas", "caption",
+      "cite", "code", "col", "colgroup", "data", "dd", "del", "details", "dfn",
+      "dialog", "div", "dl", "dt", "em", "fieldset", "figcaption", "figure",
+      "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header",
+      "hgroup", "hr", "html", "i", "iframe", "img", "input", "ins", "kbd",
+      "label", "legend", "li", "link", "main", "map", "mark", "menu", "meta",
+      "meter", "nav", "noscript", "object", "ol", "optgroup", "option", "output",
+      "p", "picture", "pre", "progress", "q", "rp", "rt", "ruby", "s", "samp",
+      "script", "section", "select", "slot", "small", "source", "span", "strong",
+      "style", "sub", "summary", "sup", "svg", "table", "tbody", "td",
+      "template", "textarea", "tfoot", "th", "thead", "time", "title", "tr",
+      "track", "u", "ul", "var", "video", "wbr"};
+  return kTags.count(name) > 0;
+}
+
+// What follows the tag name must look like a real attribute list - name=value
+// pairs like href="x", src="y" or width=3, or nothing at all (as in <br> or
+// </em>).  Prose such as "a < b and c > d" then cannot be taken for markup,
+// because its pretend attributes have no '='.
+bool html_tag_syntax_ok(const std::string& inner) {
+  std::string t = trim(inner);
+  if (t.empty()) return false;
+  if (t[0] == '/') t = trim(t.substr(1));
+  size_t sp = t.find_first_of(" \t\r\n");
+  if (sp == std::string::npos) return true;        // <br>, </em>, <that>
+  std::string rest = t.substr(sp);
+  size_t i = 0;
+  bool any = false;
+  while (i < rest.size()) {
+    while (i < rest.size() && isspace((unsigned char)rest[i])) i++;
+    if (i >= rest.size()) break;
+    if (rest[i] == '/') { i++; continue; }         // self closing slash
+    size_t st = i;
+    while (i < rest.size() && (isalnum((unsigned char)rest[i]) || rest[i] == '-' ||
+                               rest[i] == '_' || rest[i] == ':' || rest[i] == '.')) i++;
+    if (i == st) return false;
+    while (i < rest.size() && isspace((unsigned char)rest[i])) i++;
+    if (i >= rest.size() || rest[i] != '=') return false;  // valueless: not a tag
+    i++;
+    while (i < rest.size() && isspace((unsigned char)rest[i])) i++;
+    if (i < rest.size() && (rest[i] == '"' || rest[i] == '\'')) {
+      char q = rest[i++];
+      while (i < rest.size() && rest[i] != q) i++;
+      if (i >= rest.size()) return false;
+      i++;
+    } else {
+      size_t vs = i;
+      while (i < rest.size() && !isspace((unsigned char)rest[i])) i++;
+      if (i == vs) return false;
+    }
+    any = true;
+  }
+  return any;
+}
+
+// One inline tag -> the markdown equivalent ("" when it carries no meaning).
+std::string html_inline_tag(const std::string& tag) {
+  std::string low = to_lower(trim(tag));
+  bool closing = !low.empty() && low[0] == '/';
+  std::string name = closing ? trim(low.substr(1)) : low;
+  std::string attrs;
+  size_t sp = name.find_first_of(" \t\r\n/");
+  if (sp != std::string::npos) { attrs = name.substr(sp); name = name.substr(0, sp); }
+  static std::map<std::string, const char*> kMap = {
+      {"strong", "**"}, {"b", "**"}, {"em", "*"}, {"i", "*"}, {"del", "~~"},
+      {"s", "~~"}, {"strike", "~~"}, {"code", "`"}, {"u", ""}, {"span", ""},
+      {"sup", "~"}, {"sub", "~"}, {"br", "\n"}, {"hr", "\n---\n"},
+      {"mark", ""}, {"kbd", "`"}, {"var", "*"}, {"cite", "*"}, {"q", "\""},
+  };
+  auto it = kMap.find(name);
+  if (it != kMap.end()) return it->second;
+  if (name == "a") {
+    if (closing) return "";
+    std::string href = html_attr(attrs, "href");
+    return "[";
+  }
+  if (name == "img") {
+    std::string src = html_attr(attrs, "src");
+    std::string alt = html_attr(attrs, "alt");
+    if (src.empty()) return "";
+    return "![" + alt + "](" + src + ")";
+  }
+  return "";  // unknown tag: drop it, keep the text
+}
+
+std::string html_to_markdown(const std::string& html) {
+  std::string out;
+  std::string href, alt, img_src;
+  bool in_pre = false;
+  bool pre_skip_nl = false;  // swallow the newline right after <pre>
+  size_t i = 0;
+  int list_depth = 0;
+  std::vector<int> list_count;
+  std::vector<char> list_kind;  // 'u' = <ul>, 'o' = <ol>
+  int row_cells = 0, first_row_cells = 0;
+
+  // collapse runs of whitespace but KEEP one leading/trailing space, so that
+  // "with <strong>bold</strong> and" does not become "withboldand".
+  auto collapse_text = [](const std::string& s2) {
+    std::string o; bool sp = false;
+    for (unsigned char c2 : s2) {
+      if (c2 == ' ' || c2 == '\t' || c2 == '\n' || c2 == '\r') sp = true;
+      else { if (sp) o += ' '; sp = false; o += (char)c2; }
+    }
+    if (sp) o += ' ';
+    return o;
+  };
+  // drop spaces/tabs left dangling at the end of the current output line
+  auto rtrim_line = [&]() {
+    size_t nl = out.find_last_of('\n');
+    size_t start = (nl == std::string::npos) ? 0 : nl + 1;
+    size_t e2 = out.size();
+    while (e2 > start && (out[e2 - 1] == ' ' || out[e2 - 1] == '\t' || out[e2 - 1] == '\r')) e2--;
+    out.erase(e2);
+  };
+  auto ends_blank = [&]() {
+    size_t n = 0;
+    while (n < out.size() && out[out.size() - 1 - n] == '\n') n++;
+    return n >= 2;
+  };
+  auto blank = [&]() {
+    rtrim_line();
+    if (out.empty()) return;
+    if (out.back() != '\n') out += "\n";
+    if (!ends_blank()) out += "\n";
+  };
+  auto soft = [&]() {
+    rtrim_line();
+    if (!out.empty() && out.back() != '\n') out += "\n";
+  };
+
+  while (i < html.size()) {
+    if (html[i] != '<') {
+      std::string chunk;
+      while (i < html.size() && html[i] != '<') chunk += html[i++];
+      if (in_pre) {
+        if (pre_skip_nl) {
+          pre_skip_nl = false;
+          size_t k = 0;
+          while (k < chunk.size() && (chunk[k] == '\n' || chunk[k] == '\r' || chunk[k] == ' ' || chunk[k] == '\t')) k++;
+          chunk = chunk.substr(k);
+        }
+        out += decode_entities(chunk);
+      }
+      else out += collapse_text(chunk);  // HTML collapses whitespace
+      continue;
+    }
+    if (html.compare(i, 4, "<!--") == 0) {  // comment
+      size_t e = html.find("-->", i);
+      i = (e == std::string::npos) ? html.size() : e + 3;
+      continue;
+    }
+    size_t e = html.find('>', i);
+    if (e == std::string::npos) { out += decode_entities(html.substr(i)); break; }
+    std::string raw = html.substr(i + 1, e - i - 1);
+    i = e + 1;
+    std::string low = to_lower(trim(raw));
+    bool closing = !low.empty() && low[0] == '/';
+    std::string name = closing ? trim(low.substr(1)) : low;
+    std::string attrs;
+    size_t sp = name.find_first_of(" \t\r\n/");
+    if (sp != std::string::npos) { attrs = name.substr(sp); name = name.substr(0, sp); }
+
+    if (name == "script" || name == "style") {  // drop contents outright
+      if (!closing) {
+        std::string close = "</" + name;
+        size_t c = to_lower(html).find(close, i);
+        i = (c == std::string::npos) ? html.size() : c;
+      }
+      continue;
+    }
+    if (in_pre) {
+      if (name == "pre" && closing) { out += "\n```\n"; in_pre = false; }
+      else if (name == "br") out += "\n";
+      // everything else inside <pre> is literal text
+      continue;
+    }
+    if (name == "pre") {
+      if (!closing) { blank(); out += "```\n"; in_pre = true; pre_skip_nl = true; }
+      continue;
+    }
+    if (name.size() == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6') {
+      if (closing) blank();
+      else { blank(); out += std::string((size_t)(name[1] - '0'), '#') + " "; }
+      continue;
+    }
+    if (name == "p" || name == "div" || name == "section" || name == "article" ||
+        name == "header" || name == "footer" || name == "blockquote") {
+      if (name == "blockquote") {
+        if (!closing) { blank(); out += "> "; }
+        else blank();
+      } else if (closing) blank();
+      else blank();
+      continue;
+    }
+    if (name == "ul" || name == "ol") {
+      if (closing) {
+        if (list_depth > 0) list_depth--;
+        if (!list_count.empty()) list_count.pop_back();
+        if (!list_kind.empty()) list_kind.pop_back();
+        blank();
+      } else {
+        blank();
+        list_depth++;
+        list_count.push_back(0);
+        list_kind.push_back(name == "ol" ? 'o' : 'u');
+      }
+      continue;
+    }
+    if (name == "li") {
+      if (closing) { soft(); continue; }
+      soft();
+      std::string indent((size_t)std::max(0, list_depth - 1) * 2, ' ');
+      bool ordered = !list_kind.empty() && list_kind.back() == 'o';
+      if (ordered) {
+        int n = ++list_count.back();
+        out += indent + std::to_string(n) + ". ";
+      } else {
+        out += indent + "- ";
+      }
+      continue;
+    }
+    if (name == "table") { blank(); continue; }
+    if (name == "tr") {
+      if (!closing) { soft(); out += "|"; row_cells = 0; }
+      else {
+        out += "\n";
+        if (first_row_cells == 0) {
+          first_row_cells = row_cells;
+          for (int c = 0; c < first_row_cells; c++) out += "| --- ";
+          out += "|\n";
+        }
+      }
+      continue;
+    }
+    if (name == "td" || name == "th") {
+      if (closing) out += " |";
+      else { out += " "; row_cells++; }
+      continue;
+    }
+    if (name == "br") { out += "\n"; continue; }
+    if (name == "hr") { blank(); out += "---"; blank(); continue; }
+    if (name == "strong" || name == "b") { out += "**"; continue; }
+    if (name == "em" || name == "i") { out += "*"; continue; }
+    if (name == "del" || name == "s" || name == "strike") { out += "~~"; continue; }
+    if (name == "code") { out += "`"; continue; }
+    if (name == "a") {
+      if (closing) out += href.empty() ? "" : ("](" + href + ")");
+      else { href = html_attr(attrs, "href"); out += "["; }
+      continue;
+    }
+    if (name == "img") {
+      std::string src = html_attr(attrs, "src");
+      std::string a = html_attr(attrs, "alt");
+      if (!src.empty()) out += "![" + a + "](" + src + ")";
+      continue;
+    }
+    if (name == "sup" || name == "sub") { out += "~"; continue; }
+    // unknown tag: drop it, keep the text
+  }
+  if (in_pre) out += "\n```\n";
+  return decode_entities(out);
 }
 
 }  // namespace
@@ -429,10 +784,49 @@ struct InlineParser {
             i = e + 1;
             continue;
           }
-          // inline HTML: strip tags
-          bool looks_tag = !inner.empty() && (isalpha((unsigned char)inner[0]) || inner[0] == '/' || inner[0] == '!');
+          // inline HTML: turn the tag into the markdown it stands for, so
+          // <strong>, <em>, <code>, <a href>, <img> and <br> keep their meaning.
+          bool looks_tag = false;
+          {
+            std::string t2 = trim(inner);
+            bool cl = !t2.empty() && t2[0] == '/';
+            std::string nm = cl ? trim(t2.substr(1)) : t2;
+            size_t sp0 = nm.find_first_of(" \t\r\n/");
+            if (sp0 != std::string::npos) nm = nm.substr(0, sp0);
+            nm = to_lower(nm);
+            if (t2.rfind("!--", 0) == 0) looks_tag = true;
+            else if (!nm.empty() && is_known_html_tag(nm) && inner.find('<') == std::string::npos &&
+                     html_tag_syntax_ok(inner)) looks_tag = true;
+          }
           if (looks_tag) {
-            i = e + 1;
+            std::string tag_md;
+            // Prefer converting the whole <tag>...</tag> pair at once: that is
+            // the only way an <a href="..."> keeps its target.
+            std::string low = to_lower(inner);
+            bool closing = !low.empty() && low[0] == '/';
+            std::string name = closing ? trim(low.substr(1)) : low;
+            size_t sp2 = name.find_first_of(" \t\r\n/");
+            if (sp2 != std::string::npos) name = name.substr(0, sp2);
+            static const char* kPair[] = {"a", "strong", "b", "em", "i", "code", "kbd",
+                                          "del", "s", "strike", "span", "u", "sup", "sub"};
+            bool pairable = false;
+            for (const char* pn : kPair) if (name == pn) { pairable = true; break; }
+            if (!closing && pairable) {
+              std::string close = "</" + name;
+              size_t c = to_lower(s).find(close, i);
+              if (c != std::string::npos && c - i < 4000) {
+                size_t ce = s.find('>', c);
+                if (ce != std::string::npos) {
+                  tag_md = html_to_markdown(s.substr(i, ce + 1 - i));
+                  i = ce + 1;
+                }
+              }
+            }
+            if (tag_md.empty()) { tag_md = html_inline_tag(inner); i = e + 1; }
+            // an inline fragment must stay on one line
+            std::string flat;
+            for (char ch2 : tag_md) flat += (ch2 == '\n') ? ' ' : ch2;
+            buf += collapse_ws(flat);
             continue;
           }
         }
@@ -534,13 +928,69 @@ bool is_hr_line(const std::string& line) {
   }
   return count >= 3;
 }
-int heading_level(const std::string& line, std::string& text) {
+// True for a character that starts a CJK word: ideographs, kana, Hangul,
+// fullwidth forms - the scripts whose writers drop the space after a marker.
+bool is_cjk_lead(uint32_t cp) {
+  return (cp >= 0x2E80 && cp <= 0x9FFF) || (cp >= 0xAC00 && cp <= 0xD7AF) ||
+         (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0xFF00 && cp <= 0xFFEF) ||
+         (cp >= 0x3000 && cp <= 0x303F);
+}
+
+// "##标题", "-项目", ">引用", "1.项目": a block marker with no space behind it,
+// used in a document that never uses the CommonMark spelling.
+bool looks_unspaced_markers(const std::string& text) {
+  int unspaced = 0, spaced = 0;
+  for (const std::string& raw : split_lines(text)) {
+    std::string t = ltrim(raw);
+    if (t.empty()) continue;
+    uint32_t cp = 0;
+    bool marker = false, space_after = false;
+    if (t[0] == '#') {
+      size_t h = 0;
+      while (h < t.size() && t[h] == '#') h++;
+      if (h <= 6 && h < t.size()) {
+        marker = true;
+        size_t k = h;
+        cp = utf8_next(t, k);
+        space_after = (t[h] == ' ' || t[h] == '\t');
+      }
+    } else if (t[0] == '-' || t[0] == '*' || t[0] == '+' || t[0] == '>') {
+      if (t.size() > 1) {
+        marker = true;
+        size_t k = 1;
+        cp = utf8_next(t, k);
+        space_after = (t[1] == ' ' || t[1] == '\t');
+      }
+    } else if (isdigit((unsigned char)t[0])) {
+      size_t d = 0;
+      while (d < t.size() && isdigit((unsigned char)t[d])) d++;
+      if (d < t.size() && (t[d] == '.' || t[d] == ')') && d + 1 < t.size()) {
+        marker = true;
+        size_t k = d + 1;
+        cp = utf8_next(t, k);
+        space_after = (t[d + 1] == ' ' || t[d + 1] == '\t');
+      }
+    }
+    if (!marker) continue;
+    if (space_after) spaced++;
+    else if (is_cjk_lead(cp)) unspaced++;
+  }
+  // Only a document that is consistently written that way, and that would
+  // otherwise come out as flat prose, is reinterpreted.
+  return unspaced >= 3 && spaced == 0;
+}
+
+int heading_level(const std::string& line, std::string& text, bool loose = false) {
   size_t i = 0;
   while (i < line.size() && line[i] == ' ') i++;
   size_t h = 0;
   while (i + h < line.size() && line[i + h] == '#') h++;
   if (h == 0 || h > 6) return 0;
-  if (i + h < line.size() && line[i + h] != ' ' && line[i + h] != '\t') return 0;
+  if (i + h < line.size() && line[i + h] != ' ' && line[i + h] != '\t') {
+    if (!loose || i + h >= line.size()) return 0;
+    size_t k = i + h;
+    if (!is_cjk_lead(utf8_next(line, k))) return 0;  // "#标题" but not "#hashtag"
+  }
   text = trim(line.substr(i + h));
   while (!text.empty() && text.back() == '#') text.pop_back();
   text = trim(text);
@@ -552,6 +1002,7 @@ bool MarkdownParser::is_list_item(const std::string& line, size_t indent, bool* 
                                   size_t* marker_len) {
   size_t i = indent;
   if (i >= line.size()) return false;
+  bool loose = loose_markers_;  // "#标题"/"-项目" style documents (see md.cpp top)
   char c = line[i];
   if (c == '-' || c == '*' || c == '+') {
     if (i + 1 < line.size() && (line[i + 1] == ' ' || line[i + 1] == '\t')) {
@@ -559,6 +1010,15 @@ bool MarkdownParser::is_list_item(const std::string& line, size_t indent, bool* 
       *num = 0;
       *marker_len = 2;
       return true;
+    }
+    if (loose && i + 1 < line.size()) {
+      size_t k = i + 1;
+      if (is_cjk_lead(utf8_next(line, k))) {  // "-项目"
+        *ordered = false;
+        *num = 0;
+        *marker_len = 1;
+        return true;
+      }
     }
     return false;
   }
@@ -571,6 +1031,15 @@ bool MarkdownParser::is_list_item(const std::string& line, size_t indent, bool* 
       *num = atoi(line.substr(i, j - i).c_str());
       *marker_len = j - i + 2;
       return true;
+    }
+    if (loose && j < line.size() && (line[j] == '.' || line[j] == ')') && j + 1 < line.size()) {
+      size_t k = j + 1;
+      if (is_cjk_lead(utf8_next(line, k))) {  // "1.项目"
+        *ordered = true;
+        *num = atoi(line.substr(i, j - i).c_str());
+        *marker_len = j - i + 1;
+        return true;
+      }
     }
     return false;
   }
@@ -650,7 +1119,7 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
     // ----------------------------------------------------------- headings --
     {
       std::string text;
-      int lv = heading_level(line, text);
+      int lv = heading_level(line, text, loose_markers_);
       if (lv > 0) {
         b.type = Block::Heading;
         b.level = lv;
@@ -717,6 +1186,7 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
       b.src_line = src_start + 1;
       MarkdownParser sub;
       sub.opt_ = opt_;
+      sub.loose_markers_ = loose_markers_;
       sub.lines_ = inner;
       sub.src_ = src_;
       sub.doc_ = doc_;
@@ -752,8 +1222,11 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
           int n2 = 0;
           size_t m2 = 0;
           size_t ind2 = indent_of(l2);
-          bool is_item = ind2 <= ind + 1 && is_list_item(l2, ind2, &o2, &n2, &m2) && o2 == ordered;
-          if (is_item && ind2 <= ind + 1) {
+          bool any_item = ind2 <= ind + 1 && is_list_item(l2, ind2, &o2, &n2, &m2);
+          // "- a" followed by "1. b" is a new list, not a lazy continuation
+          if (any_item && o2 != ordered) break;
+          bool is_item = any_item;
+          if (is_item) {
             // new item
             std::vector<std::string> item_lines;
             std::string first = l2.substr(ind2 + m2);
@@ -783,7 +1256,9 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
               }
               size_t ni = indent_of(l3);
               bool o3 = false; int n3 = 0; size_t m3 = 0;
-              if (ni <= ind + 1 && is_list_item(l3, ni, &o3, &n3, &m3) && o3 == ordered) break;
+              // Any item marker at this level ends the current item - including
+              // one of the other kind ("- a" then "1. b" starts a new list).
+              if (ni <= ind + 1 && is_list_item(l3, ni, &o3, &n3, &m3)) break;
               if (ni < ind + 2 && ni > 0) break;
               // strip the item indentation
               size_t strip = std::min(l3.size(), std::max(ind + m2, (size_t)1));
@@ -931,6 +1406,26 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
             // HTML comments are not shown
             continue;
           }
+          // Reduce the HTML to the Markdown it stands for (<h2> -> ##, <li> ->
+          // "- ", <table> -> pipe table, <strong> -> **, <a href> -> link, ...)
+          // and parse that, so the document keeps its structure.  Recursion is
+          // bounded in case the conversion produces another HTML block.
+          if (html_depth_ < 3) {
+            std::string md = html_to_markdown(b.code);
+            if (getenv("MDT_DEBUG_HTML"))
+              fprintf(stderr, "[mdt] html block -> markdown:\n<<<%s>>>\n", md.c_str());
+            if (!trim(md).empty()) {
+              MarkdownParser sub;
+              sub.html_depth_ = html_depth_ + 1;
+              sub.loose_markers_ = loose_markers_;
+              MdDocument sub_doc = sub.parse(md);
+              for (auto& sb : sub_doc.blocks) {
+                if (sb.src_line == 0) sb.src_line = b.src_line;
+                blocks.push_back(std::move(sb));
+              }
+              continue;
+            }
+          }
           blocks.push_back(b);
           continue;
         }
@@ -947,7 +1442,10 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
         std::string t = ltrim(l2);
         if (!para.empty()) {
           if (indent_of(l2) <= 3 && (t.rfind("```", 0) == 0 || t.rfind("~~~", 0) == 0)) break;
-          if (indent_of(l2) <= 3 && !t.empty() && t[0] == '#') { std::string dummy; if (heading_level(l2, dummy) > 0) break; }
+          if (indent_of(l2) <= 3 && !t.empty() && t[0] == '#') {
+            std::string dummy;
+            if (heading_level(l2, dummy, loose_markers_) > 0) break;
+          }
           if (trim(l2)[0] == '>') break;
           if (is_hr_line(l2)) break;
           size_t ind2 = indent_of(l2);
@@ -997,6 +1495,7 @@ void collect_links(const Block& b, std::vector<LinkRef>& out) {
 
 MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) {
   opt_ = opt;
+  (void)0;
   // Un-escape HTML-escaped sources before anything looks at the characters.
   std::string src = text;
   bool unescaped = false;
@@ -1013,10 +1512,22 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
       }
     }
   }
+  // Markdown generators (pandoc --to=markdown inside HTML, "copy as markdown"
+  // tools, some exporters) escape every syntax character.  Undo that before the
+  // block parser runs, otherwise a perfectly structured document reads as prose
+  // with literal "_" and "#" in it.
+  int backslashes_removed = 0;
+  if (opt_.escapes != MdOptions::EscOff &&
+      (opt_.escapes == MdOptions::EscForce || looks_backslash_escaped(src))) {
+    int removed = 0;
+    std::string next = unescape_backslashes(src, &removed);
+    if (removed > 0) { src = next; backslashes_removed = removed; }
+  }
   MdDocument doc;
   doc_ = &doc;
   (void)doc_;
   doc.entities_unescaped = unescaped;
+  doc.backslashes_removed = backslashes_removed;
   // normalise line endings and expand tabs
   std::string norm;
   norm.reserve(src.size());
@@ -1029,6 +1540,21 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
   lines_.push_back("");  // sentinel
   li_ = 0;
   doc.blocks = parse_blocks(0);
+  // A document whose markers are written without the CommonMark space ("#标题",
+  // "-项目") parses as flat prose.  When nothing was recognised as a heading
+  // and the whole file is written that way, parse it again leniently.
+  if (opt_.loose != MdOptions::LooseOff) {
+    bool has_heading = false;
+    for (auto& b : doc.blocks)
+      if (b.type == Block::Heading) { has_heading = true; break; }
+    if (!has_heading &&
+        (opt_.loose == MdOptions::LooseOn || looks_unspaced_markers(src))) {
+      loose_markers_ = true;
+      li_ = 0;
+      doc.blocks = parse_blocks(0);
+      doc.loose_markers = true;
+    }
+  }
 
   // collect outline + links + title
   for (size_t i = 0; i < doc.blocks.size(); i++) {

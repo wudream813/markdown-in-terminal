@@ -154,21 +154,31 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
   for (const Line& l : bl.lines) {
     if (l.kind != Line::Table || l.cells.empty()) continue;
     int yy = y0 + bl.row + l.row;
+    int lx = x0 + l.x;  // nested tables start further right
+    if (l.code_index == 3) {  // rule under the header row
+      scr.put(lx, yy, 0x251C, theme_.table_border, theme_.bg);
+      for (auto& tc : l.cells) {
+        border_run(lx + 1 + tc.x, yy, tc.width, 0x2500);
+        scr.put(lx + 1 + tc.x + tc.width, yy, 0x253C, theme_.table_border, theme_.bg);
+      }
+      scr.put(lx + 1 + l.cells.back().x + l.cells.back().width, yy, 0x2524, theme_.table_border, theme_.bg);
+      continue;
+    }
     if (l.code_index == 0 || l.code_index == 2) {  // top / bottom border
       uint32_t l_c = l.code_index == 0 ? 0x250C : 0x2514;
       uint32_t m_c = l.code_index == 0 ? 0x252C : 0x2534;
       uint32_t r_c = l.code_index == 0 ? 0x2510 : 0x2518;
-      scr.put(x0, yy, l_c, theme_.table_border, theme_.bg);
+      scr.put(lx, yy, l_c, theme_.table_border, theme_.bg);
       for (auto& tc : l.cells) {
-        border_run(x0 + 1 + tc.x, yy, tc.width, 0x2500);
-        scr.put(x0 + 1 + tc.x + tc.width, yy, m_c, theme_.table_border, theme_.bg);
+        border_run(lx + 1 + tc.x, yy, tc.width, 0x2500);
+        scr.put(lx + 1 + tc.x + tc.width, yy, m_c, theme_.table_border, theme_.bg);
       }
-      scr.put(x0 + 1 + l.cells.back().x + l.cells.back().width, yy, r_c, theme_.table_border, theme_.bg);
+      scr.put(lx + 1 + l.cells.back().x + l.cells.back().width, yy, r_c, theme_.table_border, theme_.bg);
       continue;
     }
     // content row
     for (const TCell& tc : l.cells) {
-      int x = x0 + 1 + tc.x;
+      int x = lx + 1 + tc.x;
       RGB border = theme_.table_border;
       RGB fg = tc.header ? theme_.table_header_fg : theme_.fg;
       RGB bg = (tc.header && !theme_.flat_bg) ? theme_.table_header_bg : theme_.bg;
@@ -181,18 +191,6 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
       else if (off > 0) off = off;  // keep some breathing room on the left
       scr.put_str(x + off, yy, tc.text, fg, bg, tc.header ? A_BOLD : 0);
       scr.put(x + tc.width, yy, 0x2502, border, theme_.bg);
-    }
-    // separator under the header row
-    if (l.cells[0].header) {
-      int sy2 = yy + 1;
-      if (sy2 < y0 + bl.row + bl.rows) {
-        scr.put(x0, sy2, 0x251C, theme_.table_border, theme_.bg);
-        for (auto& tc : l.cells) {
-          border_run(x0 + 1 + tc.x, sy2, tc.width, 0x2500);
-          scr.put(x0 + 1 + tc.x + tc.width, sy2, 0x253C, theme_.table_border, theme_.bg);
-        }
-        scr.put(x0 + 1 + l.cells.back().x + l.cells.back().width, sy2, 0x2524, theme_.table_border, theme_.bg);
-      }
     }
   }
 }
@@ -216,6 +214,14 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
       for (auto& l : bl.lines) { for (auto& r : l.runs) if (r.img >= 0) imgs++; }
       fprintf(stderr, "block %d row=%d rows=%d lines=%zu runs_with_img=%d type=%d\n",
               bl.block, bl.row, bl.rows, bl.lines.size(), imgs, (int)doc_.blocks[bl.block].type);
+      if (getenv("MDT_DEBUG_LINES"))
+        for (size_t k = 0; k < bl.lines.size(); k++) {
+          const Line& dl = bl.lines[k];
+          std::string dt;
+          for (auto& dr : dl.runs) dt += "[" + std::to_string(dr.x) + ":" + dr.text + "]";
+          fprintf(stderr, "  line %zu kind=%d row=%d bar=%d x=%d cells=%zu %s\n", k, (int)dl.kind,
+                  dl.row, dl.bar, dl.x, dl.cells.size(), dt.c_str());
+        }
     }
     for (size_t i = 0; i < assets_.size(); i++)
       fprintf(stderr, "asset %zu %s %dx%d px cols=%d rows=%d baseline=%.1f\n", i,
@@ -230,10 +236,11 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
     if (bl.row >= scroll_row + h) break;
     const Block& b = doc_.blocks[(size_t)bl.block];
 
-    if (b.type == Block::Table) {
-      draw_table(scr, x0, y0 - scroll_row, w, h, bl);
-      continue;
-    }
+    // Tables can also be nested inside list items and quotes, so the decision
+    // follows the lines, not the block type.  A block may hold both table lines
+    // and ordinary ones (a list item with a table in it), hence no `continue`.
+    for (const Line& l : bl.lines)
+      if (l.kind == Line::Table) { draw_table(scr, x0, y0 - scroll_row, w, h, bl); break; }
     if (b.type == Block::CodeBlock) {
       draw_code_block(scr, x0, y0 - scroll_row, w, h, bl);
       continue;

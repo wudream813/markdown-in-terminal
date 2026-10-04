@@ -21,6 +21,9 @@ const char* gfx_name(GfxProto p) {
 
 static void wout(const std::string& s) { plat::write_out(s.data(), s.size()); }
 
+static bool g_compat = false;
+void set_compat_mode(bool on) { g_compat = on; }
+
 // ============================================================ Screen ========
 void Screen::init(int w, int h, RGB fg, RGB bg) {
   def_fg_ = fg; def_bg_ = bg;
@@ -99,7 +102,9 @@ std::string Screen::emit_sgr(const Cell& c, const Cell& prev) {
   std::string out;
   uint8_t need = c.attr ^ prev.attr;
   bool color_changed = c.fg != prev.fg || c.bg != prev.bg;
-  if (!color_changed && need == 0 && !(c.attr & (A_BOLD | A_DIM | A_ITALIC))) return out;
+  // Nothing changed relative to the state we believe the terminal is in: the
+  // caller forces a fresh SGR after every cursor jump, so silence is safe here.
+  if (!color_changed && need == 0) return out;
   out += "\x1b[0";
   if (c.attr & A_BOLD) out += ";1";
   if (c.attr & A_DIM) out += ";2";
@@ -122,37 +127,58 @@ std::string Screen::render_full() {
 std::string Screen::render_diff() {
   std::string out;
   out.reserve((size_t)w_ * h_ / 2);
-  out += "\x1b[?2026h";  // synchronized output
-  bool cursor_at = false;
-  int cx = 0, cy = 0;
+  if (!no_sync_update_) out += "\x1b[?2026h";  // synchronized output
+  // Where the terminal's cursor and SGR state are believed to be.  After a jump
+  // both are unknown, so the next cell re-emits position and style.
+  int cx = -1, cy = -1;
   Cell cur;
   cur.fg = def_fg_; cur.bg = def_bg_;
-  bool first = true;
   for (int y = 0; y < h_; y++) {
+    // Bounds of the changed cells in this row: clean rows cost nothing at all.
+    int x0 = -1, x1 = -1;
     for (int x = 0; x < w_; x++) {
+      if (force_full_ || !(cells_[(size_t)y * w_ + x] == prev_[(size_t)y * w_ + x])) {
+        if (x0 < 0) x0 = x;
+        x1 = x;
+      }
+    }
+    if (x0 < 0) continue;
+    int run_cells = 0;
+    for (int x = x0; x <= x1; x++) {
       const Cell& c = cells_[(size_t)y * w_ + x];
-      const Cell& p = prev_[(size_t)y * w_ + x];
-      if (!force_full_ && first == false && c == p) { cursor_at = false; continue; }
-      if (!cursor_at || cx != x || cy != y) {
-        if (x == 0) out += fmt("\x1b[%d;1H", y + 1);
-        else out += fmt("\x1b[%d;%dH", y + 1, x + 1);
-        cursor_at = true; cx = x; cy = y;
+      if (!force_full_ && c == prev_[(size_t)y * w_ + x]) continue;
+      if (c.cp == 0) {  // right half of a wide char: its left half draws it
+        cx = x + 1;
+        cy = y;
+        continue;
       }
-      out += emit_sgr(c, cur);
+      if (cx != x || cy != y) {  // one cursor jump per run instead of per cell
+        out += fmt(x == 0 ? "\x1b[%d;1H" : "\x1b[%d;%dH", y + 1, x + 1);
+        cx = x; cy = y;
+        cur.attr = 0xFF;  // style unknown after a jump: force one SGR
+        cur.fg = c.fg; cur.bg = c.bg;
+        out += emit_sgr(c, cur);
+        cur = c;
+        out += utf8_encode(c.cp == 0 ? ' ' : c.cp);
+        cx += std::max(1, cp_width(c.cp));
+        continue;
+      }
+      out += emit_sgr(c, cur);  // "" when the style already matches
       cur = c;
-      if (c.cp == 0) {  // right half of a wide char already emitted
-        cx++; continue;
-      }
       out += utf8_encode(c.cp == 0 ? ' ' : c.cp);
       cx += std::max(1, cp_width(c.cp));
+      // A long run is re-anchored now and then: if the terminal is narrower
+      // than its reported size, a run can never drift far from its column.
+      if (++run_cells >= 64) { run_cells = 0; cx = -1; cy = -1; }
     }
   }
   if (!cursor_hidden_) out += "\x1b[?25h"; else out += "\x1b[?25l";
-  out += "\x1b[?2026l";
+  if (!no_sync_update_) out += "\x1b[?2026l";
   prev_ = cells_;
   force_full_ = false;
   return out;
 }
+
 
 // ======================================================== Terminal ==========
 bool Terminal::init(const std::string& gfx_override) {
@@ -183,7 +209,7 @@ bool Terminal::init(const std::string& gfx_override) {
 
   wout("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H");  // alt screen
   wout("\x1b[?1000h\x1b[?1006h");              // mouse: wheel + SGR coords
-  wout("\x1b[>1u");                            // kitty keyboard (best effort)
+  if (!g_compat) wout("\x1b[>1u");             // kitty keyboard (best effort)
 
   handle_resize();
   query_capabilities(350);
@@ -211,6 +237,7 @@ bool Terminal::init(const std::string& gfx_override) {
 }
 
 void Terminal::query_capabilities(int timeout_ms) {
+  if (g_compat) return;  // probing upsets some terminals, and we do not need it
   // Ask for cell size (16t), window size (14t), DA1 (c), kitty graphics support (a=q).
   std::string q;
   q += "\x1b[16t";        // cell size in pixels  -> CSI 6 ; h ; w t

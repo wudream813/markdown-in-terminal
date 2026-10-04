@@ -96,6 +96,7 @@ struct App {
   bool show_scrollbar = true;
   bool terminal_bg = false;
   bool scrollbar_active = false;   // set while drawing; used for hit testing
+  Screen scr;
 
   void set_status(const std::string& s, double secs = 3.0) {
     status_msg = s;
@@ -126,6 +127,12 @@ bool App::load_file(const std::string& path, std::string* err) {
   mo.entities = opt.entities == "off"      ? MdOptions::EntOff
                 : opt.entities == "force"  ? MdOptions::EntForce
                                            : MdOptions::EntAuto;
+  mo.escapes = opt.escapes == "off"      ? MdOptions::EscOff
+             : opt.escapes == "force"    ? MdOptions::EscForce
+                                         : MdOptions::EscAuto;
+  mo.loose = opt.loose == "off"      ? MdOptions::LooseOff
+           : opt.loose == "on"       ? MdOptions::LooseOn
+                                     : MdOptions::LooseAuto;
   MarkdownParser parser;
   MdDocument doc = parser.parse(text, mo);
   view.set_width(view_cols());
@@ -204,7 +211,7 @@ void App::jump_to_next_hit(int dir) {
 // ------------------------------------------------------------- rendering ----
 void App::render() {
   int vcols = view_cols(), vrows = view_rows();
-  static Screen scr;
+  Screen& scr = this->scr;
   if (scr.width() != vcols || scr.height() != term.caps.rows)
     scr.init(vcols, term.caps.rows, theme.fg, theme.bg);
   scr.set_terminal_bg(terminal_bg);
@@ -302,6 +309,8 @@ void App::render() {
   if (block >= 0 && block < (int)view.doc().blocks.size()) src_line = view.doc().blocks[(size_t)block].src_line;
   std::string engine = math.has_js() ? "katex" : "unicode";
   if (view.doc().entities_unescaped) engine += " +entities";
+  if (view.doc().backslashes_removed > 0) engine += " +escapes";
+  if (view.doc().loose_markers) engine += " +loose";
   std::string msg = status_msg;
   if (now_ms() > status_until) msg.clear();
   std::string text;
@@ -499,6 +508,7 @@ void App::run() {
 // ---------------------------------------------------------- non interactive -
 static bool render_screenshot(App* app_placeholder, const AppOptions& opt, std::string* err);
 static bool render_dump(const AppOptions& opt, std::string* err);
+static bool render_diag(const AppOptions& opt, std::string* err);
 
 // Reads a file, or stdin when the path is "-".
 static bool read_source(const std::string& path, std::string& out, std::string* err) {
@@ -547,6 +557,11 @@ int run_app(const AppOptions& opts) {
   std::string path = opts.files[0];
 
   // Non-interactive modes first: they own stdin/stdout.
+  if (opts.diag) {
+    std::string err;
+    if (!render_diag(opts, &err)) { fprintf(stderr, "mdt: %s\n", err.c_str()); return 1; }
+    return 0;
+  }
   if (!opts.dump.empty()) {
     std::string err;
     if (!render_dump(opts, &err)) { fprintf(stderr, "mdt: %s\n", err.c_str()); return 1; }
@@ -576,7 +591,9 @@ int run_app(const AppOptions& opts) {
   if (opts.math == "katex" && !app.math.has_js())
     fprintf(stderr, "mdt: maths engine unavailable (%s), using unicode\n", err.c_str());
 
-  if (!app.term.init(opts.gfx)) return 1;
+  mdt::set_compat_mode(opts.compat);
+  if (!app.term.init(opts.compat ? "none" : opts.gfx)) return 1;
+  app.scr.set_sync_update(!opts.compat);
 
   app.view.set_terminal(&app.term);
   app.view.set_math(&app.math);
@@ -602,13 +619,132 @@ int run_app(const AppOptions& opts) {
   app.toc_open = opts.toc;
   app.set_status(fmt("%s%s  |  ? for help",
                      gfx_name(app.term.caps.gfx),
-                     app.view.doc().entities_unescaped ? "  |  decoded HTML entities" : ""), 5);
+                     app.view.doc().entities_unescaped
+                          ? "  |  decoded HTML entities"
+                          : (app.view.doc().backslashes_removed > 0
+                                 ? "  |  removed backslash escapes"
+                                 : "")), 5);
   app.run();
   app.term.shutdown();
   return 0;
 }
 
 // Renders the whole document into a plain text grid (no graphics).
+
+// "--diag": everything mdt can see about the file and the terminal, so a
+// rendering problem can be reported without guesswork.  Works without a tty.
+static bool render_diag(const AppOptions& opt, std::string* err) {
+  std::string path = opt.files.empty() ? std::string() : opt.files[0];
+  std::string text;
+  if (!path.empty() && !read_source(path, text, err)) return false;
+
+  printf("mdt diag\n");
+  printf("  file            : %s (%zu bytes)\n", path.empty() ? "-" : path.c_str(), text.size());
+  // encoding
+  std::string enc = "utf-8, no BOM";
+  std::string body = text;
+  if (text.size() >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB &&
+      (unsigned char)text[2] == 0xBF) { enc = "utf-8 with BOM"; body = text.substr(3); }
+  else if (text.size() >= 2 && (unsigned char)text[0] == 0xFF && (unsigned char)text[1] == 0xFE)
+    enc = "utf-16le (BOM) - NOT SUPPORTED, save the file as UTF-8";
+  else if (text.size() >= 2 && (unsigned char)text[0] == 0xFE && (unsigned char)text[1] == 0xFF)
+    enc = "utf-16be (BOM) - NOT SUPPORTED, save the file as UTF-8";
+  else {
+    int bad = 0;
+    for (size_t i = 0; i < body.size() && i < 200000; i++)
+      if ((unsigned char)body[i] >= 0x80) {
+        // count invalid utf-8 lead bytes
+        size_t n = 1;
+        if (((unsigned char)body[i] & 0xE0) == 0xC0) n = 2;
+        else if (((unsigned char)body[i] & 0xF0) == 0xE0) n = 3;
+        else if (((unsigned char)body[i] & 0xF8) == 0xF0) n = 4;
+        bool ok = i + n <= body.size();
+        for (size_t k = 1; ok && k < n; k++)
+          if (((unsigned char)body[i + k] & 0xC0) != 0x80) ok = false;
+        if (!ok) { bad++; i++; continue; }
+        i += n - 1;
+      }
+    if (bad > 0) enc = "utf-8, no BOM, but " + std::to_string(bad) + " invalid byte(s) before offset 200000 - probably not UTF-8 (GBK/ANSI?)";
+  }
+  printf("  encoding        : %s\n", enc.c_str());
+  bool crlf = body.find("\r\n") != std::string::npos;
+  printf("  line endings    : %s\n", crlf ? "CRLF" : "LF");
+  bool bom = enc.rfind("utf-8 with BOM", 0) == 0;
+  printf("  first bytes     :");
+  for (size_t i = 0; i < body.size() && i < 12; i++) printf(" %02X", (unsigned char)body[i]);
+  printf("%s\n", bom ? "  (BOM stripped)" : "");
+
+  MdOptions mo;
+  MarkdownParser parser;
+  MdDocument doc = parser.parse(body, mo);
+  int cnt[12] = {0};
+  for (auto& b : doc.blocks) {
+    int k = (int)b.type;
+    if (k >= 0 && k < 12) cnt[k]++;
+  }
+  printf("  source decoded  : entities=%s backslash escapes=%d\n",
+         doc.entities_unescaped ? "yes" : "no", doc.backslashes_removed);
+  printf("  blocks          : heading=%d paragraph=%d list=%d table=%d code=%d html=%d quote=%d\n",
+         cnt[(int)Block::Heading], cnt[(int)Block::Paragraph], cnt[(int)Block::List],
+         cnt[(int)Block::Table], cnt[(int)Block::CodeBlock], cnt[(int)Block::Html],
+         cnt[(int)Block::Quote]);
+  // first paragraphs, as mdt parses them (escape-artifact check)
+  int shown = 0;
+  for (auto& b : doc.blocks) {
+    if (b.type != Block::Heading && b.type != Block::Paragraph) continue;
+    std::string t = spans_plain_text(b.spans);
+    if (t.empty()) continue;
+    printf("  %-15s : %s\n", shown == 0 ? "first text" : "", t.substr(0, 60).c_str());
+    if (shown == 0) {
+      printf("  first chars     :");
+      size_t i = 0;
+      std::string first8;
+      for (int k = 0; k < 8 && i < t.size(); k++) {
+        uint32_t cp = utf8_next(t, i);
+        printf(" U+%04X", cp);
+        first8 = t.substr(0, i);  // bytes up to and including this character
+      }
+      printf("   (\"%s\")\n", first8.c_str());
+    }
+    if (++shown >= 3) break;
+  }
+  // terminal side
+  const char* names[] = {"TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM",
+                         "WT_SESSION", "KITTY_WINDOW_ID", "TERM_SESSION_ID", "SHELL", "LANG"};
+  std::string envs;
+  for (auto* n : names) {
+    const char* v = getenv(n);
+    if (v && *v) envs += std::string(" ") + n + "=" + v;
+  }
+  printf("  terminal env    :%s\n", envs.empty() ? " (none set)" : envs.c_str());
+  int tc = plat::stdout_is_tty() ? 1 : 0;
+  int cols = 0, rows = 0;
+  int pxw = 0, pxh = 0;
+  plat::window_size(cols, rows, pxw, pxh);
+  printf("  stdout is a tty : %s", tc ? "yes" : "no");
+  if (cols > 0) printf(", %dx%d cells", cols, rows);
+  printf("\n");
+  TermCaps caps;
+  caps.cols = cols > 0 ? cols : 80;
+  caps.rows = rows > 0 ? rows : 24;
+  caps.term_name = getenv("TERM") ? getenv("TERM") : "";
+  if (getenv("TERM_PROGRAM")) caps.term_program = getenv("TERM_PROGRAM");
+  caps.gfx = GfxProto::None;
+  const char* gfg = getenv("KITTY_WINDOW_ID") ? "kitty (KITTY_WINDOW_ID set)"
+                   : (getenv("TERM") && std::string(getenv("TERM")).find("kitty") != std::string::npos)
+                         ? "kitty (TERM)"
+                   : (getenv("TERM_PROGRAM") && std::string(getenv("TERM_PROGRAM")) == "iTerm.app")
+                         ? "iterm2 (TERM_PROGRAM=iTerm.app)"
+                   : (getenv("TERM_PROGRAM") && std::string(getenv("TERM_PROGRAM")) == "WezTerm")
+                         ? "sixel (TERM_PROGRAM=WezTerm)"
+                         : "none - text fallback unless the terminal answers the startup probe";
+  printf("  graphics (guess): %s\n", gfg);
+  printf("  ... the real detection happens at start-up, in the terminal:\n");
+  printf("      'mdt --list-caps' prints it.  'mdt --compat file.md' turns the\n");
+  printf("      protocol probes and graphics off if a terminal misbehaves.\n");
+  return true;
+}
+
 static bool render_dump(const AppOptions& opt, std::string* err) {
   std::string path = opt.files[0];
   std::string text;
@@ -620,6 +756,12 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
   mo.entities = opt.entities == "off"      ? MdOptions::EntOff
                 : opt.entities == "force"  ? MdOptions::EntForce
                                            : MdOptions::EntAuto;
+  mo.escapes = opt.escapes == "off"      ? MdOptions::EscOff
+             : opt.escapes == "force"    ? MdOptions::EscForce
+                                         : MdOptions::EscAuto;
+  mo.loose = opt.loose == "off"      ? MdOptions::LooseOff
+           : opt.loose == "on"       ? MdOptions::LooseOn
+                                     : MdOptions::LooseAuto;
   MarkdownParser parser;
   MdDocument doc = parser.parse(text, mo);
 
@@ -685,6 +827,12 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   mo.entities = opt.entities == "off"      ? MdOptions::EntOff
                 : opt.entities == "force"  ? MdOptions::EntForce
                                            : MdOptions::EntAuto;
+  mo.escapes = opt.escapes == "off"      ? MdOptions::EscOff
+             : opt.escapes == "force"    ? MdOptions::EscForce
+                                         : MdOptions::EscAuto;
+  mo.loose = opt.loose == "off"      ? MdOptions::LooseOff
+           : opt.loose == "on"       ? MdOptions::LooseOn
+                                     : MdOptions::LooseAuto;
   MarkdownParser parser;
   MdDocument doc = parser.parse(text, mo);
 
@@ -792,6 +940,10 @@ void print_usage() {
       "  --terminal-bg                        keep the terminal's own background\n"
       "  --no-scrollbar                       hide the scrollbar\n"
       "  --entities=auto|off|force            HTML-escaped sources (default: auto)\n"
+      "  --escapes=auto|off|force             backslash-escaped sources (default: auto)\n"
+      "  --loose=auto|off|on                  \"#标题\" and \"-项目\" without a space (default: auto)\n"
+      "  --diag                               print what mdt sees of the file/terminal\n"
+      "  --compat                             no graphics/sync/protocol probes (troubleshooting)\n"
       "\n"
       "non interactive\n"
       "  --dump[=file]                        print a text rendering (no graphics)\n"

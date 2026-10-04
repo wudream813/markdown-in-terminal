@@ -135,6 +135,7 @@ class DocView {
     int img = -1;               // kind == Image
     int img_rows = 1;
     int code_index = -1;        // source line index for code blocks
+    int x = 0;                  // extra column offset (blocks inside list items)
   };
   struct BlockLayout {
     int block = 0;
@@ -185,6 +186,9 @@ class DocView {
                                           int target_h_px, double baseline_px);
 
   void layout_blocks();
+  // Lays a table out into bl, starting at column `indent` with `avail` columns
+  // available.  Also used for tables nested in list items and quotes.
+  void layout_table(const Block& b, int indent, int avail, BlockLayout& bl, int& row);
   int layout_paragraph(const std::vector<Span>& spans, int indent, int width, int row_start,
                        const Span& base, std::vector<Line>& out);
   void build_lines(const std::vector<Span>& spans, int indent, int width, const Span& base,

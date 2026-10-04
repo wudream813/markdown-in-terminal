@@ -46,6 +46,8 @@ int main(int argc, char** argv) {
     if (a == "--syntax" ) { opts.syntax = true; continue; }
     if (a == "--no-syntax") { opts.syntax = false; continue; }
     if (a.rfind("--entities=", 0) == 0) { opts.entities = a.substr(11); continue; }
+    if (a.rfind("--escapes=", 0) == 0) { opts.escapes = a.substr(10); continue; }
+    if (a.rfind("--loose=", 0) == 0) { opts.loose = a.substr(8); continue; }
     if (a == "--panels") { opts.panels = true; continue; }
     if (a == "--no-scrollbar") { opts.scrollbar = false; continue; }
     if (a == "--terminal-bg") { opts.terminal_bg = true; continue; }
@@ -53,6 +55,8 @@ int main(int argc, char** argv) {
     if (arg_value(a, "--width", &v)) { opts.width = atoi(v.c_str()); continue; }
     if (arg_value(a, "--height", &v)) { opts.height = atoi(v.c_str()); continue; }
     if (arg_value(a, "--screenshot", &v)) { opts.screenshot = v; continue; }
+    if (a == "--compat") { opts.compat = true; continue; }
+    if (a == "--diag") { opts.diag = true; continue; }
     if (a == "--dump") { opts.dump = "-"; continue; }
     if (arg_value(a, "--dump", &v)) { opts.dump = v; continue; }
     if (a == "--list-caps") { opts.list_caps = true; continue; }

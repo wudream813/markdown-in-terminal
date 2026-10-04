@@ -411,6 +411,110 @@ void DocView::relayout() {
   if (scroll_ < 0) scroll_ = 0;
 }
 
+
+// ------------------------------------------------------------------ tables --
+// One table = one frame: a top border, the rows, a rule under the header and
+// a bottom border.  Nested tables (inside list items or quotes) only differ
+// in the indent they start at.
+void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout& bl, int& row) {
+
+    int ncols = 0;
+    for (auto& r : b.rows) ncols = std::max(ncols, (int)r.size());
+    if (ncols == 0) { row += 1; return; }
+    std::vector<int> natural(ncols, 0), minw(ncols, 3);
+    for (auto& r : b.rows)
+      for (int c = 0; c < (int)r.size(); c++) {
+        std::string txt = spans_plain_text(r[(size_t)c].spans);
+        natural[c] = std::max(natural[c], str_width(txt));
+        // longest word
+        int cur = 0;
+        for (char ch : txt) {
+          if (ch == ' ') { minw[c] = std::max(minw[c], cur); cur = 0; }
+          else cur++;
+        }
+        minw[c] = std::max(minw[c], cur);
+      }
+    int avail = avail_w - 2 - (ncols - 1) * 3 - 2;  // outer frame + separators
+    int total = 0;
+    for (int c = 0; c < ncols; c++) { natural[c] += 2; total += natural[c]; }
+    std::vector<int> w = natural;
+    while (total > avail) {
+      int widest = 0;
+      for (int c = 1; c < ncols; c++) if (w[c] > w[widest]) widest = c;
+      if (w[widest] <= minw[widest] + 2) break;
+      w[widest]--;
+      total--;
+    }
+    auto border_line = [&](int idx) {  // a full-width border line of the box
+      Line l;
+      l.kind = Line::Table;
+      l.row = row - bl.row;
+      l.code_index = idx;  // 0 = top, 2 = bottom, 3 = rule under the header
+      l.x = indent;        // blocks nested in a list item start further right
+      int x = 0;
+      for (int c = 0; c < ncols; c++) { TCell tc; tc.x = x; tc.width = w[c]; x += w[c] + 1; l.cells.push_back(tc); }
+      bl.lines.push_back(l);
+      row++;
+    };
+    // ONE box around all rows (a border per row made each row its own box)
+    border_line(0);
+    for (auto& r : b.rows) {
+      std::vector<std::vector<std::string>> cell_lines(r.size());
+      int maxlines = 1;
+      for (int c = 0; c < (int)r.size(); c++) {
+        std::string txt = spans_plain_text(r[(size_t)c].spans);
+        int inner = std::max(2, w[c] - 2);
+        std::vector<std::string> cl;
+        std::string cur;
+        int curw = 0;
+        for (size_t i = 0; i < txt.size();) {
+          size_t save = i;
+          uint32_t cp = utf8_next(txt, i);
+          int cwid = cp_width(cp);
+          std::string piece = txt.substr(save, i - save);
+          if (cp == ' ' && curw > 0) {
+            // break opportunity
+          }
+          if (curw + cwid > inner && curw > 0) {
+            cl.push_back(rtrim(cur));
+            cur.clear();
+            curw = 0;
+            if (piece == " ") continue;
+          }
+          cur += piece;
+          curw += cwid;
+        }
+        cl.push_back(rtrim(cur));
+        cell_lines[c] = cl;
+        maxlines = std::max(maxlines, (int)cl.size());
+      }
+      for (int lno = 0; lno < maxlines; lno++) {
+        Line l;
+        l.kind = Line::Table;
+        l.row = row - bl.row;
+        l.code_index = 1;  // 1 = content row
+        l.x = indent;
+        int x = 0;
+        for (int c = 0; c < (int)r.size(); c++) {
+          TCell tc;
+          tc.x = x;
+          tc.width = w[c];
+          tc.align = r[(size_t)c].align;
+          tc.header = r[(size_t)c].header;
+          tc.text = lno < (int)cell_lines[c].size() ? cell_lines[c][lno] : "";
+          l.cells.push_back(tc);
+          x += w[c] + 1;
+        }
+        bl.lines.push_back(l);
+        row++;
+      }
+      if (!r.empty() && r[0].header) border_line(3);
+    }
+    border_line(2);
+    row += opt_.paragraph_gap;
+  
+}
+
 void DocView::layout_blocks() {
   content_w_ = std::max(20, cols_ - 2 * opt_.content_margin);
   int row = 0;
@@ -711,7 +815,86 @@ void DocView::layout_blocks() {
                 lines.push_back(l);
                 break;
               }
-              default: break;
+              case Block::Quote: {
+                // a quote inside a list item keeps its bar, just indented
+                int qind = item_indent + 2;
+                for (auto& sublist : sb.items) {
+                  for (const Block& qb : sublist) {
+                    Span qbase;
+                    qbase.has_color = true;
+                    qbase.color = theme_.quote_fg;
+                    std::vector<Line> qlines;
+                    if (qb.type == Block::Heading) {
+                      qbase.bold = true;
+                      qbase.color = theme_.heading[std::min(6, std::max(1, qb.level))];
+                      build_lines(qb.spans, qind, content_w_ - qind, qbase, qlines);
+                    } else if (qb.type == Block::Paragraph || qb.type == Block::Html) {
+                      build_lines(qb.spans, qind, content_w_ - qind, qbase, qlines);
+                    } else if (qb.type == Block::CodeBlock) {
+                      Span cb;
+                      cb.has_color = true;
+                      cb.color = theme_.code_fg;
+                      for (auto& cl : split_lines(qb.code)) {
+                        Line l2;
+                        l2.kind = Line::Code;
+                        Run r;
+                        r.text = cl;
+                        r.x = qind;
+                        r.width = str_width(cl);
+                        r.style = cb;
+                        l2.runs.push_back(r);
+                        qlines.push_back(l2);
+                      }
+                    } else {
+                      std::string t = !qb.spans.empty() ? spans_plain_text(qb.spans) : qb.code;
+                      if (!t.empty()) {
+                        std::vector<Span> sp;
+                        Span s2;
+                        s2.text = t;
+                        s2.has_color = true;
+                        s2.color = theme_.quote_fg;
+                        sp.push_back(s2);
+                        build_lines(sp, qind, content_w_ - qind, qbase, qlines);
+                      }
+                    }
+                    for (auto& l2 : qlines) {
+                      l2.bar = item_indent;
+                      lines.push_back(l2);
+                    }
+                  }
+                }
+                break;
+              }
+              case Block::Table: {
+                // nested table: drawn by draw_table, so it needs its own lines
+                if (!first_line_done) {
+                  Line l;
+                  Run r;
+                  r.text = marker;
+                  r.x = 2;
+                  r.width = marker_w;
+                  r.style.has_color = true;
+                  r.style.color = marker_color;
+                  l.runs.push_back(r);
+                  l.row = row - bl.row;
+                  bl.lines.push_back(l);
+                  row++;
+                  first_line_done = true;
+                }
+                layout_table(sb, item_indent, content_w_ - item_indent, bl, row);
+                break;
+              }
+              default: {
+                // Never drop content: anything else is shown as its plain text.
+                std::string t = !sb.spans.empty() ? spans_plain_text(sb.spans) : sb.code;
+                if (!t.empty()) {
+                  std::vector<Span> sp;
+                  Span s2;
+                  s2.text = t;
+                  build_lines(sp, item_indent, content_w_ - item_indent, Span{}, lines);
+                }
+                break;
+              }
             }
             for (auto& l : lines) {
               if (!first_line_done) {
@@ -751,120 +934,11 @@ void DocView::layout_blocks() {
         break;
       }
       case Block::Table: {
-        int ncols = 0;
-        for (auto& r : b.rows) ncols = std::max(ncols, (int)r.size());
-        if (ncols == 0) { row += 1; break; }
-        std::vector<int> natural(ncols, 0), minw(ncols, 3);
-        for (auto& r : b.rows)
-          for (int c = 0; c < (int)r.size(); c++) {
-            std::string txt = spans_plain_text(r[(size_t)c].spans);
-            natural[c] = std::max(natural[c], str_width(txt));
-            // longest word
-            int cur = 0;
-            for (char ch : txt) {
-              if (ch == ' ') { minw[c] = std::max(minw[c], cur); cur = 0; }
-              else cur++;
-            }
-            minw[c] = std::max(minw[c], cur);
-          }
-        int avail = content_w_ - 2 - (ncols - 1) * 3 - 2;  // outer frame + separators
-        int total = 0;
-        for (int c = 0; c < ncols; c++) { natural[c] += 2; total += natural[c]; }
-        std::vector<int> w = natural;
-        while (total > avail) {
-          int widest = 0;
-          for (int c = 1; c < ncols; c++) if (w[c] > w[widest]) widest = c;
-          if (w[widest] <= minw[widest] + 2) break;
-          w[widest]--;
-          total--;
-        }
-        for (auto& r : b.rows) {
-          std::vector<std::vector<std::string>> cell_lines(r.size());
-          int maxlines = 1;
-          for (int c = 0; c < (int)r.size(); c++) {
-            std::string txt = spans_plain_text(r[(size_t)c].spans);
-            int inner = std::max(2, w[c] - 2);
-            std::vector<std::string> cl;
-            std::string cur;
-            int curw = 0;
-            for (size_t i = 0; i < txt.size();) {
-              size_t save = i;
-              uint32_t cp = utf8_next(txt, i);
-              int cwid = cp_width(cp);
-              std::string piece = txt.substr(save, i - save);
-              if (cp == ' ' && curw > 0) {
-                // break opportunity
-              }
-              if (curw + cwid > inner && curw > 0) {
-                cl.push_back(rtrim(cur));
-                cur.clear();
-                curw = 0;
-                if (piece == " ") continue;
-              }
-              cur += piece;
-              curw += cwid;
-            }
-            cl.push_back(rtrim(cur));
-            cell_lines[c] = cl;
-            maxlines = std::max(maxlines, (int)cl.size());
-          }
-          Line top;
-          top.kind = Line::Table;
-          top.row = row - bl.row;
-          top.code_index = 0;  // 0 = border row
-          {
-            int x = 0;
-            for (int c = 0; c < (int)r.size(); c++) {
-              TCell tc;
-              tc.x = x;
-              tc.width = w[c];
-              tc.header = r[(size_t)c].header;
-              x += w[c] + 1;
-              top.cells.push_back(tc);
-            }
-          }
-          bl.lines.push_back(top);
-          row++;
-          for (int lno = 0; lno < maxlines; lno++) {
-            Line l;
-            l.kind = Line::Table;
-            l.row = row - bl.row;
-            l.code_index = 1;  // 1 = content row
-            int x = 0;
-            for (int c = 0; c < (int)r.size(); c++) {
-              TCell tc;
-              tc.x = x;
-              tc.width = w[c];
-              tc.align = r[(size_t)c].align;
-              tc.header = r[(size_t)c].header;
-              tc.text = lno < (int)cell_lines[c].size() ? cell_lines[c][lno] : "";
-              l.cells.push_back(tc);
-              x += w[c] + 1;
-            }
-            bl.lines.push_back(l);
-            row++;
-          }
-          Line bot;
-          bot.kind = Line::Table;
-          bot.row = row - bl.row;
-          bot.code_index = 2;  // 2 = bottom border
-          {
-            int x = 0;
-            for (int c = 0; c < (int)r.size(); c++) {
-              TCell tc;
-              tc.x = x;
-              tc.width = w[c];
-              tc.header = r[(size_t)c].header;
-              x += w[c] + 1;
-              bot.cells.push_back(tc);
-            }
-          }
-          bl.lines.push_back(bot);
-          row++;
-        }
+        layout_table(b, 0, content_w_, bl, row);
         row += opt_.paragraph_gap;
         break;
       }
+
       case Block::Hr: {
         Line l;
         l.kind = Line::Rule;
