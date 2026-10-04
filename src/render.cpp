@@ -423,6 +423,98 @@ void DocView::relayout() {
 // ------------------------------------------------------------------ tables --
 // One table = one frame: a top border, the rows, a rule under the header and
 // a bottom border.  Nested tables (inside list items or quotes) only differ
+// ------------------------------------------------- maths inside a table cell --
+// The bitmap of a cell formula is exactly as wide as its Unicode transcription
+// and one cell high, and the page colour is painted behind the ink.  Placed on
+// the cell it covers the transcription completely, and because the bitmap is
+// already the size of the cells it is drawn into, the terminal does not scale
+// it (that is what keeps formulas sharp elsewhere too).
+std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece& pc, int cw, int chh) {
+  std::string key = fmt("CM|%d|%d|%d|%d|%s", cw, chh, pc.cols, pc.display ? 1 : 0, pc.tex.c_str());
+  auto it = asset_map_.find(key);
+  if (it != asset_map_.end()) return it->second;
+  auto a = std::make_shared<ImageAsset>();
+  a->source = pc.tex;
+  asset_map_[key] = a;
+  if (opt_.text_math || !math_) { a->failed = true; a->err = "no bitmap here"; return a; }
+  double em = em_px();
+  MathMetrics m = math_->metrics(pc.tex, false, em);
+  if (!m.ok) { a->failed = true; a->err = "cannot typeset"; return a; }
+  int w = std::max(2, pc.cols) * cw;
+  int h = chh;
+  // scale the formula so it fits both the width and the cell height
+  double scale = std::min(1.0, (double)w / std::max(1.0, m.px_w));
+  if (m.px_h * scale > h - 2) scale = (h - 2) / std::max(1.0, m.px_h);
+  Image img;
+  int off_x = 0, off_y = 0;
+  if (!math_->raster_grid(pc.tex, false, em * scale, w, h, theme_.math_fg, img, &off_x, &off_y)) {
+    a->failed = true;
+    a->err = "raster failed";
+    return a;
+  }
+  // paint the page colour behind the ink, so the transcription underneath is
+  // covered instead of showing through the transparent parts
+  RGB bg = theme_.bg;
+  for (size_t i = 0; i + 3 < img.rgba.size(); i += 4) {
+    double al = img.rgba[i + 3] / 255.0;
+    for (int k = 0; k < 3; k++) {
+      double fg = img.rgba[i + k];
+      double bgc = k == 0 ? bg.r : (k == 1 ? bg.g : bg.b);
+      img.rgba[i + k] = (uint8_t)std::lround(fg * al + bgc * (1 - al));
+    }
+    img.rgba[i + 3] = 255;
+  }
+  a->rgba = img.rgba;
+  a->px_w = w;
+  a->px_h = h;
+  a->cols = std::max(2, pc.cols);
+  a->rows = 1;
+  // put the formula's baseline on the baseline of the cell text
+  a->baseline_px = off_y + m.baseline_px * scale;
+  a->png = png_encode(a->rgba.data(), w, h);
+  if (a->png.empty()) a->failed = true;
+  if (getenv("MDT_DEBUG_CELLMATH")) {  // write the bitmap out for inspection
+    static int n = 0;
+    std::string path = fmt("/tmp/cellmath-%d.png", n++);
+    if (FILE* f = fopen(path.c_str(), "wb")) {
+      fwrite(a->png.data(), 1, a->png.size(), f);
+      fclose(f);
+      fprintf(stderr, "[mdt] cell maths %dx%d px -> %s (%s)\n", w, h, path.c_str(),
+              pc.tex.c_str());
+    }
+  }
+  return a;
+}
+
+// Places the cell's formulas as bitmaps on top of their transcription.
+void DocView::place_cell_math(int cell_x, int cell_w, int yy, const TCell& tc, int cw, int chh,
+                              int scroll_row) {
+  if (tc.pieces.empty() || !term_ || !term_->caps.can_show_images()) return;
+  if (opt_.text_math) return;
+  int inner = std::max(2, cell_w - 2);
+  for (const TCell::Piece& pc : tc.pieces) {
+    if (pc.col + pc.cols > inner) continue;  // does not fit the column: text only
+    auto a = cell_math_asset(pc, cw, chh);
+    if (a->failed || a->png.empty()) continue;
+    PlacedImage im;
+    im.x = cell_x + 1 + pc.col;
+    im.y = yy - scroll_row;
+    im.cols = a->cols;
+    im.rows = 1;
+    im.px_w = a->px_w;
+    im.px_h = a->px_h;
+    // vertical: shift the ink down onto the text baseline (sub_y is honoured
+    // by kitty; the others draw it at the cell, which is right for one row)
+    double down = cell_baseline_px() - a->baseline_px;
+    int suby = (int)std::lround(down);
+    if (suby < 0) { im.y -= 1; suby += chh; }
+    im.sub_y = suby;
+    im.png = &a->png;
+    im.rgba = &a->rgba;
+    images_.push_back(im);
+  }
+}
+
 // Table cells are drawn as text inside a fixed grid, so a typeset formula has
 // no place there.  Inline maths becomes the Unicode transcription instead of
 // the raw TeX ("$\frac{a}{b}$" used to be shown verbatim).
@@ -522,6 +614,24 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
           tc.align = r[(size_t)c].align;
           tc.header = r[(size_t)c].header;
           tc.text = lno < (int)cell_lines[c].size() ? cell_lines[c][lno] : "";
+          // where the formulas sit inside that text, in columns
+          int col = 0;
+          bool fits = true;
+          for (const Span& sp : r[(size_t)c].spans) {
+            if (sp.kind != Span::Math) { col += str_width(sp.text); continue; }
+            std::string plain = latex_to_unicode(sp.tex, sp.display_math);
+            int pw = str_width(plain);
+            if (lno == 0) {
+              TCell::Piece pc;
+              pc.col = col;
+              pc.cols = std::max(2, pw);
+              pc.tex = sp.tex;
+              pc.display = sp.display_math;
+              tc.pieces.push_back(pc);
+            }
+            col += pw;
+          }
+          (void)fits;
           l.cells.push_back(tc);
           x += w[c] + 1;
         }
@@ -535,10 +645,10 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
   
 }
 
-// Width of a code block's frame: as wide as the code (plus borders and one
-// column of padding on each side), never wider than the page.  A frame that
-// always spans the page leaves a big empty area next to short code.
+// Width of a code block's frame.  The frame spans the page by default; with
+// --code-fit it hugs the code instead (a short snippet then gets a small box).
 int DocView::code_frame_width(const Block& b) const {
+  if (!opt_.code_fit) return std::min(cols_, content_w_ + 1);
   int maxw = 0;
   for (const std::string& l : split_lines(b.code)) maxw = std::max(maxw, str_width(l));
   int w = maxw + 4;                                   // 2 borders + 2 padding

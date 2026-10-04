@@ -85,7 +85,10 @@ test "$(grep -c '│ .*argument_four' "$TMP/code.txt")" -ge 1 && echo "  long li
 grep -q 'some_function(argument_one, arg' "$TMP/code.txt" && echo "  first half of the line kept"
 grep -q 'print(result)' "$TMP/code.txt" && echo "  following line kept"
 framew=$(python3 -c 'import sys; ls=[x for x in open(sys.argv[1], encoding="utf-8") if x.startswith("╭")]; print(len(ls[-1].rstrip()) if ls else 0)' "$TMP/code.txt")
-test "$framew" -lt 30 && echo "  short code: frame is $framew cells wide (hugs the code, not the page)"
+test "$framew" -ge 55 && echo "  code frame spans the page by default ($framew cells)"
+"$BIN" --code-fit --dump --width=60 tests/fixtures/code-wrap.md > "$TMP/codefit.txt"
+framefit=$(python3 -c 'import sys; ls=[x for x in open(sys.argv[1], encoding="utf-8") if x.startswith("╭")]; print(len(ls[-1].rstrip()) if ls else 0)' "$TMP/codefit.txt")
+test "$framefit" -lt 30 && echo "  --code-fit hugs the code ($framefit cells)"
 
 echo "== maths inside table cells =="
 "$BIN" --dump --width=50 tests/fixtures/table-math.md > "$TMP/tmath.txt"
@@ -97,6 +100,7 @@ if grep -q '\\frac' "$TMP/tmath.txt"; then
   exit 1
 fi
 echo "  no raw TeX left"
+python3 tools/table_math_test.py "$BIN" tests/fixtures/table-math.md || exit 1
 
 echo "== task list markers line up =="
 "$BIN" --dump --width=50 tests/fixtures/tasks.md > "$TMP/tasks.txt"
@@ -119,6 +123,14 @@ python3 tools/image_overlay_test.py "$BIN" || exit 1
 
 echo "== images are placed on the cell grid =="
 python3 tools/image_scale_test.py "$BIN" || exit 1
+
+echo "== escaped line breaks (&#10; plus a real newline) =="
+"$BIN" --dump --width=44 tests/fixtures/escaped-newlines.md > "$TMP/eol.txt"
+grep -q '#include <iostream>' "$TMP/eol.txt" && echo "  code content kept"
+grep -q '#include <vector>' "$TMP/eol.txt" && echo "  second code line kept"
+lines=$(grep -c '^$' "$TMP/eol.txt")
+test "$lines" -le 3 && echo "  no empty line added between the code lines ($lines blank lines in the dump)"
+test "$(grep -c '│ *│' "$TMP/eol.txt")" = 0 && echo "  no blank row inside the code frame"
 
 echo "== frame cost (runs, not per-cell escapes) =="
 python3 tools/frame_cost_test.py "$BIN"

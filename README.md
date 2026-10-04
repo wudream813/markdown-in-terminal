@@ -60,6 +60,12 @@ self-contained binary.
 * **Compact frame output.** Only changed cells are sent, with one cursor jump
   per run and one SGR per style change (a heading costs one escape sequence,
   not one per character). Nothing needs re-drawing that has not changed.
+* **Formulas in tables are typeset too.** A table cell is a text grid, so the
+  cell keeps a Unicode transcription (`x² + y² = z²`, `\frac{a}{b}` -> `a/b`)
+  as the layout and as the fallback for terminals without graphics. Where a
+  graphics protocol is available a bitmap - exactly as wide as that
+  transcription, one cell tall, with the page colour behind the ink - is drawn
+  over the transcription, so the cell shows the typeset formula.
 * **Formulas stay sharp.** A formula is rasterised onto the exact cell grid
   (`cols × cell_w` by `rows × cell_h` pixels) and placed so the terminal draws
   it 1:1 instead of rescaling it; the baseline of the bitmap is put on the
@@ -70,8 +76,13 @@ self-contained binary.
   its colour alone. Wrapped heading lines stay aligned with the text.
 * **Lists and code blocks that read well.** Task items use `[x]` / `[ ]`
   (the ☑/☐ glyphs have ambiguous width, so the tick and the box did not line up
-  in every font). A code block's frame hugs the code instead of spanning the
-  page, and long code lines wrap instead of being cut off at the frame edge.
+  in every font). A code block's frame spans the page (as it always did; use
+  `--code-fit` for a frame that hugs the code) and long code lines wrap instead
+  of being cut off at the frame edge.
+* **Escaped line endings are not doubled.** A generator that escapes line
+  breaks writes `&#10;` and then a real newline; decoding that used to put an
+  empty line between every two lines - very visible inside a code block. The
+  reference is now recognised as the line ending it stands for.
 * **Nothing is drawn over the UI.** While the help panel is open no image is
   transmitted or placed, images that would spill into the status bar are
   skipped, and the outline panel covers no images - so a formula can no longer
@@ -284,6 +295,7 @@ the final geometry is exact.
 | `--entities=auto\|off\|force` | control the HTML-entity decoding described above |
 | `--escapes=auto\|off\|force` | control the backslash-escape repair described above |
 | `--loose=auto\|off\|on` | accept `#标题` / `-项目` / `1.项目` without a space |
+| `--code-fit` | code frames hug the code instead of spanning the page |
 | `--compat` | no graphics, no DEC 2026 synchronized output, no keyboard-protocol push, no capability probe - for terminals whose support for those is broken |
 | `--diag` | print what mdt sees of the file (encoding, escapes, block census, first characters) and of the terminal; works without a tty |
 
@@ -307,8 +319,9 @@ were used (`+entities`, `+escapes`, `+loose`, `+clean`).
   scaled down to the content width.
 * sixel images are cell-aligned (a sixel cursor cannot be nudged by a fraction
   of a cell), kitty and iTerm2 images are placed by pixel and land on the text
-  baseline. Inline maths inside a table cell is transcribed to Unicode, because
-  a cell is a text grid and the typeset bitmap has no place in it.
+  baseline. Inline maths inside a table cell is typeset as a bitmap on top of its
+  Unicode transcription; without a graphics protocol the transcription is what
+  shows.
 * Reference-style links `[text][ref]` are parsed but the definitions are not
   resolved yet; `_italic_`/`**bold**` inside words follow the CommonMark rules.
 * HTML blocks are converted to the Markdown they stand for; unknown tags are

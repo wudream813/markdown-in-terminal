@@ -649,6 +649,7 @@ int run_app(const AppOptions& opts) {
   ro.em_px_override = opts.font_px;
   ro.text_math = (opts.math == "unicode");
   ro.lazy_metrics = true;  // only typeset formulas that come into view
+  ro.code_fit = opts.code_fit;
   if (!app.term.caps.can_show_images()) {
     ro.text_math = true;  // no graphics protocol: formulas would be invisible
     ro.inline_images = false;
@@ -846,6 +847,7 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
   ro.em_px_override = opt.font_px;
   ro.text_math = true;  // a text dump cannot contain bitmaps
   ro.lazy_metrics = false;
+  ro.code_fit = opt.code_fit;
   view.set_options(ro);
   view.set_width(width);
   view.set_document(std::move(doc), path, dir_name(abs_path(path)));
@@ -924,6 +926,7 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   ro.em_px_override = opt.font_px;
   ro.text_math = (opt.math == "unicode");
   ro.lazy_metrics = false;  // a screenshot must be exact
+  ro.code_fit = opt.code_fit;
   view.set_options(ro);
   view.set_width(cols);
   view.set_view_rows(rows - 1);
@@ -1010,6 +1013,7 @@ void print_usage() {
       "  --loose=auto|off|on                  \"#标题\" and \"-项目\" without a space (default: auto)\n"
       "  --diag                               print what mdt sees of the file/terminal\n"
       "  --compat                             no graphics/sync/protocol probes (troubleshooting)\n"
+      "  --code-fit                           code frames hug the code instead of the page\n"
       "\n"
       "non interactive\n"
       "  --dump[=file]                        print a text rendering (no graphics)\n"

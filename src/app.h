@@ -26,6 +26,7 @@ struct AppOptions {
   std::string dump;
   bool diag = false;               // print what mdt sees of the file and of the terminal
   bool compat = false;             // --compat: plain output for terminals that misbehave
+  bool code_fit = false;           // --code-fit: code frames hug the code
   std::string screenshot;          // write a PNG of the rendered screen
   bool list_caps = false;          // print terminal capabilities and exit
   bool version = false;

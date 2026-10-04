@@ -192,6 +192,9 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
       else if (off > 0) off = off;  // keep some breathing room on the left
       scr.put_str(x + off, yy, tc.text, fg, bg, tc.header ? A_BOLD : 0);
       scr.put(x + tc.width, yy, 0x2502, border, theme_.bg);
+      // formulas in this cell are drawn as bitmaps over their transcription
+      if (!tc.pieces.empty())
+        place_cell_math(x + off, tc.width, yy, tc, std::max(1, cell_w()), std::max(1, cell_h()), 0);
     }
   }
 }

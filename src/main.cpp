@@ -56,6 +56,7 @@ int main(int argc, char** argv) {
     if (arg_value(a, "--height", &v)) { opts.height = atoi(v.c_str()); continue; }
     if (arg_value(a, "--screenshot", &v)) { opts.screenshot = v; continue; }
     if (a == "--compat") { opts.compat = true; continue; }
+    if (a == "--code-fit") { opts.code_fit = true; continue; }
     if (a == "--diag") { opts.diag = true; continue; }
     if (a == "--dump") { opts.dump = "-"; continue; }
     if (arg_value(a, "--dump", &v)) { opts.dump = v; continue; }

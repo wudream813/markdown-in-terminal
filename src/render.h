@@ -63,6 +63,7 @@ struct RenderOptions {
   bool text_math = false;       // force the plain-Unicode maths fallback
   bool lazy_metrics = true;     // typeset only formulas that are on screen
   int em_px_override = 0;       // 0 = derive from the cell size
+  bool code_fit = false;        // code frames hug the code instead of the page
 };
 
 class DocView {
@@ -125,6 +126,17 @@ class DocView {
     Align align = Align::Left;
     bool header = false;
     int pad = 1;
+    // Typeset formulas inside the cell.  The cell keeps showing the Unicode
+    // transcription (so terminals without graphics, and sixel, still read),
+    // and the bitmap - exactly as wide as that transcription and one cell
+    // tall, with the page colour behind the ink - is drawn over it.
+    struct Piece {
+      int col = 0;    // column inside the cell where it starts
+      int cols = 1;   // width in cells (= width of the transcription)
+      std::string tex;
+      bool display = false;
+    };
+    std::vector<Piece> pieces;
   };
   struct Line {
     enum Kind { Text, Code, Rule, Table, Image } kind = Text;
@@ -193,6 +205,10 @@ class DocView {
   // Lays a table out into bl, starting at column `indent` with `avail` columns
   // available.  Also used for tables nested in list items and quotes.
   void layout_table(const Block& b, int indent, int avail, BlockLayout& bl, int& row);
+  void place_cell_math(int cell_x, int cell_w, int yy, const TCell& tc, int cw, int chh,
+                       int scroll_row);
+  // Bitmap for a formula inside a table cell (see TCell::Piece).
+  std::shared_ptr<ImageAsset> cell_math_asset(const TCell::Piece& pc, int cw, int chh);
   // Code blocks: the frame hugs the code instead of spanning the page, and long
   // lines are wrapped rather than cut off at the frame edge.
   int code_frame_width(const Block& b) const;

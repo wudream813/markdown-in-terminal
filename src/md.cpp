@@ -48,16 +48,33 @@ std::string decode_entities(const std::string& s) {
       size_t semi = s.find(';', i);
       if (semi != std::string::npos && semi - i <= 12) {
         std::string ent = s.substr(i, semi - i + 1);
+        // A generator that escapes the line breaks as well writes "&#10;" and
+        // then a real newline: decoding that adds an empty line between every
+        // two lines (very visible inside a code block).  When the very next
+        // character is a line ending too, the reference is that line ending -
+        // it carries no extra line.
+        size_t after = semi + 1;
+        bool next_is_newline = after < s.size() && (s[after] == '\n' || s[after] == '\r');
         bool done = false;
         for (auto& e : kEnt) {
-          if (ent == e.ent) { out += e.rep; i = semi + 1; done = true; break; }
+          if (ent != e.ent) continue;
+          if (e.rep[0] == '\n' && next_is_newline) { i = after; done = true; break; }
+          out += e.rep;
+          i = after;
+          done = true;
+          break;
         }
         if (done) continue;
         if (ent.size() > 3 && ent[1] == '#') {  // numeric
           long v = 0;
           bool hex = ent[2] == 'x' || ent[2] == 'X';
           v = strtol(ent.substr(hex ? 3 : 2, ent.size() - (hex ? 4 : 3)).c_str(), nullptr, hex ? 16 : 10);
-          if (v > 0 && v < 0x110000) { out += utf8_encode((uint32_t)v); i = semi + 1; continue; }
+          if (v > 0 && v < 0x110000) {
+            if ((v == 10 || v == 13) && next_is_newline) { i = after; continue; }
+            out += utf8_encode((uint32_t)v);
+            i = after;
+            continue;
+          }
         }
       }
     }
