@@ -24,6 +24,19 @@ std::string decode_entities(const std::string& s) {
     {"&ge;", "\u2265"}, {"&ne;", "\u2260"}, {"&rarr;", "\u2192"}, {"&larr;", "\u2190"},
     {"&infin;", "\u221e"}, {"&sum;", "\u2211"}, {"&int;", "\u222b"}, {"&pi;", "\u03c0"},
     {"&#39;", "'"}, {"&copy;", "\u00a9"}, {"&reg;", "\u00ae"}, {"&trade;", "\u2122"},
+    {"&nbsp;", "\u00a0"}, {"&thinsp;", "\u2009"}, {"&minus;", "\u2212"}, {"&middot;", "\u00b7"},
+    {"&bull;", "\u2022"}, {"&deg;", "\u00b0"}, {"&micro;", "\u00b5"}, {"&para;", "\u00b6"},
+    {"&sect;", "\u00a7"}, {"&euro;", "\u20ac"}, {"&pound;", "\u00a3"}, {"&yen;", "\u00a5"},
+    {"&cent;", "\u00a2"}, {"&laquo;", "\u00ab"}, {"&raquo;", "\u00bb"}, {"&ldquo;", "\u201c"},
+    {"&rdquo;", "\u201d"}, {"&lsquo;", "\u2018"}, {"&rsquo;", "\u2019"}, {"&dagger;", "\u2020"},
+    {"&prime;", "\u2032"}, {"&Prime;", "\u2033"}, {"&nabla;", "\u2207"}, {"&isin;", "\u2208"},
+    {"&notin;", "\u2209"}, {"&forall;", "\u2200"}, {"&exist;", "\u2203"}, {"&empty;", "\u2205"},
+    {"&radic;", "\u221a"}, {"&prop;", "\u221d"}, {"&ang;", "\u2220"}, {"&and;", "\u2227"},
+    {"&or;", "\u2228"}, {"&cap;", "\u2229"}, {"&cup;", "\u222a"}, {"&there4;", "\u2234"},
+    {"&sim;", "\u223c"}, {"&cong;", "\u2245"}, {"&asymp;", "\u2248"}, {"&equiv;", "\u2261"},
+    {"&sub;", "\u2282"}, {"&sup;", "\u2283"}, {"&sube;", "\u2286"}, {"&supe;", "\u2287"},
+    {"&oplus;", "\u2295"}, {"&otimes;", "\u2297"}, {"&perp;", "\u22a5"}, {"&sdot;", "\u22c5"},
+    {"&lceil;", "\u2308"}, {"&rceil;", "\u2309"}, {"&lfloor;", "\u230a"}, {"&rfloor;", "\u230b"},
   };
   std::string out;
   size_t i = 0;
@@ -48,6 +61,49 @@ std::string decode_entities(const std::string& s) {
     out += s[i++];
   }
   return out;
+}
+
+// A file that has been through an HTML pipeline ("copy as markdown", CMS
+// exports, some converters) arrives with its punctuation escaped as character
+// references: tabs are &#x09;, and "#", "*", "_", "|", "-" become &#35;, &#42;,
+// &#95;, &#124;, &#45;.  Just decoding entities per CommonMark is not enough
+// there - the structure is gone, because block parsing looks at the literal
+// characters.  Detect that shape and decode the whole source first.
+bool looks_entity_escaped(const std::string& s) {
+  static const char* kSyntax = "#*_`|>-[]()!~=+.:\\/ \t\n\"'";
+  size_t total = 0, syntax = 0;
+  for (size_t i = 0; i + 2 < s.size(); i++) {
+    if (s[i] != '&' || s[i + 1] != '#') {
+      // named reference?
+      if (s[i] == '&') {
+        size_t semi = s.find(';', i);
+        if (semi != std::string::npos && semi - i <= 9) {
+          std::string name = s.substr(i + 1, semi - i - 1);
+          if (name == "amp" || name == "lt" || name == "gt" || name == "quot" || name == "apos" ||
+              name == "nbsp")
+            total++;
+        }
+      }
+      continue;
+    }
+    size_t semi = s.find(';', i);
+    if (semi == std::string::npos || semi - i > 9) continue;
+    bool hex = i + 2 < s.size() && (s[i + 2] == 'x' || s[i + 2] == 'X');
+    std::string digits = s.substr(i + (hex ? 3 : 2), semi - i - (hex ? 3 : 2));
+    if (digits.empty()) continue;
+    for (char c : digits) {
+      bool ok = hex ? isxdigit((unsigned char)c) != 0 : isdigit((unsigned char)c) != 0;
+      if (!ok) { digits.clear(); break; }
+    }
+    if (digits.empty()) continue;
+    long v = strtol(digits.c_str(), nullptr, hex ? 16 : 10);
+    if (v <= 0 || v > 0x10ffff) continue;
+    total++;
+    if (v < 128 && strchr(kSyntax, (char)v)) syntax++;
+    i = semi;
+  }
+  // Escaped punctuation in a line of text is a strong signal; a few &amp; are not.
+  return syntax >= 3 || total >= 40;
 }
 
 }  // namespace
@@ -937,16 +993,26 @@ void collect_links(const Block& b, std::vector<LinkRef>& out) {
 
 MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) {
   opt_ = opt;
+  // Un-escape HTML-escaped sources before anything looks at the characters.
+  std::string src = text;
+  bool unescaped = false;
+  if (opt_.entities != MdOptions::EntOff) {
+    if (opt_.entities == MdOptions::EntForce || looks_entity_escaped(src)) {
+      src = decode_entities(src);
+      unescaped = true;
+    }
+  }
   MdDocument doc;
   doc_ = &doc;
   (void)doc_;
+  doc.entities_unescaped = unescaped;
   // normalise line endings and expand tabs
   std::string norm;
-  norm.reserve(text.size());
-  for (size_t i = 0; i < text.size(); i++) {
-    if (text[i] == '\r') continue;
-    if (text[i] == '\t') { norm += "    "; continue; }
-    norm += text[i];
+  norm.reserve(src.size());
+  for (size_t i = 0; i < src.size(); i++) {
+    if (src[i] == '\r') continue;
+    if (src[i] == '\t') { norm += "    "; continue; }
+    norm += src[i];
   }
   lines_ = split_lines(norm);
   lines_.push_back("");  // sentinel

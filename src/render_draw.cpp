@@ -71,7 +71,7 @@ void DocView::draw_line(Screen& scr, int x0, int y0, int w, const Line& line, in
         if (r.img >= 0) continue;  // graphics are placed separately
         RGB fg = r.style.has_color ? r.style.color : theme_.fg;
         RGB bg = theme_.bg;
-        if (r.style.kind == Span::Code) bg = theme_.code_bg;
+        if (r.style.kind == Span::Code) bg = theme_.flat_bg ? theme_.bg : theme_.code_bg;
         if (r.style.kind == Span::Code && !r.style.has_color) fg = theme_.code_fg;
         uint8_t attr = 0;
         if (r.style.bold) attr |= A_BOLD;
@@ -100,7 +100,7 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
   if (clines.empty()) clines.push_back("");
   int frame_x = x0 + 0;
   int frame_w = std::min(cols_ - frame_x, content_w_ + 2);
-  RGB bg = theme_.code_bg;
+  RGB bg = theme_.flat_bg ? theme_.bg : theme_.code_bg;
   RGB frame = theme_.code_frame;
   // background
   for (int yy = top; yy < top + rows; yy++)
@@ -171,7 +171,7 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
       int x = x0 + 1 + tc.x;
       RGB border = theme_.table_border;
       RGB fg = tc.header ? theme_.table_header_fg : theme_.fg;
-      RGB bg = tc.header ? theme_.table_header_bg : theme_.bg;
+      RGB bg = (tc.header && !theme_.flat_bg) ? theme_.table_header_bg : theme_.bg;
       scr.put(x - 1, yy, 0x2502, border, theme_.bg);
       for (int k = 0; k < tc.width; k++) scr.put(x + k, yy, ' ', fg, bg);
       int tw = str_width(tc.text);

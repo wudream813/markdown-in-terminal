@@ -107,7 +107,10 @@ std::string Screen::emit_sgr(const Cell& c, const Cell& prev) {
   if (c.attr & A_UNDER) out += ";4";
   if (c.attr & A_STRIKE) out += ";9";
   if (c.attr & A_REVERSE) out += ";7";
-  out += fmt(";38;2;%d;%d;%d;48;2;%d;%d;%dm", c.fg.r, c.fg.g, c.fg.b, c.bg.r, c.bg.g, c.bg.b);
+  out += fmt(";38;2;%d;%d;%d", c.fg.r, c.fg.g, c.fg.b);
+  if (use_default_bg_ && c.bg == def_bg_) out += ";49";   // terminal's own background
+  else out += fmt(";48;2;%d;%d;%d", c.bg.r, c.bg.g, c.bg.b);
+  out += "m";
   return out;
 }
 
@@ -339,20 +342,48 @@ Terminal::KeyEvent Terminal::read_event(int timeout_ms) {
     KeyEvent k;
     if (inbuf_.empty()) return k;
     unsigned char c = (unsigned char)inbuf_[0];
+    // A CSI sequence normally starts with ESC.  Some Windows consoles eat the
+    // ESC of a mouse report (their own VT input parser consumes it), so a chunk
+    // starting with "[<" / "[M" is accepted as a CSI sequence too - only a
+    // well-formed report matches, so ordinary typed text is unaffected.
+    if (c != 0x1b && c == '[' && inbuf_.size() >= 2 && (inbuf_[1] == '<' || inbuf_[1] == 'M')) {
+      inbuf_.insert(inbuf_.begin(), '\x1b');  // synthesise the swallowed ESC
+      c = 0x1b;
+    }
     if (c == 0x1b) {
       if (inbuf_.size() == 1) return k;  // need more
-      unsigned char c1 = (unsigned char)inbuf_[1];
-      if (c1 == '[' || c1 == 'O') {
-        size_t i = 2;
+      const size_t lead = 1;  // index of '[' or 'O'
+      if ((inbuf_[lead] == '[' || inbuf_[lead] == 'O') && inbuf_.size() >= lead + 2 &&
+          inbuf_[1] == '[' && inbuf_[lead + 1] == 'M') {
+        // X10 mouse report: three raw bytes follow.  Terminals without SGR
+        // mouse mode report the wheel this way.
+        if (inbuf_.size() < lead + 5) return k;  // need more
+        int b = (unsigned char)inbuf_[lead + 2] - 32;
+        int mx = (unsigned char)inbuf_[lead + 3] - 33;
+        int my = (unsigned char)inbuf_[lead + 4] - 33;
+        inbuf_.erase(0, lead + 5);
+        k.type = KeyEvent::Mouse; k.code = b; k.mx = mx; k.my = my;
+        if (b & 64) { if (b & 1) k.wheel_down = true; else k.wheel_up = true; }
+        k.drag = (b & 32) != 0;
+        return k;
+      }
+      {
+        size_t i = lead + 1;
         std::string body;
-        while (i < inbuf_.size() && (isalnum((unsigned char)inbuf_[i]) || inbuf_[i] == ';' || inbuf_[i] == '<' ||
-                                     inbuf_[i] == '?' || inbuf_[i] == '>' || inbuf_[i] == ':' || inbuf_[i] == '\'')) {
-          body += inbuf_[i++];
+        // CSI grammar: parameters (0x30-0x3F) and intermediates (0x20-0x2F)
+        // come first, then exactly one final byte (0x40-0x7E).  Scanning for
+        // "anything alphanumeric" instead swallowed the final byte of SGR mouse
+        // reports (\x1b[<64;40;12M), so the wheel never reached the app.
+        while (i < inbuf_.size()) {
+          unsigned char b = (unsigned char)inbuf_[i];
+          if (b < 0x20 || b > 0x3f) break;
+          body += (char)b;
+          i++;
         }
         if (i >= inbuf_.size()) return k;  // incomplete
         char final = inbuf_[i];
         inbuf_.erase(0, i + 1);
-        if (!body.empty() && (body[0] == '<' || body[0] == '>')) {  // mouse
+        if (!body.empty() && (body[0] == '<' || body[0] == '>')) {  // SGR mouse
           char btn = body[0];
           auto parts = split(body.substr(1), ';');
           if (parts.size() >= 3) {
@@ -360,7 +391,7 @@ Terminal::KeyEvent Terminal::read_event(int timeout_ms) {
             k.type = KeyEvent::Mouse; k.code = b;
             k.mx = atoi(parts[1].c_str()) - 1; k.my = atoi(parts[2].c_str()) - 1;
             if (btn == '<' && (b & 64)) { if (b & 1) k.wheel_down = true; else k.wheel_up = true; }
-            (void)final;
+            k.drag = (b & 32) != 0;
             return k;
           }
           return k;
@@ -391,11 +422,10 @@ Terminal::KeyEvent Terminal::read_event(int timeout_ms) {
           case 'Z': k.code = K_TAB; break;  // shift-tab: treat as tab
           default: k.code = 0; break;
         }
-        if (final == 'O') k.code = 0;
         return k;
       }
-      if (c1 == 'O') return k;
-      // Alt+key or bare ESC
+    }
+    if (c == 0x1b) {  // bare ESC or Alt+key
       inbuf_.erase(0, 1);
       k.type = KeyEvent::Special; k.code = K_ESC;
       return k;

@@ -14,6 +14,10 @@ struct AppOptions {
   bool no_color = false;
   bool show_line_numbers = false;
   bool syntax = true;
+  std::string entities = "auto";   // auto | off | force - HTML-escaped sources
+  bool panels = false;             // draw tinted backgrounds behind code/quote/table
+  bool terminal_bg = false;        // leave the background to the terminal
+  bool scrollbar = true;           // show a scrollbar when the document is taller
   int font_px = 0;                 // override the derived em size
   int width = 0;                   // force a width in columns (dump/screenshot)
   int height = 0;

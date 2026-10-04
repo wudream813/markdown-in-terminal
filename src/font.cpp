@@ -52,7 +52,11 @@ std::vector<std::string> scan_font_dirs() {
   std::string wf, uf;
   plat::system_font_dirs(wf, uf);
   const char* extra[] = {
-    "/usr/share/fonts", "/usr/local/share/fonts", "/Library/Fonts", "/System/Library/Fonts",
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    "/Library/Fonts",                       // macOS (user-installed)
+    "/System/Library/Fonts",                // macOS (Menlo, Monaco, ...)
+    "/System/Library/Fonts/Supplemental",   // macOS (older system fonts)
   };
   std::vector<std::string> dirs;
   if (!wf.empty()) dirs.push_back(wf);
@@ -95,6 +99,8 @@ std::vector<std::string> cjk_scan() {
   if (!uf.empty()) dirs.push_back(uf);
   dirs.push_back("/usr/share/fonts/opentype/noto");
   dirs.push_back("/usr/share/fonts/truetype/noto");
+  dirs.push_back("/System/Library/Fonts");               // PingFang, Hiragino (macOS)
+  dirs.push_back("/System/Library/Fonts/Supplemental");  // Songti, STHeiti (macOS)
   const char* keys[] = {"msyh", "msjh", "simsun", "simhei", "notosanscjk", "notoserifcjk",
                         "sourcehansans", "pingfang", "wqy", "uming", "ukai", "hiragino"};
   for (const std::string& dir : dirs) {

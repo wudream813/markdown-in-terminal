@@ -12,6 +12,7 @@ VERSION  ?= 0.1.0
 OPT      ?= -O2
 CXXFLAGS ?= -std=c++17 $(OPT) -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare \
             -Isrc -Ivendor -DMDT_VERSION="\"$(VERSION)\""
+CXXFLAGS += -MMD -MP          # track header dependencies (see DEPS below)
 CFLAGS   ?= -std=c11 $(OPT) -w -funsigned-char -D_GNU_SOURCE -Ivendor/quickjs \
             -DCONFIG_VERSION="\"2025-09-13\""
 LDLIBS   ?= -lm -lpthread -ldl
@@ -42,6 +43,7 @@ C_SRC   := vendor/quickjs/quickjs.c vendor/quickjs/libregexp.c vendor/quickjs/li
 GEN_SRC := src/generated/assets_js.cpp
 
 CPP_OBJ := $(patsubst %.cpp,$(BUILD)/%.o,$(CPP_SRC))
+DEPS    := $(CPP_OBJ:.o=.d)
 C_OBJ   := $(patsubst %.c,$(BUILD)/%.o,$(C_SRC))
 GEN_OBJ := $(patsubst %.cpp,$(BUILD)/%.o,$(GEN_SRC))
 OBJ     := $(CPP_OBJ) $(C_OBJ) $(GEN_OBJ)
@@ -102,3 +104,8 @@ windows32:
 .PHONY: all-platforms windows windows32
 windows:
 	$(MAKE) BUILD=build/win CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
+
+# header dependencies written by -MMD: without these a change to a .h file only
+# rebuilds the .cpp that directly includes it, leaving other objects compiled
+# against the old struct layout (that mismatch shows up as a heap corruption).
+-include $(DEPS)

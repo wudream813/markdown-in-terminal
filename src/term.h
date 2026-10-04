@@ -49,6 +49,9 @@ struct Cell {
 class Screen {
  public:
   void init(int w, int h, RGB fg, RGB bg);
+  // When on, cells that use the page background are emitted as SGR 49 so the
+  // terminal's own background (colour, transparency, image) shows through.
+  void set_terminal_bg(bool on) { use_default_bg_ = on; force_full_ = true; }
   void resize(int w, int h);
   void clear();
   int width() const { return w_; }
@@ -68,6 +71,7 @@ class Screen {
   std::string render_diff();
   std::string render_full();
   void invalidate() { force_full_ = true; }
+  bool using_terminal_bg() const { return use_default_bg_; }
   void set_cursor_hidden(bool hidden) { cursor_hidden_ = hidden; }
 
  private:
@@ -76,6 +80,7 @@ class Screen {
   std::vector<Cell> cells_, prev_;
   bool force_full_ = true;
   bool cursor_hidden_ = true;
+  bool use_default_bg_ = false;
   RGB def_fg_, def_bg_;
 };
 
@@ -131,6 +136,7 @@ class Terminal {
     char ch = 0;
     int mx = 0, my = 0;  // mouse cell coords
     bool wheel_up = false, wheel_down = false;
+    bool drag = false;              // motion event with a button held
   };
   enum Key {
     K_UP = 1000, K_DOWN, K_LEFT, K_RIGHT, K_PGUP, K_PGDN, K_HOME, K_END, K_DEL,

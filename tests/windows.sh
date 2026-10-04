@@ -83,7 +83,15 @@ for th in dark light nord monochrome; do
   [ -s "$TMP/$th.png" ] && echo "   $th ok"
 done
 
-echo "== console mode (pty) =="
+echo "== HTML-escaped source =="
+"$WINE" "$EXE" --dump --width=64 tests/fixtures/escaped.md 2>/dev/null | tr -d '\r' > "$TMP/escaped.txt"
+grep -q "HTML-escaped Markdown" "$TMP/escaped.txt" && echo "   heading restored"
+grep -q "\u2022 first item" "$TMP/escaped.txt" && echo "   list restored"
+
+echo "== mouse + scrollbar (pty) =="
+python3 tools/mouse_test.py "$EXE" "$WINE" || exit 1
+
+echo "== console mode (pty) ="
 if command -v python3 >/dev/null 2>&1; then
   python3 tools/wine_pty_test.py "$EXE" "$WINE" || exit 1
 

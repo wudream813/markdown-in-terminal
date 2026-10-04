@@ -41,6 +41,7 @@ struct Theme {
   RGB status_fg{158, 166, 180};
   RGB marker_bg{58, 63, 74};
   RGB image_frame{60, 66, 80};
+  bool flat_bg = true;     // document panels share the page background
   bool syntax = true;      // light syntax highlighting inside code blocks
   bool sprites = true;     // draw block characters as graphics sprites
   double baseline = 0.76;  // font baseline as a fraction of the cell height

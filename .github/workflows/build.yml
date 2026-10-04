@@ -26,6 +26,20 @@ jobs:
           name: mdt-linux-x86_64
           path: build/mdt
 
+  macos:
+    name: macOS (native)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make -j"$(sysctl -n hw.ncpu)"
+      - name: Tests
+        run: sh tests/smoke.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdt-macos-arm64
+          path: build/mdt
+
   windows:
     name: Windows (MinGW-w64 cross build + wine)
     runs-on: ubuntu-latest

@@ -25,6 +25,18 @@ echo "== maths modes =="
 "$BIN" --math=unicode --dump --width=60 demo/demo.md | grep -q '√' && echo "  unicode fallback ok"
 "$BIN" --math=off --screenshot="$TMP/nomath.png" --width=80 --height=20 demo/demo.md > /dev/null && echo "  maths off ok"
 
+echo "== HTML-escaped source =="
+"$BIN" --dump --width=64 tests/fixtures/escaped.md > "$TMP/escaped.txt"
+grep -q "HTML-escaped Markdown" "$TMP/escaped.txt" && echo "  heading restored"
+grep -q "• first item" "$TMP/escaped.txt" && echo "  list restored"
+grep -q "┌" "$TMP/escaped.txt" && echo "  table restored"
+grep -q "int x = 1" "$TMP/escaped.txt" && echo "  code block restored"
+"$BIN" --entities=off --dump --width=64 tests/fixtures/escaped.md | grep -q '\*\*bold\*\*' && echo "  --entities=off leaves the syntax escaped"
+
+
+echo "== mouse + scrollbar (pty) =="
+python3 tools/mouse_test.py "$BIN"
+
 echo "== protocols (pty) =="
 python3 tools/pty_test.py
 

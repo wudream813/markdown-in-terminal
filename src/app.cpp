@@ -93,6 +93,9 @@ struct App {
   struct stat file_stat{};
   bool needs_frame = true;
   bool images_dirty = true;
+  bool show_scrollbar = true;
+  bool terminal_bg = false;
+  bool scrollbar_active = false;   // set while drawing; used for hit testing
 
   void set_status(const std::string& s, double secs = 3.0) {
     status_msg = s;
@@ -120,6 +123,9 @@ bool App::load_file(const std::string& path, std::string* err) {
   stat(path.c_str(), &file_stat);
   MdOptions mo;
   mo.math = (opt.math != "off");
+  mo.entities = opt.entities == "off"      ? MdOptions::EntOff
+                : opt.entities == "force"  ? MdOptions::EntForce
+                                           : MdOptions::EntAuto;
   MarkdownParser parser;
   MdDocument doc = parser.parse(text, mo);
   view.set_width(view_cols());
@@ -201,6 +207,7 @@ void App::render() {
   static Screen scr;
   if (scr.width() != vcols || scr.height() != term.caps.rows)
     scr.init(vcols, term.caps.rows, theme.fg, theme.bg);
+  scr.set_terminal_bg(terminal_bg);
   scr.clear();
 
   view.set_width(vcols);
@@ -208,6 +215,26 @@ void App::render() {
   view.scroll_to(view.scroll_top());
 
   view.draw(scr, 0, 0, vcols, vrows, view.scroll_top());
+
+  // ---- scrollbar ----------------------------------------------------------
+  // It lives in the right margin (content_margin is 1), so it never covers text.
+  scrollbar_active = false;
+  if (show_scrollbar && view.total_rows() > vrows) {
+    scrollbar_active = true;
+    int x = vcols - 1;
+    int total = view.total_rows();
+    int max_scroll = std::max(1, total - vrows);
+    int thumb = std::max(2, (int)std::lround((double)vrows * vrows / (double)total));
+    if (thumb > vrows) thumb = vrows;
+    int travel = vrows - thumb;
+    int top = travel > 0 ? (int)std::lround((double)view.scroll_top() * travel / max_scroll) : 0;
+    top = std::max(0, std::min(travel, top));
+    RGB track = theme.rule, thumb_fg = theme.bullet;
+    for (int y = 0; y < vrows; y++) {
+      bool on = y >= top && y < top + thumb;
+      scr.put(x, y, on ? 0x2588 : 0x2502, on ? thumb_fg : track, theme.bg, 0);
+    }
+  }
 
   // ---- overlays -----------------------------------------------------------
   if (toc_open && !outline.empty()) {
@@ -314,6 +341,14 @@ void App::run() {
     if (e.type == Terminal::KeyEvent::Mouse) {
       if (e.wheel_up) { view.scroll_by(-3); needs_frame = true; }
       else if (e.wheel_down) { view.scroll_by(3); needs_frame = true; }
+      else if (scrollbar_active && e.mx >= view_cols() - 1 && e.my >= 0 && e.my < view_rows()) {
+        // click on the scrollbar: jump to the proportional position
+        int total = view.total_rows(), vrows = view_rows();
+        int max_scroll = std::max(0, total - vrows);
+        double frac = vrows > 1 ? (double)e.my / (double)(vrows - 1) : 0.0;
+        view.scroll_to((int)std::lround(frac * max_scroll));
+        needs_frame = true;
+      }
       else if (toc_open && toc_panel_w > 0 && e.my >= 1 && e.mx >= term.caps.cols - toc_panel_w) {
         int idx = toc_off + (e.my - 1);
         if (idx >= 0 && idx < (int)outline.size()) {
@@ -531,6 +566,9 @@ int run_app(const AppOptions& opts) {
   app.opt = opts;
   app.theme = theme_by_name(opts.theme);
   app.theme.syntax = opts.syntax;
+  app.theme.flat_bg = !opts.panels;
+  app.show_scrollbar = opts.scrollbar;
+  app.terminal_bg = opts.terminal_bg;
   std::string err;
 
   app.math.init(opts.math == "katex", &err);
@@ -576,6 +614,9 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
   int width = opt.width > 0 ? opt.width : 100;
   MdOptions mo;
   mo.math = (opt.math != "off");
+  mo.entities = opt.entities == "off"      ? MdOptions::EntOff
+                : opt.entities == "force"  ? MdOptions::EntForce
+                                           : MdOptions::EntAuto;
   MarkdownParser parser;
   MdDocument doc = parser.parse(text, mo);
 
@@ -638,6 +679,9 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
 
   MdOptions mo;
   mo.math = (opt.math != "off");
+  mo.entities = opt.entities == "off"      ? MdOptions::EntOff
+                : opt.entities == "force"  ? MdOptions::EntForce
+                                           : MdOptions::EntAuto;
   MarkdownParser parser;
   MdDocument doc = parser.parse(text, mo);
 
@@ -653,6 +697,7 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   term.caps.gfx = GfxProto::None;
   Theme theme = theme_by_name(opt.theme);
   theme.syntax = opt.syntax;
+  theme.flat_bg = !opt.panels;
   DocView view;
   view.set_terminal(&term);
   view.set_math(&math);
@@ -740,6 +785,10 @@ void print_usage() {
       "appearance\n"
       "  --theme=dark|light|nord|monochrome   colour theme (default: dark)\n"
       "  --toc                                open the outline panel on start\n"
+      "  --panels                             tinted backgrounds for code/quote/table\n"
+      "  --terminal-bg                        keep the terminal's own background\n"
+      "  --no-scrollbar                       hide the scrollbar\n"
+      "  --entities=auto|off|force            HTML-escaped sources (default: auto)\n"
       "\n"
       "non interactive\n"
       "  --dump[=file]                        print a text rendering (no graphics)\n"
@@ -749,6 +798,7 @@ void print_usage() {
       "  -h, --help / -v, --version\n"
       "\n"
       "keys\n"
+          "  wheel        scroll           click on the scrollbar   jump through the file\n"
       "  j k down up   scroll        space b      page        g G     top / bottom\n"
       "  J K           headings      Tab          outline     / n N   search\n"
       "  t             theme         r reload     o       open link      ? help\n"

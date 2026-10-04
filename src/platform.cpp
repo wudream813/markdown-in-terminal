@@ -163,7 +163,12 @@ std::string path_separator() { return "/"; }
 void system_font_dirs(std::string& windows_fonts, std::string& user_fonts) {
   windows_fonts.clear();
   const char* home = getenv("HOME");
-  user_fonts = home ? std::string(home) + "/.fonts" : "";
+  if (!home) { user_fonts.clear(); return; }
+#ifdef __APPLE__
+  user_fonts = std::string(home) + "/Library/Fonts";
+#else
+  user_fonts = std::string(home) + "/.fonts";
+#endif
 }
 
 }  // namespace plat

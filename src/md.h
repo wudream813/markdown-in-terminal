@@ -61,12 +61,15 @@ struct LinkRef {
 
 struct MdDocument {
   std::vector<Block> blocks;
+  bool entities_unescaped = false;  // the source looked HTML-escaped and was decoded
   std::string title;               // first h1 if present
   std::vector<LinkRef> links;      // all links in document order
   std::vector<std::pair<int, std::string>> outline;  // (block index, heading text)
 };
 
 struct MdOptions {
+  enum Entities { EntOff = 0, EntAuto = 1, EntForce = 2 };
+  int entities = EntAuto;    // decode HTML character references (see md.cpp)
   bool math = true;          // recognise $...$ / $$...$$
   bool tables = true;
   bool strikethrough = true;

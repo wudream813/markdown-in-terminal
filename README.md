@@ -32,6 +32,16 @@ self-contained binary.
   of disappearing. `m` toggles between typeset and plain maths live.
 * **Runs on Windows too.** The same source builds a self-contained `mdt.exe`
   with MinGW-w64 (one `make windows`); see the cross compilation section below.
+* **Mouse and scrollbar.** The wheel scrolls (SGR *and* X10 mouse reports,
+  so it also works in terminals without SGR mouse mode), clicking the
+  scrollbar in the right margin jumps through the document, and clicking
+  links/headings/outline entries works as before.
+* **Forgiving with HTML-escaped Markdown.** Files that came out of an HTML
+  pipeline ("copy as markdown", CMS exports) arrive with every Markdown
+  character written as a character reference - `&#35;` for `#`, `&#x09;` for a
+  tab. mdt detects that shape and decodes the source before parsing, so
+  headings, bold/italic, links, lists, tables and code-block indentation come
+  back. `--entities=off` turns it off, `--entities=force` always decodes.
 * **Leaves the terminal usable.** Normal exit, `kill`, Ctrl-C/Ctrl-Break and a
   closed console window all hand the terminal back: alt screen off, mouse
   reporting off, cursor shown, tty modes (termios / `SetConsoleMode`) restored.
@@ -46,6 +56,11 @@ make -j            # produces build/mdt  (needs a C11 + C++17 compiler)
 # or
 cmake -B build && cmake --build build -j
 ```
+
+Linux and macOS both build from the same sources (the POSIX branch of
+`src/platform.cpp`; on macOS the reader looks for Menlo/Monaco in
+`/System/Library/Fonts` and PingFang in `/System/Library/Fonts/Supplemental`).
+There is nothing to install beyond a compiler and `make`.
 
 Everything else is vendored: `stb_truetype/stb_image/stb_image_write/stb_image_resize2`
 and QuickJS-NG. `python3` is only needed when you change the JS bundle
@@ -225,6 +240,15 @@ rasterised. If a deferred formula turns out to be bigger or smaller than the
 layout estimate, the document is relaid out once (metrics are cached by then) so
 the final geometry is exact.
 
+## Display options
+
+| Flag | Effect |
+|---|---|
+| `--panels` | tinted backgrounds behind code blocks, quotes and table headers (off by default: the page uses one background colour) |
+| `--terminal-bg` | emit SGR 49 for the page background, so the terminal's own colour/transparency shows through |
+| `--no-scrollbar` | hide the scrollbar |
+| `--entities=auto\|off\|force` | control the HTML-entity decoding described above |
+
 ## Notes / limitations
 
 * Block-level maths is centred and drawn as a bitmap; very wide equations are
@@ -239,6 +263,8 @@ the final geometry is exact.
   10 1703+ conhost); it turns VT processing on itself, so `cmd.exe` works too.
   Kitty/iTerm2 protocols are a POSIX-terminal thing — on Windows you get sixel
   (Windows Terminal 1.22+, WezTerm, mintty) or the Unicode maths fallback.
+* Mouse input is parsed from both SGR (`\x1b[<b;x;yM`) and X10 (`\x1b[M`) reports;
+  the wheel scrolls three lines per notch, the scrollbar jumps proportionally.
 * Resizes: POSIX uses SIGWINCH, Windows polls `GetConsoleScreenBufferInfo`
   (conhost and Windows Terminal update it on resize). Wine's console reports a
   fixed size and never follows pty resizes, so `tools/resize_test.py` skips the
