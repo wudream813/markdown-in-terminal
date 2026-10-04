@@ -113,6 +113,11 @@ struct PlacedImage {
 
 class Terminal {
  public:
+  // Probes the terminal (cell size, window size, sixel, kitty graphics) and
+  // waits up to timeout_ms for the answers.  Also used by --diag and
+  // --list-caps, which need the geometry without entering the reader.
+  void query_capabilities(int timeout_ms);
+
   TermCaps caps;
   RGB image_bg{24, 26, 31};  // colour used to composite transparent images
 
@@ -176,7 +181,7 @@ class Terminal {
   std::map<size_t, SixelEntry> sixel_cache_;
   static size_t hash_bytes(const uint8_t* p, size_t n);
   int frame_no_ = 0;
-  void query_capabilities(int timeout_ms);
+
   std::string kitty_transmit(int id, const std::vector<uint8_t>& png);
   std::string kitty_place(int id, int cols, int rows, int sub_x, int sub_y);
   std::string kitty_delete_all_placements();

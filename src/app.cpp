@@ -770,6 +770,26 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
   printf("  stdout is a tty : %s", tc ? "yes" : "no");
   if (cols > 0) printf(", %dx%d cells", cols, rows);
   printf("\n");
+  if (tc && (pxw <= 0 || pxh <= 0)) {
+    // No pixel geometry from the ioctl: ask the terminal (it answers CSI 16 t).
+    // The tty has to be raw for the answer to arrive un-echoed and un-buffered.
+    plat::raw_begin();
+    Terminal probe;
+    probe.caps.cols = cols > 0 ? cols : 80;
+    probe.caps.rows = rows > 0 ? rows : 24;
+    probe.query_capabilities(250);
+    plat::raw_end();
+    pxw = probe.caps.win_w;
+    pxh = probe.caps.win_h;
+    if (probe.caps.cell_w > 0) { pxw = probe.caps.cell_w * cols; pxh = probe.caps.cell_h * rows; }
+  }
+  if (cols > 0 && pxw > 0 && pxh > 0) {
+    int cw = (int)std::lround((double)pxw / cols), ch = (int)std::lround((double)pxh / rows);
+    printf("  cell size       : %dx%d px  (images are rasterised onto this grid and "
+           "drawn 1:1)\n", cw, ch);
+  } else {
+    printf("  cell size       : unknown - formulas are placed at their own pixel size\n");
+  }
   TermCaps caps;
   caps.cols = cols > 0 ? cols : 80;
   caps.rows = rows > 0 ? rows : 24;
