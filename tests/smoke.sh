@@ -32,6 +32,8 @@ grep -q "• first item" "$TMP/escaped.txt" && echo "  list restored"
 grep -q "┌" "$TMP/escaped.txt" && echo "  table restored"
 grep -q "int x = 1" "$TMP/escaped.txt" && echo "  code block restored"
 "$BIN" --entities=off --dump --width=64 tests/fixtures/escaped.md | grep -q '\*\*bold\*\*' && echo "  --entities=off leaves the syntax escaped"
+"$BIN" --dump --width=64 tests/fixtures/escaped-twice.md | grep -q "Escaped twice" && echo "  double-escaped source decoded"
+"$BIN" --dump --width=64 tests/fixtures/normal-entities.md | grep -q "AT&T and 5 < 7" && echo "  ordinary entities untouched"
 
 
 echo "== mouse + scrollbar (pty) =="

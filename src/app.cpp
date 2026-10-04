@@ -301,6 +301,7 @@ void App::render() {
   int src_line = 0;
   if (block >= 0 && block < (int)view.doc().blocks.size()) src_line = view.doc().blocks[(size_t)block].src_line;
   std::string engine = math.has_js() ? "katex" : "unicode";
+  if (view.doc().entities_unescaped) engine += " +entities";
   std::string msg = status_msg;
   if (now_ms() > status_until) msg.clear();
   std::string text;
@@ -599,7 +600,9 @@ int run_app(const AppOptions& opts) {
     return 1;
   }
   app.toc_open = opts.toc;
-  app.set_status(fmt("%s  |  ? for help", gfx_name(app.term.caps.gfx)), 4);
+  app.set_status(fmt("%s%s  |  ? for help",
+                     gfx_name(app.term.caps.gfx),
+                     app.view.doc().entities_unescaped ? "  |  decoded HTML entities" : ""), 5);
   app.run();
   app.term.shutdown();
   return 0;

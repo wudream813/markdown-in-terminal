@@ -80,8 +80,12 @@ bool looks_entity_escaped(const std::string& s) {
         if (semi != std::string::npos && semi - i <= 9) {
           std::string name = s.substr(i + 1, semi - i - 1);
           if (name == "amp" || name == "lt" || name == "gt" || name == "quot" || name == "apos" ||
-              name == "nbsp")
+              name == "nbsp") {
             total++;
+            // "&amp;#35;" is a numeric reference that was escaped twice - a
+            // strong hint that the whole document came through such a pipeline.
+            if (name == "amp" && semi + 1 < s.size() && s[semi + 1] == '#') syntax++;
+          }
         }
       }
       continue;
@@ -998,8 +1002,15 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
   bool unescaped = false;
   if (opt_.entities != MdOptions::EntOff) {
     if (opt_.entities == MdOptions::EntForce || looks_entity_escaped(src)) {
-      src = decode_entities(src);
-      unescaped = true;
+      // Decode repeatedly: content that was escaped twice (&amp;#35;) needs two
+      // passes.  Bounded so a pathological file cannot loop.
+      for (int pass = 0; pass < 3; pass++) {
+        std::string next = decode_entities(src);
+        unescaped = true;
+        if (next == src) break;
+        src = next;
+        if (!looks_entity_escaped(src)) break;
+      }
     }
   }
   MdDocument doc;
