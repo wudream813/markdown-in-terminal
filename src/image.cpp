@@ -4,7 +4,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef _WIN32
+#include <process.h>
+#define popen _popen
+#define pclose _pclose
+#else
 #include <sys/wait.h>
+#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_HDR

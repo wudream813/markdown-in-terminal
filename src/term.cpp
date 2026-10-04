@@ -1,14 +1,10 @@
 #include "term.h"
 
-#include <fcntl.h>
-#include <signal.h>
-#include <sys/ioctl.h>
-#include <sys/select.h>
-#include <termios.h>
-#include <unistd.h>
+#include "platform.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 
@@ -23,17 +19,7 @@ const char* gfx_name(GfxProto p) {
   }
 }
 
-static volatile sig_atomic_t g_winch = 0;
-static void on_winch(int) { g_winch = 1; }
-
-static void wout(const std::string& s) {
-  size_t off = 0;
-  while (off < s.size()) {
-    ssize_t n = ::write(STDOUT_FILENO, s.data() + off, s.size() - off);
-    if (n <= 0) return;
-    off += (size_t)n;
-  }
-}
+static void wout(const std::string& s) { plat::write_out(s.data(), s.size()); }
 
 // ============================================================ Screen ========
 void Screen::init(int w, int h, RGB fg, RGB bg) {
@@ -170,26 +156,22 @@ bool Terminal::init(const std::string& gfx_override) {
   caps.term_name = getenv("TERM") ? getenv("TERM") : "";
   if (const char* tp = getenv("TERM_PROGRAM")) caps.term_program = tp;
   if (const char* cv = getenv("COLORTERM")) caps.truecolor = (strstr(cv, "truecolor") || strstr(cv, "24bit"));
+#ifdef _WIN32
+  // Windows Terminal / conhost do not set TERM; WT_SESSION identifies WT.
+  if (caps.term_program.empty() && getenv("WT_SESSION")) caps.term_program = "Windows Terminal";
+  if (caps.term_name.empty() && caps.term_program == "Windows Terminal") caps.term_name = "xterm-256color";
+#endif
 
-  if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+  if (!plat::stdin_is_tty() || !plat::stdout_is_tty()) {
     fprintf(stderr, "mdt: not running on a terminal (stdin/stdout must be a tty)\n");
     return false;
   }
-  struct termios tio;
-  if (tcgetattr(STDIN_FILENO, &tio) != 0) return false;
-  auto* saved = new termios(tio);
-  old_termios_ = saved;
+  std::string rerr;
+  if (!plat::raw_begin(&rerr)) {
+    fprintf(stderr, "mdt: cannot switch the terminal to raw mode (%s)\n", rerr.c_str());
+    return false;
+  }
   raw_saved_ = true;
-  struct termios raw = tio;
-  raw.c_lflag &= ~(ICANON | ECHO | ISIG | IEXTEN);
-  raw.c_iflag &= ~(IXON | ICRNL | BRKINT | INPCK | ISTRIP);
-  raw.c_oflag &= ~(OPOST);
-  raw.c_cc[VMIN] = 0;
-  raw.c_cc[VTIME] = 0;
-  tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-
-  signal(SIGWINCH, on_winch);
-  signal(SIGPIPE, SIG_IGN);
 
   wout("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H");  // alt screen
   wout("\x1b[?1000h\x1b[?1006h");              // mouse: wheel + SGR coords
@@ -231,12 +213,9 @@ void Terminal::query_capabilities(int timeout_ms) {
   std::string resp;
   double deadline = now_ms() + timeout_ms;
   while (now_ms() < deadline) {
-    fd_set rf; FD_ZERO(&rf); FD_SET(STDIN_FILENO, &rf);
-    struct timeval tv; tv.tv_sec = 0; tv.tv_usec = 30000;
-    int r = select(STDIN_FILENO + 1, &rf, nullptr, nullptr, &tv);
-    if (r <= 0) continue;
+    if (!plat::wait_input(30)) continue;
     char buf[1024];
-    ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
+    int n = plat::read_input(buf, sizeof(buf));
     if (n <= 0) break;
     resp.append(buf, (size_t)n);
     if (resp.find("\x1b\\") != std::string::npos && resp.find('c') != std::string::npos) {
@@ -297,10 +276,9 @@ void Terminal::shutdown() {
   if (!initialized_) return;
   clear_images();
   wout("\x1b[?2026l\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[0m\x1b[?1049l");
-  if (raw_saved_ && old_termios_) {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, (const struct termios*)old_termios_);
-    delete (struct termios*)old_termios_;
-    old_termios_ = nullptr;
+  if (raw_saved_) {
+    plat::raw_end();
+    raw_saved_ = false;
   }
   initialized_ = false;
 }
@@ -309,33 +287,28 @@ void Terminal::set_title(const std::string& t) { wout("\x1b]0;" + t + "\x07"); }
 void Terminal::set_clipboard(const std::string& s) { wout("\x1b]52;c;" + base64_encode((const uint8_t*)s.data(), s.size()) + "\x07"); }
 
 void Terminal::handle_resize() {
-  struct winsize ws;
-  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
-    if (ws.ws_col > 0) caps.cols = ws.ws_col;
-    if (ws.ws_row > 0) caps.rows = ws.ws_row;
-    if (ws.ws_xpixel > 0) { caps.win_w = ws.ws_xpixel; caps.win_h = ws.ws_ypixel;
+  int cols = caps.cols, rows = caps.rows, px_w = 0, px_h = 0;
+  if (plat::window_size(cols, rows, px_w, px_h)) {
+    caps.cols = cols;
+    caps.rows = rows;
+    if (px_w > 0 && px_h > 0) {
+      caps.win_w = px_w;
+      caps.win_h = px_h;
       if (caps.cols > 0) caps.cell_w = caps.win_w / caps.cols;
-      if (caps.rows > 0) caps.cell_h = caps.win_h / caps.rows; }
-  } else {
-    const char* c = getenv("COLUMNS"); const char* r = getenv("LINES");
-    if (c) caps.cols = atoi(c);
-    if (r) caps.rows = atoi(r);
+      if (caps.rows > 0) caps.cell_h = caps.win_h / caps.rows;
+    }
   }
   if (caps.cols < 20) caps.cols = 20;
   if (caps.rows < 5) caps.rows = 5;
 }
-bool Terminal::resized() { return g_winch != 0; }
+bool Terminal::resized() { return plat::poll_resize(); }
 
 bool Terminal::poll_input(std::string& out, int timeout_ms) {
-  fd_set rf; FD_ZERO(&rf); FD_SET(STDIN_FILENO, &rf);
-  struct timeval tv; tv.tv_sec = timeout_ms / 1000; tv.tv_usec = (timeout_ms % 1000) * 1000;
-  int r = select(STDIN_FILENO + 1, &rf, nullptr, nullptr, &tv);
-  if (r < 0) return true;
-  if (r == 0) return true;
+  if (!plat::wait_input(timeout_ms)) return true;  // timeout
   char buf[4096];
-  ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
-  if (n < 0) return true;
-  if (n == 0) return false;
+  int n = plat::read_input(buf, sizeof(buf));
+  if (n < 0) return false;  // EOF
+  if (n == 0) return true;
   out.assign(buf, (size_t)n);
   return true;
 }

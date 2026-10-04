@@ -9,12 +9,19 @@
 #include <fstream>
 #include <sstream>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#define stat _stat
+#define stat_struct _stat64
+#else
 #include <unistd.h>
+#endif
 
 #include "font.h"
 #include "image.h"
 #include "math.h"
 #include "md.h"
+#include "platform.h"
 #include "render.h"
 #include "term.h"
 #include "util.h"
@@ -390,11 +397,15 @@ void App::run() {
         if (links.empty()) set_status("no links in this document");
         else {
           std::string url = links[0].url;
-          std::string cmd = "xdg-open '" + url + "' >/dev/null 2>&1 &";
-#ifdef __APPLE__
-          cmd = "open '" + url + "' >/dev/null 2>&1 &";
+          std::string cmd = plat::open_url_command(url);
+#ifdef _WIN32
+          // `start` is a cmd builtin: run it through the shell.
+          std::string full = "cmd /c " + cmd;
+          int rc = system(full.c_str());
+#else
+          int rc = system(cmd.c_str());
 #endif
-          if (system(cmd.c_str()) == 0) set_status("opened: " + url);
+          if (rc == 0) set_status("opened: " + url);
           else set_status("failed to open: " + url);
         }
         break;

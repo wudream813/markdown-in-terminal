@@ -138,7 +138,6 @@ class Terminal {
   bool initialized_ = false;
   bool raw_saved_ = false;
   bool kitty_ok_ = false;
-  void* old_termios_ = nullptr;
   std::string inbuf_;
   int last_cols_ = 0, last_rows_ = 0;
 

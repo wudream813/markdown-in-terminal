@@ -1,4 +1,6 @@
-# build products
 build/
+build-*/
+# build products
 mdt
 *.o
+dist/

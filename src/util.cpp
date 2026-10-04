@@ -8,7 +8,12 @@
 #include <cstring>
 #include <limits.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace mdt {
 
@@ -297,12 +302,18 @@ RGB parse_color(const std::string& in, RGB fallback) {
   return fallback;
 }
 std::string abs_path(const std::string& path) {
+#ifdef _WIN32
+  char buf[_MAX_PATH];
+  if (_fullpath(buf, path.c_str(), _MAX_PATH)) return std::string(buf);
+  return path;
+#else
   char buf[PATH_MAX];
   if (realpath(path.c_str(), buf)) return std::string(buf);
   return path;
+#endif
 }
 std::string dir_name(const std::string& path) {
-  size_t p = path.find_last_of('/');
+  size_t p = path.find_last_of("/\\");
   if (p == std::string::npos) return ".";
   if (p == 0) return "/";
   return path.substr(0, p);

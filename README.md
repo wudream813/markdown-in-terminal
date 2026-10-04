@@ -30,6 +30,8 @@ self-contained binary.
 * **Graceful degradation.** In a terminal without a graphics protocol the
   formulas are transcribed to Unicode (`∑`, `∫`, `√`, sub/superscripts) instead
   of disappearing. `m` toggles between typeset and plain maths live.
+* **Runs on Windows too.** The same source builds a self-contained `mdt.exe`
+  with MinGW-w64 (one `make windows`); see the cross compilation section below.
 * Terminal abilities are probed at run time: cell size in pixels (`CSI 16 t`),
   window size (`CSI 14 t`), sixel support (DA1), kitty graphics support
   (`\x1b_Gi=…,a=q`). The em/cell ratio follows the user's real font.
@@ -46,6 +48,68 @@ Everything else is vendored: `stb_truetype/stb_image/stb_image_write/stb_image_r
 and QuickJS-NG. `python3` is only needed when you change the JS bundle
 (`make assets`). If libcurl is available it is linked in for remote images;
 otherwise the `curl` binary is used as a fallback.
+
+## Building for Windows (MinGW-w64 cross compilation)
+
+Linux and Windows share the whole program; the only OS-specific code is
+`src/platform.{h,cpp}`, which switches between POSIX (termios/ioctl/SIGWINCH)
+and the Win32 console API (`SetConsoleMode`, `ENABLE_VIRTUAL_TERMINAL_*`,
+UTF-8 code pages, `ReadFile`/`WriteFile`, console font probing for the font
+search). Nothing has to be configured — the compiler flags pick the branch.
+
+```sh
+sudo apt install mingw-w64          # or: dnf install mingw64-gcc-c++; brew install mingw-w64
+
+make windows                        # -> build-win/mdt.exe        (x86-64)
+make BUILD=build-win32 \
+     CXX=i686-w64-mingw32-g++ CC=i686-w64-mingw32-gcc     # 32 bit .exe
+sh tools/build_windows.sh           # both builds + dist/*.zip release
+```
+
+With CMake instead:
+
+```sh
+cmake -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-toolchain.cmake
+cmake --build build-win -j
+```
+
+Notes:
+
+* The `.exe` is linked with `-static -static-libgcc -static-libstdc++`, so it
+  depends only on `KERNEL32.dll` and `msvcrt.dll` — no MinGW runtime DLLs to
+  ship, one file to copy.
+* QuickJS (the embedded TeX engine) is cross compiled with
+  `-funsigned-char -D_GNU_SOURCE -DCONFIG_VERSION='"2025-09-13"'` and links
+  against `-lws2_32`.
+* libcurl is not used in the Windows build (a host libcurl cannot be linked
+  into a PE binary); remote images fall back to the `curl` command line.
+* Fonts come from `%WINDIR%\Fonts` (Consolas/Cascadia Mono for text, MS YaHei /
+  SimSun / Noto CJK for wide characters), discovered at runtime.
+
+### Verifying the Windows build
+
+On Windows: `mdt.exe --list-caps`, `mdt.exe demo\demo.md`.
+
+On Linux, with Wine and a pty driver:
+
+```sh
+export WINEPREFIX=~/.wineprefix
+wine64 build-win/mdt.exe --version
+sh tests/windows.sh          # text output, maths, PNG export, themes, console mode
+```
+
+`tests/windows.sh` diffs `--dump` against the native build byte for byte
+(Wine's console adds CRs, which the test strips), renders maths through the
+embedded QuickJS+MathJax engine, checks all four themes and runs
+`tools/wine_pty_test.py`, which drives the console inside a pty and asserts
+that the alt screen, mouse reporting, capability probing and the status line
+all work.
+
+Checked in this repository: `x86_64-w64-mingw32` 14.2.0 + wine 10.0 —
+`--dump` output identical to the Linux build (121 lines), `--screenshot` PNG
+valid, four themes OK, pty console checks pass, imported DLLs
+`KERNEL32.dll`/`msvcrt.dll` only. The 32 bit build compiles and links the same
+way but was not run here (Debian's `wine64` package has no 32 bit support).
 
 ## Usage
 
@@ -118,6 +182,7 @@ text instead of floating.
 
 ```
 src/util.*        UTF-8 + wcwidth tables, strings, base64, colours
+src/platform.*    the only OS-facing code: POSIX tty/window/IO  +  Win32 console
 src/term.*        capabilities, cell framebuffer with diffing, kitty/iTerm2/sixel
 src/md.*          CommonMark subset + GFM tables/strike/task lists + $maths$
 src/svg.*         SVG subset parser + software rasteriser
@@ -133,7 +198,10 @@ vendor/           stb single-file libraries, QuickJS-NG
 `tools/pty_test.py` drives the binary in a pty and checks that each protocol
 really emits its escape sequences. `sh tests/smoke.sh` builds nothing but runs
 the whole battery (themes, maths modes, stdin, text export, all three
-protocols) against `./build/mdt`.
+protocols) against `./build/mdt`. For the Windows build, `sh tests/windows.sh`
+does the same through Wine (including the console path, via
+`tools/wine_pty_test.py`) and compares the rendered text with the native
+binary. `tools/build_windows.sh` makes the release zip.
 
 ## Performance notes
 
@@ -162,6 +230,10 @@ the final geometry is exact.
   resolved yet; `_italic_`/`**bold**` inside words follow the CommonMark rules.
 * HTML blocks are reduced to their text content, and tables inside block quotes
   are simplified.
+* On Windows the reader needs a VT-capable terminal (Windows Terminal, Windows
+  10 1703+ conhost); it turns VT processing on itself, so `cmd.exe` works too.
+  Kitty/iTerm2 protocols are a POSIX-terminal thing — on Windows you get sixel
+  (Windows Terminal 1.22+, WezTerm, mintty) or the Unicode maths fallback.
 
 MIT licensed. Vendored components keep their own licences
 (stb — public domain/MIT, QuickJS-NG — MIT, MathJax — Apache-2.0).

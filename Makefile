@@ -7,7 +7,6 @@
 CXX      ?= g++
 CC       ?= gcc
 BUILD    ?= build
-BIN      := $(BUILD)/mdt
 VERSION  ?= 0.1.0
 
 OPT      ?= -O2
@@ -17,8 +16,26 @@ CFLAGS   ?= -std=c11 $(OPT) -w -funsigned-char -D_GNU_SOURCE -Ivendor/quickjs \
             -DCONFIG_VERSION="\"2025-09-13\""
 LDLIBS   ?= -lm -lpthread -ldl
 
-CPP_SRC := src/main.cpp src/app.cpp src/md.cpp src/render.cpp src/render_draw.cpp \
-           src/term.cpp src/image.cpp src/svg.cpp src/math.cpp src/font.cpp src/util.cpp
+# ------------------------------------------------------- cross compilation ---
+# Windows (MinGW-w64):
+#   make CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
+#   make CXX=i686-w64-mingw32-g++   CC=i686-w64-mingw32-gcc     (32 bit)
+WINDOWS :=
+ifneq ($(findstring mingw,$(CXX)),)
+  WINDOWS  := 1
+  BUILD    := $(if $(filter build,$(BUILD)),build-win,$(BUILD))
+  WIN_DEFS := -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0601 -DNOMINMAX -DMDT_WINDOWS
+  CXXFLAGS += $(WIN_DEFS)
+  CFLAGS   += $(WIN_DEFS)
+  # static libgcc/libstdc++/winpthread so the .exe has no MinGW DLL deps
+  LDLIBS   := -lm -lws2_32 -static -static-libgcc -static-libstdc++
+endif
+
+BIN      := $(BUILD)/mdt$(if $(WINDOWS),.exe,)
+
+CPP_SRC := src/main.cpp src/app.cpp src/render.cpp src/render_draw.cpp src/md.cpp \
+           src/term.cpp src/platform.cpp src/image.cpp src/svg.cpp src/math.cpp \
+           src/font.cpp src/util.cpp
 C_SRC   := vendor/quickjs/quickjs.c vendor/quickjs/libregexp.c vendor/quickjs/libunicode.c \
            vendor/quickjs/cutils.c vendor/quickjs/xsum.c vendor/quickjs/quickjs-libc.c
 GEN_SRC := src/generated/assets_js.cpp
@@ -29,11 +46,14 @@ GEN_OBJ := $(patsubst %.cpp,$(BUILD)/%.o,$(GEN_SRC))
 OBJ     := $(CPP_OBJ) $(C_OBJ) $(GEN_OBJ)
 
 # optional: link against libcurl for remote images if pkg-config knows it
-CURL_CFLAGS := $(shell pkg-config --cflags libcurl 2>/dev/null)
-CURL_LIBS   := $(shell pkg-config --libs libcurl 2>/dev/null)
-ifneq ($(CURL_LIBS),)
-  CXXFLAGS += -DMDT_HAVE_CURL=1 $(CURL_CFLAGS)
-  LDLIBS   += $(CURL_LIBS)
+# (skipped for cross builds: a host libcurl cannot be linked into a PE binary)
+ifndef WINDOWS
+  CURL_CFLAGS := $(shell pkg-config --cflags libcurl 2>/dev/null)
+  CURL_LIBS   := $(shell pkg-config --libs libcurl 2>/dev/null)
+  ifneq ($(CURL_LIBS),)
+    CXXFLAGS += -DMDT_HAVE_CURL=1 $(CURL_CFLAGS)
+    LDLIBS   += $(CURL_LIBS)
+  endif
 endif
 
 .PHONY: all clean assets test install
@@ -65,7 +85,16 @@ test: $(BIN)
 	$(CXX) $(CXXFLAGS) -o $(BUILD)/test_math tools/test_math.cpp $(OBJ) $(OPT) $(LDLIBS)
 
 install: $(BIN)
-	install -D -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/bin/mdt
+	install -D -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/bin/$(notdir $(BIN))
 
 clean:
-	rm -rf $(BUILD)
+	rm -rf build build-win dist
+
+# convenience: build both the host binary and the Windows cross build
+all-platforms:
+	$(MAKE) BUILD=build
+	$(MAKE) BUILD=build-win CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
+
+.PHONY: all-platforms windows
+windows:
+	$(MAKE) BUILD=build-win CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc

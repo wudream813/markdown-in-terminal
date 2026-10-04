@@ -1,0 +1,74 @@
+#!/bin/sh
+# End-to-end checks for the cross compiled Windows binary.
+#
+#   sh tests/windows.sh                 # uses wine64 + build-win/mdt.exe
+#   WINE=wine sh tests/windows.sh
+#
+# Verifies the non-interactive pipeline (markdown, fonts, the embedded TeX
+# engine, PNG output) and, when a pty helper is available, the console mode.
+set -e
+
+cd "$(dirname "$0")/.."
+EXE=${EXE:-build-win/mdt.exe}
+WINE=${WINE:-wine64}
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+command -v "$WINE" >/dev/null 2>&1 || WINE=/usr/lib/wine/wine64
+if ! command -v "$WINE" >/dev/null 2>&1; then
+  echo "error: wine not found; install it or set WINE=/path/to/wine64" >&2
+  exit 1
+fi
+[ -f "$EXE" ] || { echo "error: $EXE not found - run: make windows" >&2; exit 1; }
+
+echo "== binary =="
+file "$EXE" | sed 's/^/   /'
+x86_64-w64-mingw32-objdump -p "$EXE" 2>/dev/null | awk '/DLL Name/ {print "   needs " $3}' | sort -u
+
+echo "== version under wine =="
+"$WINE" "$EXE" --version 2>/dev/null | sed 's/^/   /'
+
+echo "== text rendering matches the native build =="
+./build/mdt --dump --width=76 demo/demo.md > "$TMP/native.txt"
+"$WINE" "$EXE" --dump --width=76 demo/demo.md 2>/dev/null > "$TMP/wine_crlf.txt"
+tr -d '\r' < "$TMP/wine_crlf.txt" > "$TMP/windows.txt"
+if diff -q "$TMP/native.txt" "$TMP/windows.txt" >/dev/null; then
+  echo "   identical output ($(wc -l < "$TMP/windows.txt") lines)"
+else
+  echo "   differences:"; diff "$TMP/native.txt" "$TMP/windows.txt" | head -20
+  exit 1
+fi
+
+echo "== maths engine (embedded QuickJS) =="
+printf '# eq\n\n$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$\n' > "$TMP/eq.md"
+"$WINE" "$EXE" --screenshot="$TMP/eq.png" --width=60 --height=14 "$TMP/eq.md" 2>/dev/null | sed 's/^/   /'
+[ -s "$TMP/eq.png" ] && echo "   png written ($(stat -c%s "$TMP/eq.png") bytes)"
+python3 - "$TMP/eq.png" <<'PY'
+import struct, sys
+data = open(sys.argv[1], 'rb').read()
+assert data[:8] == b'\x89PNG\r\n\x1a\n', "not a PNG"
+w, h = struct.unpack('>II', data[16:24])
+print(f"   png is valid: {w}x{h}")
+PY
+
+echo "== unicode fallback (no graphics protocol) =="
+"$WINE" "$EXE" --gfx=none --dump --width=60 demo/demo.md 2>/dev/null | grep -q '∫' && echo "   ∫ present"
+
+echo "== stdin =="
+printf '# t\n\ninline $e^{i\\pi}$ maths\n' | "$WINE" "$EXE" --dump --width=50 - 2>/dev/null | head -3 | sed 's/^/   /'
+
+echo "== themes =="
+for th in dark light nord monochrome; do
+  "$WINE" "$EXE" --theme=$th --screenshot="$TMP/$th.png" --width=70 --height=20 demo/demo.md >/dev/null 2>&1
+  [ -s "$TMP/$th.png" ] && echo "   $th ok"
+done
+
+echo "== console mode (pty) =="
+if command -v python3 >/dev/null 2>&1; then
+  python3 tools/wine_pty_test.py "$EXE" "$WINE" || exit 1
+else
+  echo "   skipped (python3 missing)"
+fi
+
+echo
+echo "all windows checks passed"

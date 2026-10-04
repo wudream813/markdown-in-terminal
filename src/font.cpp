@@ -1,7 +1,12 @@
 #include "font.h"
 
+#include "platform.h"
+
+#include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <dirent.h>
+#include <vector>
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "../vendor/stb_truetype.h"
@@ -24,6 +29,12 @@ const char* kMonoCandidates[] = {
   "C:/Windows/Fonts/consola.ttf",
   "C:/Windows/Fonts/cour.ttf",
 };
+// Extra names worth trying, in priority order (matched case-insensitively
+// against the file name found in the system font directories).
+const char* kPreferredMono[] = {
+  "consola", "cascadia", "lucon", "cour", "menlo", "monaco", "dejavu", "liberation",
+  "ubuntumono", "ubuntumono", "notosansmono", "jetbrains", "sourcecodepro", "hack", "terminus",
+};
 const char* kCjkCandidates[] = {
   "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
   "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
@@ -34,19 +45,92 @@ const char* kCjkCandidates[] = {
   "C:/Windows/Fonts/msyh.ttc",
   "C:/Windows/Fonts/simsun.ttc",
 };
+// Scans the platform font directories and returns candidate paths; on Windows
+// this is how the reader finds consola.ttf / msyh.ttc without hard-coded drives.
+std::vector<std::string> scan_font_dirs() {
+  std::vector<std::string> out;
+  std::string wf, uf;
+  plat::system_font_dirs(wf, uf);
+  const char* extra[] = {
+    "/usr/share/fonts", "/usr/local/share/fonts", "/Library/Fonts", "/System/Library/Fonts",
+  };
+  std::vector<std::string> dirs;
+  if (!wf.empty()) dirs.push_back(wf);
+  if (!uf.empty()) dirs.push_back(uf);
+  for (const char* e : extra) dirs.push_back(e);
+  struct Entry { std::string path; int score; };
+  std::vector<Entry> found;
+  for (const std::string& dir : dirs) {
+    DIR* d = opendir(dir.c_str());
+    if (!d) continue;
+    while (struct dirent* e = readdir(d)) {
+      std::string name = e->d_name;
+      std::string low = to_lower(name);
+      if (low.size() < 4) continue;
+      std::string ext = low.substr(low.size() - 4);
+      if (ext != ".ttf" && ext != ".ttc" && ext != ".otf") continue;
+      int score = 100;
+      for (size_t i = 0; i < sizeof(kPreferredMono) / sizeof(kPreferredMono[0]); i++) {
+        if (low.find(kPreferredMono[i]) != std::string::npos) { score = (int)i; break; }
+      }
+      if (score == 100) continue;
+      found.push_back({dir + "/" + name, score});
+    }
+    closedir(d);
+  }
+  std::sort(found.begin(), found.end(), [](const Entry& a, const Entry& b) {
+    if (a.score != b.score) return a.score < b.score;
+    return a.path < b.path;
+  });
+  for (auto& f : found) out.push_back(f.path);
+  return out;
+}
+
+std::vector<std::string> cjk_scan() {
+  std::vector<std::string> out;
+  std::string wf, uf;
+  plat::system_font_dirs(wf, uf);
+  std::vector<std::string> dirs;
+  if (!wf.empty()) dirs.push_back(wf);
+  if (!uf.empty()) dirs.push_back(uf);
+  dirs.push_back("/usr/share/fonts/opentype/noto");
+  dirs.push_back("/usr/share/fonts/truetype/noto");
+  const char* keys[] = {"msyh", "msjh", "simsun", "simhei", "notosanscjk", "notoserifcjk",
+                        "sourcehansans", "pingfang", "wqy", "uming", "ukai", "hiragino"};
+  for (const std::string& dir : dirs) {
+    DIR* d = opendir(dir.c_str());
+    if (!d) continue;
+    while (struct dirent* e = readdir(d)) {
+      std::string low = to_lower(e->d_name);
+      if (low.size() < 4) continue;
+      std::string ext = low.substr(low.size() - 4);
+      if (ext != ".ttf" && ext != ".ttc" && ext != ".otf") continue;
+      for (const char* k : keys) {
+        if (low.find(k) != std::string::npos) { out.push_back(dir + "/" + e->d_name); break; }
+      }
+    }
+    closedir(d);
+  }
+  return out;
+}
+
 }  // namespace
 
 bool FontRaster::init(int cell_w, int cell_h, std::string* err) {
   cell_w_ = std::max(4, cell_w);
   cell_h_ = std::max(8, cell_h);
-  for (const char* p : kMonoCandidates) {
+  std::vector<std::string> mono_paths;
+  for (const char* p : kMonoCandidates) mono_paths.push_back(p);
+  for (auto& p : scan_font_dirs()) mono_paths.push_back(p);
+  for (const std::string& p : mono_paths) {
     if (!file_exists(p)) continue;
     std::string data;
     if (!read_file(p, data)) continue;
-    ttf_.assign(data.begin(), data.end());
+    std::vector<uint8_t> buf(data.begin(), data.end());
     auto* info = new stbtt_fontinfo();
-    int off = stbtt_GetFontOffsetForIndex(ttf_.data(), 0);
-    if (off < 0 || !stbtt_InitFont(info, ttf_.data(), off)) { delete info; continue; }
+    int off = stbtt_GetFontOffsetForIndex(buf.data(), 0);
+    if (off < 0 || !stbtt_InitFont(info, buf.data(), off)) { delete info; continue; }
+    ttf_.swap(buf);
     info_ = info;
     path_ = p;
     break;
@@ -55,14 +139,18 @@ bool FontRaster::init(int cell_w, int cell_h, std::string* err) {
     if (err) *err = "no usable monospace font found";
     return false;
   }
-  for (const char* p : kCjkCandidates) {
+  std::vector<std::string> cjk_paths;
+  for (const char* p : kCjkCandidates) cjk_paths.push_back(p);
+  for (auto& p : cjk_scan()) cjk_paths.push_back(p);
+  for (const std::string& p : cjk_paths) {
     if (!file_exists(p)) continue;
     std::string data;
     if (!read_file(p, data)) continue;
-    ttf_cjk_.assign(data.begin(), data.end());
+    std::vector<uint8_t> buf(data.begin(), data.end());
     auto* info = new stbtt_fontinfo();
-    int off = stbtt_GetFontOffsetForIndex(ttf_cjk_.data(), 0);
-    if (off < 0 || !stbtt_InitFont(info, ttf_cjk_.data(), off)) { delete info; continue; }
+    int off = stbtt_GetFontOffsetForIndex(buf.data(), 0);
+    if (off < 0 || !stbtt_InitFont(info, buf.data(), off)) { delete info; continue; }
+    ttf_cjk_.swap(buf);
     info_cjk_ = info;
     break;
   }

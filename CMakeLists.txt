@@ -11,6 +11,7 @@ endif()
 set(MDT_VERSION "0.1.0" CACHE STRING "mdt version string")
 
 option(MDT_USE_CURL "link against libcurl when available (remote images)" ON)
+option(MDT_STATIC_MINGW "link the MinGW runtime statically (no DLL dependencies)" ON)
 option(MDT_BUILD_TESTS "build the small developer tools" ON)
 
 find_package(Threads REQUIRED)
@@ -34,7 +35,11 @@ if(MSVC)
 else()
   target_compile_options(qjs PRIVATE -w -funsigned-char)
 endif()
-target_link_libraries(qjs PUBLIC ${CMAKE_DL_LIBS} Threads::Threads m)
+if(MINGW)
+  target_link_libraries(qjs PUBLIC ws2_32)
+else()
+  target_link_libraries(qjs PUBLIC ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
 
 # --------------------------------------------------------------------- mdt ---
 set(MDT_SRC
@@ -44,6 +49,7 @@ set(MDT_SRC
   src/render.cpp
   src/render_draw.cpp
   src/term.cpp
+  src/platform.cpp
   src/image.cpp
   src/svg.cpp
   src/math.cpp
@@ -74,6 +80,23 @@ if(NOT MSVC)
 endif()
 target_link_libraries(mdt PRIVATE qjs)
 
+# ------------------------------------------------------------- Windows ------
+if(MINGW)
+  # ws2_32 is needed by QuickJS' quickjs-libc; the runtime is linked statically
+  # so the produced .exe has no libgcc/libstdc++/winpthread DLL dependencies.
+  target_link_libraries(mdt PRIVATE ws2_32)
+  if(MDT_STATIC_MINGW)
+    target_link_options(mdt PRIVATE -static -static-libgcc -static-libstdc++)
+  endif()
+  target_compile_definitions(mdt PRIVATE WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0601 NOMINMAX MDT_WINDOWS)
+  target_compile_definitions(qjs PRIVATE WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0601)
+endif()
+
+# libcurl is not used for cross builds (a host libcurl cannot be linked into PE)
+if(MINGW)
+  set(MDT_USE_CURL OFF)
+endif()
+
 if(MDT_USE_CURL)
   find_package(CURL QUIET)
   if(CURL_FOUND)
@@ -89,7 +112,10 @@ install(TARGETS mdt RUNTIME DESTINATION bin)
 
 # --------------------------------------------------------------- dev tools ---
 if(MDT_BUILD_TESTS)
-  add_executable(test_math tools/test_math.cpp ${MDT_SRC})
+  # the dev tool brings its own main(): reuse the sources without main.cpp
+  set(MDT_LIB_SRC ${MDT_SRC})
+  list(REMOVE_ITEM MDT_LIB_SRC src/main.cpp)
+  add_executable(test_math tools/test_math.cpp ${MDT_LIB_SRC})
   target_include_directories(test_math PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
   target_compile_definitions(test_math PRIVATE MDT_VERSION="${MDT_VERSION}")
   target_link_libraries(test_math PRIVATE qjs)
