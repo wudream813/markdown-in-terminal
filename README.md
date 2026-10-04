@@ -60,17 +60,16 @@ search). Nothing has to be configured — the compiler flags pick the branch.
 ```sh
 sudo apt install mingw-w64          # or: dnf install mingw64-gcc-c++; brew install mingw-w64
 
-make windows                        # -> build-win/mdt.exe        (x86-64)
-make BUILD=build-win32 \
-     CXX=i686-w64-mingw32-g++ CC=i686-w64-mingw32-gcc     # 32 bit .exe
-sh tools/build_windows.sh           # both builds + dist/*.zip release
+make windows                        # -> build/win/mdt.exe         (x86-64)
+make windows32                      # -> build/win32/mdt.exe       (32 bit)
+sh tools/build_windows.sh           # build + dependency check + dist/*.zip
 ```
 
 With CMake instead:
 
 ```sh
-cmake -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-toolchain.cmake
-cmake --build build-win -j
+cmake -B build/cmake-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-toolchain.cmake
+cmake --build build/cmake-win -j
 ```
 
 Notes:
@@ -93,8 +92,8 @@ On Windows: `mdt.exe --list-caps`, `mdt.exe demo\demo.md`.
 On Linux, with Wine and a pty driver:
 
 ```sh
-export WINEPREFIX=~/.wineprefix
-wine64 build-win/mdt.exe --version
+export WINEPREFIX=~/.wineprefix        # created on first run
+wine64 build/win/mdt.exe --version
 sh tests/windows.sh          # text output, maths, PNG export, themes, console mode
 ```
 

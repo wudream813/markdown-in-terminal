@@ -23,7 +23,8 @@ LDLIBS   ?= -lm -lpthread -ldl
 WINDOWS :=
 ifneq ($(findstring mingw,$(CXX)),)
   WINDOWS  := 1
-  BUILD    := $(if $(filter build,$(BUILD)),build-win,$(BUILD))
+  # keep cross artefacts inside build/ so `make clean` and tooling find them
+  BUILD    := $(if $(filter build,$(BUILD)),build/win,$(BUILD))
   WIN_DEFS := -DWIN32_LEAN_AND_MEAN -D_WIN32_WINNT=0x0601 -DNOMINMAX -DMDT_WINDOWS
   CXXFLAGS += $(WIN_DEFS)
   CFLAGS   += $(WIN_DEFS)
@@ -88,13 +89,16 @@ install: $(BIN)
 	install -D -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/bin/$(notdir $(BIN))
 
 clean:
-	rm -rf build build-win dist
+	rm -rf build dist
 
 # convenience: build both the host binary and the Windows cross build
-all-platforms:
+all-platforms: windows32
 	$(MAKE) BUILD=build
-	$(MAKE) BUILD=build-win CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
+	$(MAKE) BUILD=build/win CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
 
-.PHONY: all-platforms windows
+windows32:
+	$(MAKE) BUILD=build/win32 CXX=i686-w64-mingw32-g++ CC=i686-w64-mingw32-gcc
+
+.PHONY: all-platforms windows windows32
 windows:
-	$(MAKE) BUILD=build-win CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
+	$(MAKE) BUILD=build/win CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc

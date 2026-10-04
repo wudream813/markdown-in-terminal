@@ -9,7 +9,7 @@
 set -e
 
 cd "$(dirname "$0")/.."
-EXE=${EXE:-build-win/mdt.exe}
+EXE=${EXE:-build/win/mdt.exe}
 WINE=${WINE:-wine64}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -20,6 +20,26 @@ if ! command -v "$WINE" >/dev/null 2>&1; then
   exit 1
 fi
 [ -f "$EXE" ] || { echo "error: $EXE not found - run: make windows" >&2; exit 1; }
+
+# Wine needs a prefix (created on first run) and, for a Debian/Ubuntu package
+# without fonts, at least one TrueType face in C:\windows\Fonts.
+: "${WINEPREFIX:=$HOME/.wineprefix}"
+export WINEPREFIX
+if [ ! -d "$WINEPREFIX/drive_c/windows" ]; then
+  echo "== creating wine prefix $WINEPREFIX =="
+  "$WINE" wineboot -u >/dev/null 2>&1 || true
+fi
+FONTDIR="$WINEPREFIX/drive_c/windows/Fonts"
+if ! ls "$FONTDIR"/*.tt[fc] >/dev/null 2>&1; then
+  echo "== seeding wine fonts (host fonts copied into C:\windows\Fonts) =="
+  mkdir -p "$FONTDIR"
+  for f in /usr/share/fonts/truetype/dejavu/*.ttf /usr/share/fonts/truetype/liberation/*.ttf; do
+    [ -f "$f" ] && cp -n "$f" "$FONTDIR/" 2>/dev/null
+  done
+  for f in /usr/share/fonts/opentype/noto/*CJK*.tt[fc]; do
+    [ -f "$f" ] && cp -n "$f" "$FONTDIR/" 2>/dev/null
+  done
+fi
 
 echo "== binary =="
 file "$EXE" | sed 's/^/   /'
