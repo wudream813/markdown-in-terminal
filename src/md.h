@@ -63,6 +63,7 @@ struct MdDocument {
   std::vector<Block> blocks;
   bool entities_unescaped = false;  // the source looked HTML-escaped and was decoded
   int backslashes_removed = 0;      // >0 when the source looked backslash-escaped
+  int invisible_removed = 0;        // BOM / ZWSP / NBSP characters dropped
   bool loose_markers = false;       // "#标题" / "-项目" style markers were accepted
   std::string title;               // first h1 if present
   std::vector<LinkRef> links;      // all links in document order

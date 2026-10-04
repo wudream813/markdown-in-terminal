@@ -60,6 +60,22 @@ self-contained binary.
 * **Compact frame output.** Only changed cells are sent, with one cursor jump
   per run and one SGR per style change (a heading costs one escape sequence,
   not one per character). Nothing needs re-drawing that has not changed.
+* **Formulas stay sharp.** A formula is rasterised onto the exact cell grid
+  (`cols × cell_w` by `rows × cell_h` pixels) and placed so the terminal draws
+  it 1:1 instead of rescaling it; the baseline of the bitmap is put on the
+  baseline of the text line. When the terminal does not report its cell size,
+  the image is placed at its own pixel size rather than squeezed into one cell.
+* **Headings carry a dimmed `#`.** `#`, `##`, ... are drawn in the muted colour
+  in front of the heading text, so a heading is recognisable without relying on
+  its colour alone. Wrapped heading lines stay aligned with the text.
+* **Lists and code blocks that read well.** Task items use `[x]` / `[ ]`
+  (the ☑/☐ glyphs have ambiguous width, so the tick and the box did not line up
+  in every font). A code block's frame hugs the code instead of spanning the
+  page, and long code lines wrap instead of being cut off at the frame edge.
+* **Nothing is drawn over the UI.** While the help panel is open no image is
+  transmitted or placed, images that would spill into the status bar are
+  skipped, and the outline panel covers no images - so a formula can no longer
+  sit on top of the panel in a terminal that cannot erase bitmaps cell by cell.
 * **Leaves the terminal usable.** Normal exit, `kill`, Ctrl-C/Ctrl-Break and a
   closed console window all hand the terminal back: alt screen off, mouse
   reporting off, cursor shown, tty modes (termios / `SetConsoleMode`) restored.
@@ -271,12 +287,28 @@ the final geometry is exact.
 | `--compat` | no graphics, no DEC 2026 synchronized output, no keyboard-protocol push, no capability probe - for terminals whose support for those is broken |
 | `--diag` | print what mdt sees of the file (encoding, escapes, block census, first characters) and of the terminal; works without a tty |
 
+## When something looks wrong
+
+Three switches exist for the cases where the terminal and mdt disagree:
+
+| Tool | What it answers |
+|---|---|
+| `mdt --diag file.md` | what mdt sees of the file: encoding (BOM? UTF-8? GBK?), line endings, which repairs were applied, the block census, the first characters as code points - and what it sees of the terminal. Works without a tty, so the output can be pasted into a bug report. |
+| `MDT_FRAME_LOG=/tmp/mdt.log mdt file.md` | writes every frame exactly as it was sent, escape sequences spelled out. Compare it with what the screen shows to tell "mdt drew it wrong" apart from "the terminal lost it". |
+| `mdt --compat file.md` | turns everything optional off - graphics, DEC 2026 synchronized output, the kitty keyboard push, the capability probe - and paints each changed row from column 0 as one run, so no cursor jump ever happens inside a row. If the display becomes correct, the terminal is mishandling one of those; `--compat` is the workaround. |
+
+The repairs on the source side can be controlled individually with
+`--entities`, `--escapes`, `--loose` and the status bar shows which of them
+were used (`+entities`, `+escapes`, `+loose`, `+clean`).
+
 ## Notes / limitations
 
 * Block-level maths is centred and drawn as a bitmap; very wide equations are
   scaled down to the content width.
 * sixel images are cell-aligned (a sixel cursor cannot be nudged by a fraction
-  of a cell), kitty and iTerm2 images are placed on the baseline.
+  of a cell), kitty and iTerm2 images are placed by pixel and land on the text
+  baseline. Inline maths inside a table cell is transcribed to Unicode, because
+  a cell is a text grid and the typeset bitmap has no place in it.
 * Reference-style links `[text][ref]` are parsed but the definitions are not
   resolved yet; `_italic_`/`**bold**` inside words follow the CommonMark rules.
 * HTML blocks are converted to the Markdown they stand for; unknown tags are

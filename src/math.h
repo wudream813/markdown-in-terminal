@@ -51,6 +51,12 @@ class MathRenderer {
   // Rasterised formula, fitted into box_w x box_h pixels.
   bool raster(const std::string& tex, bool display, double em_px, int box_w, int box_h, RGB fg,
               Image& out);
+  // Like raster(), but the drawing keeps its natural pixel size and is centred
+  // inside a canvas that is exactly the cell grid (canvas_w x canvas_h).  The
+  // terminals then place the image 1:1 instead of rescaling it, which is what
+  // made formulas look soft.  *off_x/*off_y receive the drawing's offset.
+  bool raster_grid(const std::string& tex, bool display, double em_px, int canvas_w, int canvas_h,
+                   RGB fg, Image& out, int* off_x, int* off_y);
 
   size_t cache_entries() const { return raster_cache_.size() + metrics_cache_.size(); }
 

@@ -115,6 +115,45 @@ bool looks_entity_escaped(const std::string& s) {
 
 
 
+// Text copied out of a chat client, a PDF or a web page carries invisible
+// characters: a byte-order mark, zero width spaces, language marks, non
+// breaking spaces.  They make the first character of a line look eaten (the
+// glyph is there but zero cells wide), and they stop "#" or "-" from being
+// recognised as a marker because the line does not start with them any more.
+std::string strip_invisible(const std::string& s, int* removed) {
+  std::string o;
+  o.reserve(s.size());
+  int n = 0;
+  for (size_t i = 0; i < s.size();) {
+    unsigned char c = (unsigned char)s[i];
+    if (c == 0xEF && i + 2 < s.size() && (unsigned char)s[i + 1] == 0xBB &&
+        (unsigned char)s[i + 2] == 0xBF) {  // U+FEFF byte order mark
+      i += 3;
+      n++;
+      continue;
+    }
+    if (c == 0xC2 && i + 1 < s.size() && (unsigned char)s[i + 1] == 0xA0) {  // U+00A0
+      o += ' ';
+      i += 2;
+      n++;
+      continue;
+    }
+    if (c == 0xE2 && i + 2 < s.size() && (unsigned char)s[i + 1] == 0x80) {
+      unsigned char t = (unsigned char)s[i + 2];
+      if (t == 0x8B || t == 0x8C || t == 0x8D ||              // ZWSP, ZWNJ, ZWJ?
+          (t >= 0x8E && t <= 0x8F) || (t >= 0xAA && t <= 0xAE)) {  // LRM/RLM, bidi
+        // ZWSP, ZWNJ, LRM, RLM, the bidi controls: they carry no width
+        i += 3;
+        n++;
+        continue;
+      }
+    }
+    o += s[i++];
+  }
+  if (removed) *removed = n;
+  return o;
+}
+
 // Whether a document was run through a markdown generator that escaped every
 // syntax character ("\#", "\-", "\*", "1\.") - such a file parses as one long
 // paragraph of punctuation-spotted prose, which is what the reader then shows.
@@ -1516,6 +1555,11 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
   // tools, some exporters) escape every syntax character.  Undo that before the
   // block parser runs, otherwise a perfectly structured document reads as prose
   // with literal "_" and "#" in it.
+  int invisible_removed = 0;
+  {
+    std::string next = strip_invisible(src, &invisible_removed);
+    if (invisible_removed > 0) src = next;
+  }
   int backslashes_removed = 0;
   if (opt_.escapes != MdOptions::EscOff &&
       (opt_.escapes == MdOptions::EscForce || looks_backslash_escaped(src))) {
@@ -1528,6 +1572,7 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
   (void)doc_;
   doc.entities_unescaped = unescaped;
   doc.backslashes_removed = backslashes_removed;
+  doc.invisible_removed = invisible_removed;
   // normalise line endings and expand tabs
   std::string norm;
   norm.reserve(src.size());

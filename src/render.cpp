@@ -275,6 +275,8 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_math(const std::string& 
       int cw = std::max(1, cell_w()), chh = std::max(1, cell_h());
       p->cols = std::max(1, (int)std::ceil((double)p->px_w / cw));
       p->rows = std::max(1, (int)std::ceil((double)p->px_h / chh));
+      p->px_w = p->cols * cw;   // same snap as the real asset (see below)
+      p->px_h = p->rows * chh;
       p->baseline_px = display ? 0 : em_px() * 0.75;
       asset_map_[key] = p;
       return p;
@@ -300,19 +302,25 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_math(const std::string& 
   double scale = 1.0;
   if (m.px_w > max_w_px) scale = max_w_px / m.px_w;
   if (m.px_h * scale > max_h_px) scale = max_h_px / m.px_h;
-  int w = std::max(2, (int)std::ceil(m.px_w * scale));
-  int h = std::max(2, (int)std::ceil(m.px_h * scale));
+  int ink_w = std::max(2, (int)std::ceil(m.px_w * scale));
+  int ink_h = std::max(2, (int)std::ceil(m.px_h * scale));
+  int cw = std::max(1, cell_w()), chh = std::max(1, cell_h());
+  // Rasterise onto the exact cell grid: cols*cw by rows*chh pixels.  Anything
+  // else makes the terminal rescale the bitmap to fit whole cells, which is
+  // what makes formulas look soft.
+  int w = std::max(cw, (int)std::ceil((double)ink_w / cw) * cw);
+  int h = std::max(chh, (int)std::ceil((double)ink_h / chh) * chh);
   Image img;
-  if (!math_->raster(tex, display, em * scale, w, h, theme_.math_fg, img)) {
+  int off_x = 0, off_y = 0;
+  if (!math_->raster_grid(tex, display, em * scale, w, h, theme_.math_fg, img, &off_x, &off_y)) {
     a->failed = true;
     a->err = "raster failed";
     asset_map_[key] = a;
     return a;
   }
-  int cw = std::max(1, cell_w()), chh = std::max(1, cell_h());
-  a->cols = std::max(1, (int)std::ceil((double)w / cw));
-  a->rows = std::max(1, (int)std::ceil((double)h / chh));
-  a->baseline_px = m.baseline_px * scale;
+  a->cols = w / cw;
+  a->rows = h / chh;
+  a->baseline_px = off_y + m.baseline_px * scale;
   a->rgba = img.rgba;
   a->px_w = w;
   a->px_h = h;
@@ -415,6 +423,18 @@ void DocView::relayout() {
 // ------------------------------------------------------------------ tables --
 // One table = one frame: a top border, the rows, a rule under the header and
 // a bottom border.  Nested tables (inside list items or quotes) only differ
+// Table cells are drawn as text inside a fixed grid, so a typeset formula has
+// no place there.  Inline maths becomes the Unicode transcription instead of
+// the raw TeX ("$\frac{a}{b}$" used to be shown verbatim).
+std::string spans_cell_text(const std::vector<Span>& spans) {
+  std::string out;
+  for (auto& s : spans) {
+    if (s.kind == Span::Math) out += latex_to_unicode(s.tex, s.display_math);
+    else out += s.text;
+  }
+  return out;
+}
+
 // in the indent they start at.
 void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout& bl, int& row) {
 
@@ -424,7 +444,7 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
     std::vector<int> natural(ncols, 0), minw(ncols, 3);
     for (auto& r : b.rows)
       for (int c = 0; c < (int)r.size(); c++) {
-        std::string txt = spans_plain_text(r[(size_t)c].spans);
+        std::string txt = spans_cell_text(r[(size_t)c].spans);
         natural[c] = std::max(natural[c], str_width(txt));
         // longest word
         int cur = 0;
@@ -462,7 +482,7 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
       std::vector<std::vector<std::string>> cell_lines(r.size());
       int maxlines = 1;
       for (int c = 0; c < (int)r.size(); c++) {
-        std::string txt = spans_plain_text(r[(size_t)c].spans);
+        std::string txt = spans_cell_text(r[(size_t)c].spans);
         int inner = std::max(2, w[c] - 2);
         std::vector<std::string> cl;
         std::string cur;
@@ -515,6 +535,39 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
   
 }
 
+// Width of a code block's frame: as wide as the code (plus borders and one
+// column of padding on each side), never wider than the page.  A frame that
+// always spans the page leaves a big empty area next to short code.
+int DocView::code_frame_width(const Block& b) const {
+  int maxw = 0;
+  for (const std::string& l : split_lines(b.code)) maxw = std::max(maxw, str_width(l));
+  int w = maxw + 4;                                   // 2 borders + 2 padding
+  if (!b.lang.empty()) w = std::max(w, (int)str_width(b.lang) + 9);  // label in the top border
+  w = std::min(w, content_w_ + 1);
+  return std::max(20, w);
+}
+
+// Splits one code line into segments of at most `width` columns, remembering
+// the byte offset each segment starts at (that is what syntax colours index).
+void DocView::wrap_code_line(const std::string& line, int width,
+                             std::vector<std::pair<std::string, int>>& out) {
+  if (line.empty()) { out.emplace_back("", 0); return; }
+  size_t i = 0, start = 0;
+  int cur = 0;
+  while (i < line.size()) {
+    size_t save = i;
+    uint32_t cp = utf8_next(line, i);
+    int cw = std::max(1, cp_width(cp));
+    if (cur + cw > width && i > start) {
+      out.emplace_back(line.substr(start, save - start), (int)start);
+      start = save;
+      cur = 0;
+    }
+    cur += cw;
+  }
+  out.emplace_back(line.substr(start), (int)start);
+}
+
 void DocView::layout_blocks() {
   content_w_ = std::max(20, cols_ - 2 * opt_.content_margin);
   int row = 0;
@@ -533,13 +586,23 @@ void DocView::layout_blocks() {
         base.bold = true;
         base.has_color = true;
         base.color = theme_.heading[std::min(6, std::max(1, b.level))];
-        int indent = (b.level == 1) ? 0 : (b.level - 1);
+        // A dimmed "#", "##", ... in front of the text: without it a heading is
+        // only recognisable by its colour, which is hard to see on some
+        // terminals.  Wrapped heading lines stay aligned with the text.
+        std::string hashes((size_t)std::min(6, std::max(1, b.level)), '#');
+        int marker_w = (int)hashes.size() + 1;
+        int text_x = 1 + marker_w;
         row += (bi == 0 ? 0 : 1);
         if (b.level <= 2) {
           // headings 1-2 get a rule underneath
           std::vector<Line> lines;
-          build_lines(b.spans, 1, content_w_ - 1, base, lines);
-          for (auto& l : lines) { l.row = row - bl.row; bl.lines.push_back(l); row++; }
+          build_lines(b.spans, text_x, content_w_ - text_x, base, lines);
+          for (size_t li2 = 0; li2 < lines.size(); li2++) {
+            if (li2 == 0) { lines[li2].marker = hashes + " "; lines[li2].marker_w = marker_w; }
+            lines[li2].row = row - bl.row;
+            bl.lines.push_back(lines[li2]);
+            row++;
+          }
           Line rule;
           rule.kind = Line::Rule;
           rule.row = row - bl.row;
@@ -548,8 +611,13 @@ void DocView::layout_blocks() {
           row += (b.level == 1 ? 1 : 0);
         } else {
           std::vector<Line> lines;
-          build_lines(b.spans, indent + 1, content_w_ - indent - 1, base, lines);
-          for (auto& l : lines) { l.row = row - bl.row; bl.lines.push_back(l); row++; }
+          build_lines(b.spans, text_x, content_w_ - text_x, base, lines);
+          for (size_t li2 = 0; li2 < lines.size(); li2++) {
+            if (li2 == 0) { lines[li2].marker = hashes + " "; lines[li2].marker_w = marker_w; }
+            lines[li2].row = row - bl.row;
+            bl.lines.push_back(lines[li2]);
+            row++;
+          }
         }
         break;
       }
@@ -613,6 +681,9 @@ void DocView::layout_blocks() {
       case Block::CodeBlock: {
         std::vector<std::string> clines = split_lines(b.code);
         if (clines.empty()) clines.push_back("");
+        int frame_w = code_frame_width(b);
+        int inner = std::max(8, frame_w - 3);
+        // The frame: a top border, the wrapped lines, a bottom border.
         Line top;
         top.kind = Line::Code;
         top.row = 0;
@@ -620,12 +691,18 @@ void DocView::layout_blocks() {
         bl.lines.push_back(top);
         row++;
         for (size_t k = 0; k < clines.size(); k++) {
-          Line l;
-          l.kind = Line::Code;
-          l.code_index = (int)k;
-          l.row = row - bl.row;
-          bl.lines.push_back(l);
-          row++;
+          std::vector<std::pair<std::string, int>> segs;
+          wrap_code_line(clines[k], inner, segs);
+          for (auto& seg : segs) {
+            Line l;
+            l.kind = Line::Code;
+            l.code_index = (int)k;          // source line, for syntax colours
+            l.code_col = seg.second;        // byte offset inside that line
+            l.code_text = seg.first;
+            l.row = row - bl.row;
+            bl.lines.push_back(l);
+            row++;
+          }
         }
         Line bottom;
         bottom.kind = Line::Code;
@@ -728,7 +805,10 @@ void DocView::layout_blocks() {
           std::string marker;
           RGB marker_color = theme_.bullet;
           if (task) {
-            marker = checked ? "\u2611 " : "\u2610 ";
+            // "[x]" / "[ ]" instead of U+2611/U+2610: those glyphs have
+            // ambiguous or emoji presentation, so the tick and the empty box
+            // do not line up in every font.  Brackets are always one cell.
+            marker = checked ? "[x] " : "[ ] ";
             marker_color = checked ? RGB{140, 195, 140} : theme_.muted;
           } else if (b.ordered) {
             marker = std::to_string(b.start_num + li) + ". ";

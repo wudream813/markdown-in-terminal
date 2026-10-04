@@ -136,6 +136,10 @@ class DocView {
     int img_rows = 1;
     int code_index = -1;        // source line index for code blocks
     int x = 0;                  // extra column offset (blocks inside list items)
+    std::string code_text;      // wrapped code line (code blocks)
+    int code_col = 0;           // byte offset of this segment inside the source line
+    std::string marker;         // dimmed prefix drawn before the text (heading "#")
+    int marker_w = 0;
   };
   struct BlockLayout {
     int block = 0;
@@ -189,6 +193,11 @@ class DocView {
   // Lays a table out into bl, starting at column `indent` with `avail` columns
   // available.  Also used for tables nested in list items and quotes.
   void layout_table(const Block& b, int indent, int avail, BlockLayout& bl, int& row);
+  // Code blocks: the frame hugs the code instead of spanning the page, and long
+  // lines are wrapped rather than cut off at the frame edge.
+  int code_frame_width(const Block& b) const;
+  static void wrap_code_line(const std::string& line, int width,
+                             std::vector<std::pair<std::string, int>>& out);
   int layout_paragraph(const std::vector<Span>& spans, int indent, int width, int row_start,
                        const Span& base, std::vector<Line>& out);
   void build_lines(const std::vector<Span>& spans, int indent, int width, const Span& base,

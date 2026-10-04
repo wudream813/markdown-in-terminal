@@ -78,6 +78,10 @@ class Screen {
   void invalidate() { force_full_ = true; }
   bool using_terminal_bg() const { return use_default_bg_; }
   void set_cursor_hidden(bool hidden) { cursor_hidden_ = hidden; }
+  // Compatibility painting: each changed row is written from column 0 as one
+  // contiguous run, so no cursor jump ever happens inside a row.  For
+  // terminals whose cursor handling loses the character after a jump.
+  void set_safe_paint(bool on) { safe_paint_ = on; force_full_ = true; }
   // Terminals that mishandle DEC 2026 (synchronized output) can switch it off.
   void set_sync_update(bool on) {
     if (no_sync_update_ != !on) { no_sync_update_ = !on; force_full_ = true; }
@@ -91,6 +95,7 @@ class Screen {
   bool cursor_hidden_ = true;
   bool use_default_bg_ = false;
   bool no_sync_update_ = false;
+  bool safe_paint_ = false;
   RGB def_fg_, def_bg_;
 };
 

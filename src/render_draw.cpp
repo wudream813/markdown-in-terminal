@@ -67,6 +67,8 @@ void DocView::draw_line(Screen& scr, int x0, int y0, int w, const Line& line, in
     case Line::Text:
     default: {
       if (line.bar >= 0) scr.put(x0 + line.bar, sy, 0x2502, theme_.quote_bar, theme_.bg);
+      if (!line.marker.empty())  // dimmed "#" before a heading
+        scr.put_str(x0 + 1, sy, line.marker, theme_.muted, theme_.bg, A_DIM);
       for (const Run& r : line.runs) {
         if (r.img >= 0) continue;  // graphics are placed separately
         RGB fg = r.style.has_color ? r.style.color : theme_.fg;
@@ -96,10 +98,8 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
   int top = y0 + bl.row;
   int rows = bl.rows - opt_.paragraph_gap;
   if (rows < 2) return;
-  std::vector<std::string> clines = split_lines(b.code);
-  if (clines.empty()) clines.push_back("");
-  int frame_x = x0 + 0;
-  int frame_w = std::min(cols_ - frame_x, content_w_ + 2);
+  int frame_x = x0;
+  int frame_w = std::min(std::max(1, cols_ - frame_x), code_frame_width(b));
   RGB bg = theme_.flat_bg ? theme_.bg : theme_.code_bg;
   RGB frame = theme_.code_frame;
   // background
@@ -110,36 +110,37 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
   // language label in the top border
   if (!b.lang.empty()) {
     std::string label = " " + b.lang + " ";
-    int lx = frame_x + 3;
-    scr.put_str(lx, top, label, theme_.muted, bg);
-    for (int k = 0; k < (int)label.size(); k++) {}  // label drawn over the border
+    if ((int)label.size() + 6 < frame_w) scr.put_str(frame_x + 3, top, label, theme_.muted, bg);
   }
   CodeHighlight hl = theme_.syntax ? highlight_code(b.code, b.lang, theme_) : CodeHighlight();
   int text_x = frame_x + 2;
   int line_no_w = 0;
-  if (opt_.show_line_numbers) line_no_w = (int)std::to_string(clines.size()).size() + 2;
-  for (size_t k = 0; k < clines.size(); k++) {
-    int yy = top + 1 + (int)k;
+  if (opt_.show_line_numbers) {
+    int nlines = (int)split_lines(b.code).size();
+    line_no_w = (int)std::to_string(nlines).size() + 2;
+  }
+  for (const Line& l : bl.lines) {
+    if (l.kind != Line::Code || l.code_index < 0) continue;  // borders have index -1/-2
+    int yy = top + l.row;
     if (yy >= top + rows - 1) break;
-    const std::string& text = clines[k];
-    if (opt_.show_line_numbers) {
-      std::string num = fmt("%*d ", line_no_w - 1, (int)k + 1);
+    if (opt_.show_line_numbers && l.code_col == 0) {
+      std::string num = fmt("%*d ", line_no_w - 1, l.code_index + 1);
       scr.put_str(text_x, yy, num, theme_.muted, bg, A_DIM);
     }
+    const std::string& text = l.code_text;
     int x = text_x + line_no_w;
     size_t i = 0;
-    while (i < text.size() && x < frame_x + frame_w - 1) {
+    while (i < text.size()) {
       size_t save = i;
       uint32_t cp = utf8_next(text, i);
-      if (cp == '\t') cp = ' ';
       int cwid = cp_width(cp);
       if (cwid == 0) continue;
       RGB fg = theme_.code_fg;
-      if (hl.any && save < hl.colors[k].size()) {
-        RGB c = hl.colors[k][save];
+      size_t src_off = (size_t)l.code_col + save;  // offset inside the source line
+      if (hl.any && (size_t)l.code_index < hl.colors.size() && src_off < hl.colors[(size_t)l.code_index].size()) {
+        RGB c = hl.colors[(size_t)l.code_index][src_off];
         if (c.r || c.g || c.b) fg = c;
       }
-      if (cp == ' ') fg = fg;  // keep colour so block sprites can flip it
       if (x + cwid <= frame_x + frame_w - 1) scr.put(x, yy, cp, fg, bg);
       x += cwid;
     }
@@ -294,7 +295,6 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
           int sub = (int)std::lround(top_px - (double)grow * chh);
           if (sub < 0) { sub += chh; grow -= 1; }
           if (sub >= chh) { sub -= chh; grow += 1; }
-          bool is_math = a->baseline_px != 0;
           if (grow < scroll_row) {
             // clipped at the top of the viewport: leave a marker
             scr.put_str(x0 + r.x, sy, "\u25a1", theme_.muted, theme_.bg);
@@ -308,10 +308,14 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
           im.px_h = a->px_h;
           im.png = &a->png;
           im.rgba = &a->rgba;
-          if (!is_math && term_ && term_->caps.gfx == GfxProto::Sixel) {
-            im.cols = a->cols;
-            im.rows = a->rows;
-          }
+          // The bitmap is exactly cols x rows cells big (see asset_for_math), so
+          // telling the terminal how many cells it spans makes it draw the
+          // image 1:1 instead of rescaling it (which is what made formulas look
+          // soft - a formula used to be squeezed into a single cell).
+          im.cols = a->cols;
+          im.rows = a->rows;
+          im.sub_x = 0;
+          im.sub_y = sub;
           images_.push_back(im);
         }
       }

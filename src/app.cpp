@@ -97,6 +97,7 @@ struct App {
   bool terminal_bg = false;
   bool scrollbar_active = false;   // set while drawing; used for hit testing
   Screen scr;
+  int frame_log_no_ = 0;           // frame counter for MDT_FRAME_LOG
 
   void set_status(const std::string& s, double secs = 3.0) {
     status_msg = s;
@@ -311,6 +312,7 @@ void App::render() {
   if (view.doc().entities_unescaped) engine += " +entities";
   if (view.doc().backslashes_removed > 0) engine += " +escapes";
   if (view.doc().loose_markers) engine += " +loose";
+  if (view.doc().invisible_removed > 0) engine += " +clean";
   std::string msg = status_msg;
   if (now_ms() > status_until) msg.clear();
   std::string text;
@@ -327,7 +329,50 @@ void App::render() {
 
   // ---- output -------------------------------------------------------------
   std::string out = scr.render_full();
-  if (images_dirty || true) out += term.emit_images(view.images());
+  // ---- image placement ----------------------------------------------------
+  // Images are drawn by the terminal on top of the text, and the non-kitty
+  // protocols cannot be erased cell by cell.  So anything a panel covers (the
+  // help box, the outline panel) or that would spill into the status bar is
+  // simply not placed - the frame that has just been written repaints those
+  // cells and the terminal drops the stale bits.
+  std::vector<PlacedImage> place = view.images();
+  if (help_open) {
+    place.clear();
+  } else if (toc_open && toc_panel_w > 0) {
+    place.erase(std::remove_if(place.begin(), place.end(),
+                               [&](const PlacedImage& im) { return im.x < toc_panel_w + 1; }),
+                place.end());
+  }
+  {
+    int vrows = view_rows();
+    place.erase(std::remove_if(place.begin(), place.end(),
+                               [&](const PlacedImage& im) {
+                                 int rows = (im.px_h + std::max(1, term.caps.px_cell_h()) - 1) /
+                                            std::max(1, term.caps.px_cell_h());
+                                 return im.y + rows > vrows;  // would cover the status bar
+                               }),
+                place.end());
+  }
+  out += term.emit_images(place);
+  if (const char* log = getenv("MDT_FRAME_LOG")) {
+    // Writes exactly what mdt sent, with escape sequences spelled out, so a
+    // rendering problem can be told apart from a terminal problem.
+    if (FILE* f = fopen(log, "ab")) {
+      fprintf(f, "--- frame %d, %dx%d, %zu bytes ---\n", frame_log_no_++, term.caps.cols,
+              term.caps.rows, out.size());
+      std::string vis;
+      for (unsigned char c : out) {
+        if (c == 0x1b) vis += "\\e";                       // ESC -> two readable chars
+        else if (c == '\n') vis += "\\n";
+        else if (c == '\r') vis += "\\r";
+        else if (c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\x%02x", c); vis += b; }
+        else vis += (char)c;
+      }
+      fwrite(vis.data(), 1, vis.size(), f);
+      fputc('\n', f);
+      fclose(f);
+    }
+  }
   term.write_raw(out);
   images_dirty = false;
   needs_frame = false;
@@ -594,6 +639,7 @@ int run_app(const AppOptions& opts) {
   mdt::set_compat_mode(opts.compat);
   if (!app.term.init(opts.compat ? "none" : opts.gfx)) return 1;
   app.scr.set_sync_update(!opts.compat);
+  app.scr.set_safe_paint(opts.compat);
 
   app.view.set_terminal(&app.term);
   app.view.set_math(&app.math);
@@ -682,8 +728,8 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
     int k = (int)b.type;
     if (k >= 0 && k < 12) cnt[k]++;
   }
-  printf("  source decoded  : entities=%s backslash escapes=%d\n",
-         doc.entities_unescaped ? "yes" : "no", doc.backslashes_removed);
+  printf("  source decoded  : entities=%s backslash escapes=%d invisible chars=%d\n",
+         doc.entities_unescaped ? "yes" : "no", doc.backslashes_removed, doc.invisible_removed);
   printf("  blocks          : heading=%d paragraph=%d list=%d table=%d code=%d html=%d quote=%d\n",
          cnt[(int)Block::Heading], cnt[(int)Block::Paragraph], cnt[(int)Block::List],
          cnt[(int)Block::Table], cnt[(int)Block::CodeBlock], cnt[(int)Block::Html],

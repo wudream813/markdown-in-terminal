@@ -79,6 +79,47 @@ grep -q "Col A" "$TMP/nested.txt" && echo "  table inside an item (header)"
 grep -q "second paragraph of the item" "$TMP/nested.txt" && echo "  second paragraph inside an item"
 test "$(grep -c '┌' "$TMP/nested.txt")" = 1 && echo "  nested table drawn as one frame"
 
+echo "== code blocks (frame hugs the code, long lines wrap) =="
+"$BIN" --dump --width=60 tests/fixtures/code-wrap.md > "$TMP/code.txt"
+test "$(grep -c '│ .*argument_four' "$TMP/code.txt")" -ge 1 && echo "  long line wrapped, not cut off"
+grep -q 'some_function(argument_one, arg' "$TMP/code.txt" && echo "  first half of the line kept"
+grep -q 'print(result)' "$TMP/code.txt" && echo "  following line kept"
+framew=$(python3 -c 'import sys; ls=[x for x in open(sys.argv[1], encoding="utf-8") if x.startswith("╭")]; print(len(ls[-1].rstrip()) if ls else 0)' "$TMP/code.txt")
+test "$framew" -lt 30 && echo "  short code: frame is $framew cells wide (hugs the code, not the page)"
+
+echo "== maths inside table cells =="
+"$BIN" --dump --width=50 tests/fixtures/table-math.md > "$TMP/tmath.txt"
+grep -q 'x² + y² = z²' "$TMP/tmath.txt" && echo "  inline maths transcribed in the cell"
+grep -q 'a/b' "$TMP/tmath.txt" && echo "  \\frac became a/b"
+if grep -q '\\frac' "$TMP/tmath.txt"; then
+  echo "  FAIL raw TeX left in a cell:"
+  grep -n "frac" "$TMP/tmath.txt" | head -3
+  exit 1
+fi
+echo "  no raw TeX left"
+
+echo "== task list markers line up =="
+"$BIN" --dump --width=50 tests/fixtures/tasks.md > "$TMP/tasks.txt"
+grep -q '\[x\] done item' "$TMP/tasks.txt" && echo "  checked marker"
+grep -q '\[ \] open item' "$TMP/tasks.txt" && echo "  unchecked marker"
+test "$(grep -c '^  \[.\] ' "$TMP/tasks.txt")" = 3 && echo "  all three items share one marker width"
+
+echo "== dimmed # before headings =="
+grep -q '^ # ' "$TMP/tmath.txt" && echo "  h1 marked"
+"$BIN" --dump --width=60 demo/demo.md | grep -q '^ ## ' && echo "  h2 marked"
+
+echo "== invisible characters (BOM, zero width space, nbsp) =="
+"$BIN" --dump --width=50 tests/fixtures/invisible.md > "$TMP/invis.txt"
+grep -q '^ # Invisible' "$TMP/invis.txt" && echo "  heading recognised behind a zero width space"
+grep -q '• item two' "$TMP/invis.txt" && echo "  list recognised behind a zero width space"
+"$BIN" --diag tests/fixtures/invisible.md | grep -q 'invisible chars=' && echo "  --diag reports the cleanup"
+
+echo "== images are not drawn over the UI =="
+python3 tools/image_overlay_test.py "$BIN" || exit 1
+
+echo "== images are placed on the cell grid =="
+python3 tools/image_scale_test.py "$BIN" || exit 1
+
 echo "== frame cost (runs, not per-cell escapes) =="
 python3 tools/frame_cost_test.py "$BIN"
 

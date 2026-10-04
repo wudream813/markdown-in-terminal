@@ -144,6 +144,23 @@ std::string Screen::render_diff() {
     }
     if (x0 < 0) continue;
     int run_cells = 0;
+    if (safe_paint_) {
+      // Start at column 0 and keep the whole row in one run: an unchanged cell
+      // before the first change is written again, which costs a few bytes and
+      // removes every mid-row cursor jump.
+      out += fmt("\x1b[%d;1H", y + 1);
+      cx = 0; cy = y;
+      cur.attr = 0xFF;
+      for (int x = 0; x < x0; x++) {
+        const Cell& c = cells_[(size_t)y * w_ + x];
+        if (c.cp == 0) continue;
+        cur.fg = c.fg; cur.bg = c.bg;
+        out += emit_sgr(c, cur);
+        cur = c;
+        out += utf8_encode(c.cp);
+        cx += std::max(1, cp_width(c.cp));
+      }
+    }
     for (int x = x0; x <= x1; x++) {
       const Cell& c = cells_[(size_t)y * w_ + x];
       if (!force_full_ && c == prev_[(size_t)y * w_ + x]) continue;
@@ -169,7 +186,8 @@ std::string Screen::render_diff() {
       cx += std::max(1, cp_width(c.cp));
       // A long run is re-anchored now and then: if the terminal is narrower
       // than its reported size, a run can never drift far from its column.
-      if (++run_cells >= 64) { run_cells = 0; cx = -1; cy = -1; }
+      // (Not in safe paint mode: that mode exists to avoid jumps inside a row.)
+      if (!safe_paint_ && ++run_cells >= 64) { run_cells = 0; cx = -1; cy = -1; }
     }
   }
   if (!cursor_hidden_) out += "\x1b[?25h"; else out += "\x1b[?25l";
@@ -582,7 +600,11 @@ std::string Terminal::emit_images(const std::vector<PlacedImage>& imgs) {
           out += kitty_transmit(id, *im.png);
         }
         out += fmt("\x1b[%d;%dH", im.y + 1, im.x + 1);
-        out += kitty_place(id, im.cols, im.rows, im.sub_x, im.sub_y);
+        // With a known cell size the image is placed as cols x rows cells and
+        // drawn 1:1; without it, leave c/r out so kitty uses the pixel size.
+        bool know_cells = caps.cell_w > 0 && caps.cell_h > 0;
+        int pc = know_cells ? im.cols : 0, pr = know_cells ? im.rows : 0;
+        out += kitty_place(id, pc, pr, im.sub_x, im.sub_y);
       }
       // evict images that have not been used for a while
       for (size_t i = 0; i < kitty_cache_.size();) {

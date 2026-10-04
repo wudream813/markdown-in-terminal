@@ -182,6 +182,42 @@ bool MathRenderer::raster(const std::string& tex, bool display, double em_px, in
   return true;
 }
 
+bool MathRenderer::raster_grid(const std::string& tex, bool display, double em_px, int canvas_w,
+                               int canvas_h, RGB fg, Image& out, int* off_x, int* off_y) {
+  if (canvas_w <= 0 || canvas_h <= 0) return false;
+  MathMetrics m = metrics(tex, display, em_px);
+  if (!m.ok) return false;
+  SvgImage doc;
+  if (!svg_parse(m.svg, doc, nullptr)) return false;
+  int ink_w = std::max(1, (int)std::lround(m.px_w));
+  int ink_h = std::max(1, (int)std::lround(m.px_h));
+  if (ink_w > canvas_w) ink_w = canvas_w;
+  if (ink_h > canvas_h) ink_h = canvas_h;
+  Image ink;
+  if (!svg_rasterize(doc, ink_w, fg, ink, 0, ink_h, true)) return false;
+  int ox = (canvas_w - ink.w) / 2;
+  int oy = (canvas_h - ink.h) / 2;
+  if (ox < 0) ox = 0;
+  if (oy < 0) oy = 0;
+  out.w = canvas_w;
+  out.h = canvas_h;
+  out.rgba.assign((size_t)canvas_w * canvas_h * 4, 0);
+  for (int y = 0; y < ink.h; y++) {
+    int dy = oy + y;
+    if (dy >= canvas_h) break;
+    for (int x = 0; x < ink.w; x++) {
+      int dx = ox + x;
+      if (dx >= canvas_w) break;
+      const uint8_t* sp = &ink.rgba[((size_t)y * ink.w + x) * 4];
+      uint8_t* dp = &out.rgba[((size_t)dy * canvas_w + dx) * 4];
+      dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = sp[3];
+    }
+  }
+  if (off_x) *off_x = ox;
+  if (off_y) *off_y = oy;
+  return true;
+}
+
 // ==================================================== unicode fallback ======
 namespace {
 struct SymEntry { const char* from; const char* to; };
@@ -312,6 +348,19 @@ struct TexToUni {
     }
     if (cmd == "\\frac" || cmd == "\\dfrac" || cmd == "\\tfrac") {
       std::string a = parse_arg(), b = parse_arg();
+      // "a/b" when both sides are simple, "(a+b)/(c+d)" when they are not
+      auto simple = [](const std::string& t) {
+        // A bare symbol or a root ("√x") needs no brackets; anything with a
+        // +/- or a space does, because "a + b/c" would read as "a + (b/c)".
+        for (size_t k = 0; k < t.size();) {
+          if (t.compare(k, 3, "\u221a") == 0) { k += 3; continue; }
+          char c = t[k];
+          if (c == '+' || c == '-' || c == ' ') return false;
+          k++;
+        }
+        return !t.empty();
+      };
+      if (simple(a) && simple(b)) return a + "/" + b;
       return "(" + a + ")/(" + b + ")";
     }
     if (cmd == "\\sqrt") {

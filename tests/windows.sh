@@ -107,6 +107,18 @@ grep -q "Col A" "$TMP/nb.txt" && echo "   table inside a list item drawn"
 "$WINE" "$EXE" --dump --width=64 tests/fixtures/cjk-loose.md 2>/dev/null | tr -d '\r' > "$TMP/cjk.txt"
 grep -q "项目说明" "$TMP/cjk.txt" && echo "   CJK markers without spaces restored"
 
+echo "== the round-3 fixes on Windows =="
+"$WINE" "$EXE" --dump --width=60 tests/fixtures/table-math.md 2>/dev/null | tr -d '\r' > "$TMP/tm.txt"
+grep -q "x² + y² = z²" "$TMP/tm.txt" && echo "   maths in a table cell transcribed"
+grep -q "a/b" "$TMP/tm.txt" && echo "   \\frac became a/b"
+"$WINE" "$EXE" --dump --width=50 tests/fixtures/tasks.md 2>/dev/null | tr -d '\r' > "$TMP/tk.txt"
+grep -q "\[x\] done item" "$TMP/tk.txt" && echo "   task markers are ASCII"
+"$WINE" "$EXE" --dump --width=50 tests/fixtures/invisible.md 2>/dev/null | tr -d '\r' > "$TMP/iv.txt"
+grep -q "Invisible leading characters" "$TMP/iv.txt" && echo "   zero width spaces stripped"
+"$WINE" "$EXE" --dump --width=50 tests/fixtures/code-wrap.md 2>/dev/null | tr -d '\r' > "$TMP/cw.txt"
+grep -q "argument_four)" "$TMP/cw.txt" && echo "   code lines wrapped, not truncated"
+"$WINE" "$EXE" --dump --width=60 demo/demo.md 2>/dev/null | tr -d '\r' | grep -q "^ ## " && echo "   dimmed # before headings"
+
 echo "== mouse + scrollbar (pty) =="
 python3 tools/mouse_test.py "$EXE" "$WINE" || exit 1
 
