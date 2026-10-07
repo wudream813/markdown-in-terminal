@@ -31,7 +31,12 @@ def run(argv, keys, cols=80, rows=24, settle=2.0, after=1.6, total=None):
     out = b""
     t0 = time.time()
     sent = False
-    deadline = total if total else settle + after + 3.0
+    tsent = 0.0
+    # A fixed settle time loses keys on slow hosts (macOS CI scans the fresh
+    # binary on first exec): while mdt has not entered raw mode the pty is in
+    # canonical mode and an escape sequence without a newline is never
+    # delivered.  Send only once the first frame (status bar) has arrived.
+    deadline = total if total else settle + after + 8.0
     while time.time() - t0 < deadline:
         r, _, _ = select.select([fd], [], [], 0.2)
         if r:
@@ -42,7 +47,8 @@ def run(argv, keys, cols=80, rows=24, settle=2.0, after=1.6, total=None):
             if not chunk:
                 break
             out += chunk
-        if not sent and time.time() - t0 > settle:
+        ready = b"for help" in out
+        if not sent and ((ready and time.time() - t0 > 0.5) or time.time() - t0 > settle + 4.0):
             for k in keys:
                 try:
                     os.write(fd, k)
@@ -50,7 +56,8 @@ def run(argv, keys, cols=80, rows=24, settle=2.0, after=1.6, total=None):
                     break
                 time.sleep(0.2)
             sent = True
-        if sent and time.time() - t0 > settle + after:
+            tsent = time.time()
+        if sent and time.time() - tsent > after:
             break
     try:
         os.close(fd)
@@ -92,7 +99,11 @@ def run_steps(argv, steps, cols=80, rows=24, settle=2.0):
                     return
                 out += chunk
 
-    drain(settle)
+    t = time.time()
+    while time.time() - t < settle + 6.0:
+        drain(0.2)
+        if b"for help" in out and time.time() - t > 0.5:
+            break
     for payload, wait in steps:
         if payload:
             try:

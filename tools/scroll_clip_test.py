@@ -110,7 +110,13 @@ def main():
                 f.write("after %d\n\n" % i)
         p = Pty([BIN, "--gfx=kitty", "--cell=10x20", doc],
                 env_extra={"MDT_FRAME_LOG": log})
-        p.drain(2.5)
+        # wait for the first frame instead of a fixed sleep: on slow hosts
+        # (macOS CI) the pty is still in canonical mode and keys would be lost
+        t = time.time()
+        while time.time() - t < 8.0:
+            p.drain(0.25)
+            if b"for help" in p.out:
+                break
         first = p.out
         p.out = b""
         for _ in range(14):                 # scroll the picture past the top
