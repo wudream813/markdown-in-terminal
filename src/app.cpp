@@ -19,7 +19,7 @@
 
 #include "font.h"
 #include "image.h"
-#include "math.h"
+#include "mdmath.h"
 #include "md.h"
 #include "platform.h"
 #include "render.h"

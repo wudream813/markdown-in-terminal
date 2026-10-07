@@ -1,4 +1,4 @@
-#include "math.h"
+#include "mdmath.h"
 
 #include <cmath>
 #include <cstdio>

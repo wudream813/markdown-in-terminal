@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "image.h"
-#include "math.h"
+#include "mdmath.h"
 #include "md.h"
 #include "svg.h"
 #include "term.h"

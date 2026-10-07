@@ -1,4 +1,4 @@
-// math.h : TeX/KaTeX-syntax maths -> terminal bitmap.
+// mdmath.h : TeX/KaTeX-syntax maths -> terminal bitmap.
 //
 // Engine 1 (default): MathJax's TeX->SVG input+output jax, bundled into a single
 // JS file, executed by the embedded QuickJS interpreter. Nothing external is
