@@ -83,52 +83,6 @@ std::string decode_entities(const std::string& s) {
   return out;
 }
 
-// A file that has been through an HTML pipeline ("copy as markdown", CMS
-// exports, some converters) arrives with its punctuation escaped as character
-// references: tabs are &#x09;, and "#", "*", "_", "|", "-" become &#35;, &#42;,
-// &#95;, &#124;, &#45;.  Just decoding entities per CommonMark is not enough
-// there - the structure is gone, because block parsing looks at the literal
-// characters.  Detect that shape and decode the whole source first.
-bool looks_entity_escaped(const std::string& s) {
-  static const char* kSyntax = "#*_`|>-[]()!~=+.:\\/ \t\n\"'";
-  size_t total = 0, syntax = 0;
-  for (size_t i = 0; i + 2 < s.size(); i++) {
-    if (s[i] != '&' || s[i + 1] != '#') {
-      // named reference?
-      if (s[i] == '&') {
-        size_t semi = s.find(';', i);
-        if (semi != std::string::npos && semi - i <= 9) {
-          std::string name = s.substr(i + 1, semi - i - 1);
-          if (name == "amp" || name == "lt" || name == "gt" || name == "quot" || name == "apos" ||
-              name == "nbsp") {
-            total++;
-            // "&amp;#35;" is a numeric reference that was escaped twice - a
-            // strong hint that the whole document came through such a pipeline.
-            if (name == "amp" && semi + 1 < s.size() && s[semi + 1] == '#') syntax++;
-          }
-        }
-      }
-      continue;
-    }
-    size_t semi = s.find(';', i);
-    if (semi == std::string::npos || semi - i > 9) continue;
-    bool hex = i + 2 < s.size() && (s[i + 2] == 'x' || s[i + 2] == 'X');
-    std::string digits = s.substr(i + (hex ? 3 : 2), semi - i - (hex ? 3 : 2));
-    if (digits.empty()) continue;
-    for (char c : digits) {
-      bool ok = hex ? isxdigit((unsigned char)c) != 0 : isdigit((unsigned char)c) != 0;
-      if (!ok) { digits.clear(); break; }
-    }
-    if (digits.empty()) continue;
-    long v = strtol(digits.c_str(), nullptr, hex ? 16 : 10);
-    if (v <= 0 || v > 0x10ffff) continue;
-    total++;
-    if (v < 128 && strchr(kSyntax, (char)v)) syntax++;
-    i = semi;
-  }
-  // Escaped punctuation in a line of text is a strong signal; a few &amp; are not.
-  return syntax >= 3 || total >= 40;
-}
 
 
 
@@ -171,14 +125,97 @@ std::string strip_invisible(const std::string& s, int* removed) {
   return o;
 }
 
+// Ranges that the escape repairs must leave alone: maths ($...$, $$...$$,
+// \(...\), \[...\]) and code (fenced blocks, `inline spans`).  Backslashes are
+// *syntax* in both - a matrix row separator is "\\", a fence holds literal
+// text - so counting or removing them there mangles the document.  A file full
+// of matrices used to look "backslash escaped" (13 "\\" -> total >= 12) and
+// the repair then ate one backslash from every row separator, which collapsed
+// every matrix into a single row.
+std::string mask_math_and_code(const std::string& s) {
+  std::string m = s;
+  auto blank = [&](size_t from, size_t to) {
+    for (size_t k = from; k < to && k < m.size(); k++)
+      if (m[k] != '\n') m[k] = ' ';
+  };
+  size_t i = 0;
+  bool fence = false;
+  char fence_ch = 0;
+  size_t fence_len = 0;
+  while (i < s.size()) {
+    // at the start of a line: a fence opens or closes a code block
+    size_t line_start = i;
+    size_t indent = 0;
+    while (line_start + indent < s.size() && s[line_start + indent] == ' ' && indent < 4) indent++;
+    size_t f = line_start + indent;
+    size_t run = 0;
+    while (f + run < s.size() && (s[f + run] == '`' || s[f + run] == '~')) run++;
+    if (run >= 3 && (s[f] == '`' || s[f] == '~') && !fence) {
+      fence = true;
+      fence_ch = s[f];
+      fence_len = run;
+      size_t eol = s.find('\n', f);
+      blank(f, eol == std::string::npos ? s.size() : eol);
+      i = eol == std::string::npos ? s.size() : eol + 1;
+      continue;
+    }
+    if (fence) {
+      if (run >= fence_len && s[f] == fence_ch) {
+        size_t eol = s.find('\n', f);
+        blank(f, eol == std::string::npos ? s.size() : eol);
+        i = eol == std::string::npos ? s.size() : eol + 1;
+        fence = false;
+        continue;
+      }
+      size_t eol = s.find('\n', line_start);
+      blank(line_start, eol == std::string::npos ? s.size() : eol);
+      i = eol == std::string::npos ? s.size() : eol + 1;
+      continue;
+    }
+    char c = s[i];
+    if (c == '`') {  // inline code: to the matching run of backticks
+      size_t n = 0;
+      while (i + n < s.size() && s[i + n] == '`') n++;
+      size_t close = s.find(std::string(n, '`'), i + n);
+      size_t end = close == std::string::npos ? i + n : close + n;
+      blank(i, end);
+      i = end;
+      continue;
+    }
+    if (c == '$') {
+      size_t n = 0;
+      while (i + n < s.size() && s[i + n] == '$') n++;
+      std::string delim = n >= 2 ? "$$" : "$";
+      size_t close = s.find(delim, i + n);
+      while (close != std::string::npos && s[close - 1] == '\\')  // escaped dollar
+        close = s.find(delim, close + 1);
+      size_t end = close == std::string::npos ? i + n : close + n;
+      blank(i, end);
+      i = end;
+      continue;
+    }
+    if (c == '\\' && i + 1 < s.size() && (s[i + 1] == '(' || s[i + 1] == '[')) {
+      char close_ch = s[i + 1] == '(' ? ')' : ']';
+      size_t close = s.find(std::string("\\") + close_ch, i + 2);
+      size_t end = close == std::string::npos ? i + 2 : close + 2;
+      blank(i, end);
+      i = end;
+      continue;
+    }
+    i++;
+  }
+  return m;
+}
+
 // Whether a document was run through a markdown generator that escaped every
 // syntax character ("\#", "\-", "\*", "1\.") - such a file parses as one long
 // paragraph of punctuation-spotted prose, which is what the reader then shows.
 // Escaped markdown examples exist in the wild too, so the test is deliberately
 // conservative and can be switched off with --escapes=off.
-bool looks_backslash_escaped(const std::string& text) {
+bool looks_backslash_escaped(const std::string& raw) {
   static const std::string kPunct = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
   static const std::string kSyntax = "#-*+>|`_[]()!~.";
+  const std::string text = mask_math_and_code(raw);  // maths and code are not prose
   int total = 0, syntax = 0, block = 0, lines_with = 0, nonblank = 0;
   for (const std::string& ln : split_lines(text)) {
     if (trim(ln).empty()) continue;
@@ -186,6 +223,7 @@ bool looks_backslash_escaped(const std::string& text) {
     bool has = false;
     for (size_t i = 0; i + 1 < ln.size(); i++) {
       if (ln[i] != '\\') continue;
+      if (ln[i + 1] == '\\') { i++; continue; }  // "\\" is a line break, not an escape
       if (kPunct.find(ln[i + 1]) == std::string::npos) continue;
       total++;
       has = true;
@@ -212,11 +250,14 @@ bool looks_backslash_escaped(const std::string& text) {
 // ASCII punctuation).  "\a" or a Windows path "C:\Users" is left alone.
 std::string unescape_backslashes(const std::string& s, int* removed) {
   static const std::string kPunct = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+  const std::string mask = mask_math_and_code(s);  // ' ' where maths/code lives
   std::string o;
   o.reserve(s.size());
   int n = 0;
   for (size_t i = 0; i < s.size(); i++) {
-    if (s[i] == '\\' && i + 1 < s.size() && kPunct.find(s[i + 1]) != std::string::npos) {
+    bool safe = i < mask.size() && mask[i] == s[i];
+    if (safe && s[i] == '\\' && i + 1 < s.size() && s[i + 1] != '\\' &&
+        kPunct.find(s[i + 1]) != std::string::npos) {
       i++;
       o += s[i];
       n++;
@@ -430,7 +471,12 @@ std::string html_to_markdown(const std::string& html) {
     }
     if (in_pre) {
       if (name == "pre" && closing) { out += "\n```\n"; in_pre = false; }
-      else if (name == "br") out += "\n";
+      else if (name == "br") {
+        size_t k = i;
+        while (k < html.size() && (html[k] == ' ' || html[k] == '\t')) k++;
+        bool next_nl = k < html.size() && (html[k] == '\n' || html[k] == '\r');
+        if (!next_nl && (out.empty() || out.back() != '\n')) out += "\n";
+      }
       // everything else inside <pre> is literal text
       continue;
     }
@@ -497,7 +543,14 @@ std::string html_to_markdown(const std::string& html) {
       else { out += " "; row_cells++; }
       continue;
     }
-    if (name == "br") { out += "\n"; continue; }
+    if (name == "br") {
+      // "<br>" at the end of a line already ends it: do not add a second break
+      size_t k = i;
+      while (k < html.size() && (html[k] == ' ' || html[k] == '\t')) k++;
+      bool next_nl = k < html.size() && (html[k] == '\n' || html[k] == '\r');
+      if (!next_nl && (out.empty() || out.back() != '\n')) out += "\n";
+      continue;
+    }
     if (name == "hr") { blank(); out += "---"; blank(); continue; }
     if (name == "strong" || name == "b") { out += "**"; continue; }
     if (name == "em" || name == "i") { out += "*"; continue; }
@@ -1036,6 +1089,60 @@ bool looks_unspaced_markers(const std::string& text) {
   return unspaced >= 3 && spaced == 0;
 }
 
+// Counts the HTML character references in a piece of code.  A code block that
+// was pasted out of an HTML document carries "&lt;", "&gt;", "&amp;" instead of
+// the characters themselves; hand written code with three or more of them is
+// rare, so a handful is treated as an artifact.
+int count_html_refs(const std::string& s) {
+  int n = 0;
+  for (size_t i = 0; i + 3 < s.size(); i++) {
+    if (s[i] != '&') continue;
+    size_t semi = s.find(';', i);
+    if (semi == std::string::npos || semi - i > 12) continue;
+    std::string ref = s.substr(i, semi - i + 1);
+    if (ref == "&lt;" || ref == "&gt;" || ref == "&amp;" || ref == "&quot;" ||
+        ref == "&apos;" || ref == "&nbsp;" || (ref.size() > 3 && ref[1] == '#')) {
+      n++;
+      i = semi;
+    }
+  }
+  return n;
+}
+
+// A generator that escapes line breaks sometimes leaves a blank line after
+// every line of a code block, which reads as double spacing.  Only a block
+// whose blank lines fall *exactly* between every pair of non-blank lines (and
+// which has at least three of them) is treated as that artifact; a code block
+// that merely contains a blank line here and there is left alone.
+std::string collapse_code_blank_gaps(const std::string& code, bool* changed) {
+  std::vector<std::string> ls = split_lines(code);
+  std::vector<size_t> idx;
+  for (size_t i = 0; i < ls.size(); i++)
+    if (!trim(ls[i]).empty()) idx.push_back(i);
+  *changed = false;
+  if (idx.size() < 3) return code;
+  int inserted = 0, gaps = 0, multi = 0;
+  for (size_t k = 0; k + 1 < idx.size(); k++) {
+    size_t d = idx[k + 1] - idx[k];
+    gaps++;
+    if (d == 2) inserted++;          // exactly one blank line between two lines
+    else if (d > 2) multi++;         // a deliberate empty region: leave it alone
+  }
+  // Double spacing reads as "a blank line after most lines".  A block that only
+  // separates a few sections, or that contains a real empty region, is left as
+  // written - the artifact this removes is always systematic.
+  bool systematic = (inserted >= 3 && inserted * 2 >= gaps) ||
+                    (inserted >= 2 && inserted == gaps);  // short block, all spaced
+  if (multi > 0 || !systematic) return code;
+  std::string out;
+  for (size_t k = 0; k < idx.size(); k++) {
+    if (k) out += "\n";
+    out += ls[idx[k]];
+  }
+  *changed = true;
+  return out;
+}
+
 int heading_level(const std::string& line, std::string& text, bool loose = false) {
   size_t i = 0;
   while (i < line.size() && line[i] == ' ') i++;
@@ -1134,6 +1241,18 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
           li_++;
         }
         if (!b.code.empty() && b.code.back() == '\n') b.code.pop_back();
+        if (opt_.entities != MdOptions::EntOff && count_html_refs(b.code) >= 3) {
+          b.code = decode_entities(b.code);  // "&lt;stdio.h&gt;" -> "<stdio.h>"
+          code_refs_decoded_++;
+        }
+        {
+          bool changed = false;
+          std::string fixed = collapse_code_blank_gaps(b.code, &changed);
+          if (changed) {
+            b.code = fixed;
+            code_gaps_collapsed_++;
+          }
+        }
         std::string low = to_lower(b.lang);
         if (low == "math" || low == "latex" || low == "tex" || low == "katex") b.code_is_math = true;
         blocks.push_back(b);
@@ -1217,15 +1336,10 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
       while (li_ < lines_.size()) {
         std::string l2 = lines_[li_];
         if (is_blank(l2)) {
-          // blank line only continues the quote if the next line is a quote line
-          size_t nxt = li_ + 1;
-          bool cont = false;
-          while (nxt < lines_.size() && is_blank(lines_[nxt])) nxt++;
-          if (nxt < lines_.size() && trim(lines_[nxt]).size() && trim(lines_[nxt])[0] == '>') cont = true;
-          if (!cont) break;
-          inner.push_back("");
-          li_++;
-          continue;
+          // A bare blank line ends the quote (CommonMark): "> a" then a blank
+          // line then "> b" is two quotes, while "> a" / ">" / "> b" keeps them
+          // in one (the ">" line is handled below).
+          break;
         }
         std::string t = ltrim(l2);
         if (!t.empty() && t[0] == '>') {
@@ -1552,20 +1666,20 @@ void collect_links(const Block& b, std::vector<LinkRef>& out) {
 MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) {
   opt_ = opt;
   (void)0;
-  // Un-escape HTML-escaped sources before anything looks at the characters.
+  // A source that was HTML-escaped on the way here is repaired only when the
+  // reader asks for it (--entities=force).  Guessing was removed: the escaping
+  // is a property of how the text was pasted, not of the document, and a wrong
+  // guess silently rewrites maths and code.
   std::string src = text;
   bool unescaped = false;
-  if (opt_.entities != MdOptions::EntOff) {
-    if (opt_.entities == MdOptions::EntForce || looks_entity_escaped(src)) {
-      // Decode repeatedly: content that was escaped twice (&amp;#35;) needs two
-      // passes.  Bounded so a pathological file cannot loop.
-      for (int pass = 0; pass < 3; pass++) {
-        std::string next = decode_entities(src);
-        unescaped = true;
-        if (next == src) break;
-        src = next;
-        if (!looks_entity_escaped(src)) break;
-      }
+  if (opt_.entities == MdOptions::EntForce) {
+    // Decode repeatedly: content that was escaped twice (&amp;#35;) needs two
+    // passes.  Bounded so a pathological file cannot loop.
+    for (int pass = 0; pass < 3; pass++) {
+      std::string next = decode_entities(src);
+      if (next == src) break;
+      src = next;
+      unescaped = true;
     }
   }
   // Markdown generators (pandoc --to=markdown inside HTML, "copy as markdown"
@@ -1590,6 +1704,8 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
   doc.entities_unescaped = unescaped;
   doc.backslashes_removed = backslashes_removed;
   doc.invisible_removed = invisible_removed;
+  doc.code_gaps_collapsed = code_gaps_collapsed_;
+  doc.code_refs_decoded = code_refs_decoded_;
   // normalise line endings and expand tabs
   std::string norm;
   norm.reserve(src.size());

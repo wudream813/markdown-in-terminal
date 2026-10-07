@@ -73,8 +73,11 @@ class Screen {
   Cell& at(int x, int y);
 
   // Emits a full frame; only changed cells are written (diffing vs. last frame).
-  std::string render_diff();
-  std::string render_full();
+  // sync=false leaves the DEC 2026 window open: the caller wraps text and
+  // graphics escapes in one synchronized update so the terminal paints once.
+  std::string render_diff(bool sync = true);
+  std::string render_full(bool sync = true);
+  bool sync_update() const { return !no_sync_update_; }
   void invalidate() { force_full_ = true; }
   bool using_terminal_bg() const { return use_default_bg_; }
   void set_cursor_hidden(bool hidden) { cursor_hidden_ = hidden; }
@@ -157,6 +160,7 @@ class Terminal {
     int mx = 0, my = 0;  // mouse cell coords
     bool wheel_up = false, wheel_down = false;
     bool drag = false;              // motion event with a button held
+    bool release = false;           // button-up (SGR final 'm')
   };
   enum Key {
     K_UP = 1000, K_DOWN, K_LEFT, K_RIGHT, K_PGUP, K_PGDN, K_HOME, K_END, K_DEL,

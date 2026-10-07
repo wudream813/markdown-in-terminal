@@ -1,6 +1,8 @@
 // render.cpp : layout + drawing for DocView.
 #include "render.h"
 
+#include "platform.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -169,9 +171,32 @@ void DocView::set_width(int cols) {
 }
 
 // ------------------------------------------------------------- assets -------
+std::shared_ptr<DocView::ImageAsset> DocView::sub_variant(const ImageAsset& a, int clip_top,
+                                                          int vis_h) {
+  int chh = std::max(1, cell_h());
+  if (clip_top < 0) clip_top = 0;
+  if (clip_top >= a.px_h) clip_top = a.px_h - 1;
+  if (vis_h <= 0 || vis_h > a.px_h - clip_top) vis_h = a.px_h - clip_top;
+  vis_h = std::max(chh, (vis_h / chh) * chh);   // stay on the cell grid
+  auto key = std::make_tuple(&a, clip_top, vis_h);
+  auto it = clip_cache_.find(key);
+  if (it != clip_cache_.end()) return it->second;
+  auto ca = std::make_shared<ImageAsset>(a);
+  ca->rgba.assign((size_t)a.px_w * vis_h * 4, 0);
+  for (int y = 0; y < vis_h; y++)
+    memcpy(&ca->rgba[(size_t)y * a.px_w * 4],
+           &a.rgba[(size_t)(y + clip_top) * a.px_w * 4], (size_t)a.px_w * 4);
+  ca->px_h = vis_h;
+  ca->rows = vis_h / chh;
+  ca->baseline_px = a.baseline_px - clip_top;
+  ca->png = png_encode(ca->rgba.data(), ca->px_w, vis_h);
+  clip_cache_[key] = ca;
+  return ca;
+}
+
 std::shared_ptr<DocView::ImageAsset> DocView::make_canvas(Image& img, int cols, int rows,
                                                           int target_w_px, int target_h_px,
-                                                          double baseline_px) {
+                                                          double baseline_px, int ink_y) {
   auto a = std::make_shared<ImageAsset>();
   int cw = std::max(1, cell_w()), chh = std::max(1, cell_h());
   int canvas_w = std::max(1, target_w_px);
@@ -183,6 +208,7 @@ std::shared_ptr<DocView::ImageAsset> DocView::make_canvas(Image& img, int cols, 
     a->rgba.assign((size_t)canvas_w * canvas_h * 4, 0);
     int ox = pad ? (canvas_w - img.w) / 2 : 0;
     int oy = pad ? (canvas_h - img.h) / 2 : 0;
+    if (ink_y != -1000000) { oy = ink_y; pad = true; }   // caller bakes the offset
     // when not padding, scale the source to exactly the canvas size (keeps aspect
     // because the caller computed both dimensions from the same ratio)
     if (!pad && (img.w != canvas_w || img.h != canvas_h)) {
@@ -277,7 +303,9 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_math(const std::string& 
       p->rows = std::max(1, (int)std::ceil((double)p->px_h / chh));
       p->px_w = p->cols * cw;   // same snap as the real asset (see below)
       p->px_h = p->rows * chh;
-      p->baseline_px = display ? 0 : em_px() * 0.75;
+      // the placeholder has to sit on the same cell row as the real bitmap,
+      // otherwise the layout jumps when the formula is finally typeset
+      p->baseline_px = display ? 0 : cell_baseline_px();
       asset_map_[key] = p;
       return p;
     }
@@ -295,6 +323,7 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_math(const std::string& 
   if (!m.ok) {
     a->failed = true;
     a->err = "cannot typeset";
+    if (getenv("MDT_DEBUG_SVG")) fprintf(stderr, "[mdt] asset: no metrics for: %s\n", tex.c_str());
     asset_map_[key] = a;
     return a;
   }
@@ -310,11 +339,43 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_math(const std::string& 
   // what makes formulas look soft.
   int w = std::max(cw, (int)std::ceil((double)ink_w / cw) * cw);
   int h = std::max(chh, (int)std::ceil((double)ink_h / chh) * chh);
+  // An inline formula lives on a text row, and its bitmap is placed at a cell
+  // boundary.  The sub-cell offset is baked into the bitmap instead of being
+  // asked for in the placement: a terminal that cannot put an image at a pixel
+  // offset inside a cell (iTerm2, sixel; and kitty's Y= does not do what one
+  // might expect either) used to draw the formula a whole row too high, because
+  // a baseline a fraction of a pixel above the text's anchored the bitmap on
+  // the row above.  grid_ink_y() gives the drawing's row inside the canvas whose
+  // top is the boundary the placement will use.
+  int ink_y = -1000000;  // -1000000 = let raster_grid centre the drawing
+  if (!display) {
+    if (ink_h > chh) {
+      // A multi-row formula (aligned, matrix, ...) gets its own rows in the
+      // layout, so its ink starts at the top of the canvas instead of hanging
+      // off a text baseline: the reserved block then hugs the drawing.
+      ink_y = 0;
+    } else {
+      int cb = cell_baseline_px();
+      double off = (double)cb - m.baseline_px * scale;  // ink top vs the text row top
+      int rows_above = (int)std::floor(off / chh);
+      ink_y = (int)std::lround(off - (double)rows_above * chh);
+      if (ink_y < 0) { ink_y += chh; rows_above -= 1; }
+      if (ink_y >= chh) { ink_y -= chh; rows_above += 1; }
+    }
+    h = std::max(chh, (int)std::ceil((double)(ink_y + ink_h) / chh) * chh);
+  }
   Image img;
   int off_x = 0, off_y = 0;
-  if (!math_->raster_grid(tex, display, em * scale, w, h, theme_.math_fg, img, &off_x, &off_y)) {
+  if (getenv("MDT_DEBUG_SVG"))
+    fprintf(stderr, "[mdt] asset build src=%.40s display=%d em=%.1f ink=%.1fx%.1f max=%dx%d scale=%.3f -> %dx%d\n",
+            tex.c_str(), display ? 1 : 0, em, m.px_w, m.px_h, max_w_px, max_h_px, scale, w, h);
+  if (!math_->raster_grid(tex, display, em * scale, w, h, theme_.math_fg, img, &off_x, &off_y,
+                          ink_y)) {
     a->failed = true;
     a->err = "raster failed";
+    if (getenv("MDT_DEBUG_SVG"))
+      fprintf(stderr, "[mdt] asset: raster failed (%dx%d px, scale %.2f, ink %.1fx%.1f) for: %s\n",
+              w, h, scale, m.px_w, m.px_h, tex.c_str());
     asset_map_[key] = a;
     return a;
   }
@@ -347,7 +408,43 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_image(const std::string&
   if (!is_remote_url(local) && !local.empty() && local[0] != '/' && local[0] != '~') {
     local = base_dir_.empty() ? local : base_dir_ + "/" + local;
   }
-  if (ends_with(lower, ".svg") || svg) {
+  // Pictures on the web are downloaded by a worker thread: a 题解 with three
+  // images on a slow host used to block the event loop for the whole download,
+  // which looked exactly like a dead keyboard.  Until the bytes are here the
+  // picture is a short placeholder line, and the layout is refreshed once.
+  bool remote_raster = is_remote_url(src) && !ends_with(lower, ".svg");
+  RemoteImageLoader::Result loaded;
+  if (remote_raster) {
+    if (!opt_.remote_images) {  // no graphics, or a text dump: no network at all
+      a->failed = true;
+      a->err = "remote image";
+      asset_map_[key] = a;
+      return a;
+    }
+    loaded = loader_.get(src);
+    if (getenv("MDT_DEBUG_IMAGE"))
+      fprintf(stderr, "[mdt] image %s: cached=%d%s\n", src.c_str(), loaded ? 1 : 0,
+              loaded ? (loaded->ok ? " ok" : (" failed: " + loaded->err).c_str())
+                     : " (still downloading)");
+    if (!loaded) {
+      if (opt_.async_images) {
+        if (getenv("MDT_DEBUG_IMAGE")) fprintf(stderr, "[mdt] image %s: queued\n", src.c_str());
+        loader_.request(src);
+        a->failed = true;      // drawn as "[loading…]" until the image arrives
+        a->err = "loading…";
+        asset_map_[key] = a;
+        return a;
+      }
+    } else if (!loaded->ok) {
+      a->failed = true;
+      a->err = loaded->err;
+      asset_map_[key] = a;
+      return a;
+    } else {
+      img = loaded->img;       // already downloaded and decoded
+    }
+  }
+  if (!remote_raster && (ends_with(lower, ".svg") || svg)) {
     std::string xml;
     if (is_remote_url(src)) {
       std::string data;
@@ -373,8 +470,10 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_image(const std::string&
       asset_map_[key] = a;
       return a;
     }
-  } else {
+  } else if (!remote_raster || !loaded) {
     if (!image_load_source(src, img, &err, &base_dir_)) {
+      if (getenv("MDT_DEBUG_IMAGE"))
+        fprintf(stderr, "[mdt] image %s: download failed: %s\n", src.c_str(), err.c_str());
       a->failed = true;
       a->err = err.empty() ? "cannot load image" : err;
       asset_map_[key] = a;
@@ -396,7 +495,22 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_image(const std::string&
   // cell aligned canvas (keeps placement simple and avoids overlaps)
   int canvas_w = inline_mode ? fit_w : cols * cw;
   int canvas_h = inline_mode ? fit_h : rows * chh;
-  auto canvas = make_canvas(scaled, cols, rows, canvas_w, canvas_h, 0);
+  double baseline = 0;  // a block picture hangs from the row it starts on
+  int pic_y = -1000000;
+  if (inline_mode) {
+    // A picture inside a line of text sits on the text baseline, and its canvas
+    // is grid-aligned the same way a formula's is (see asset_for_math).
+    int cb = cell_baseline_px();
+    double off = (double)cb - (double)fit_h;
+    int rows_above = (int)std::floor(off / chh);
+    pic_y = (int)std::lround(off - (double)rows_above * chh);
+    if (pic_y < 0) { pic_y += chh; rows_above -= 1; }
+    if (pic_y >= chh) { pic_y -= chh; rows_above += 1; }
+    canvas_h = std::max(1, (int)std::ceil((double)(pic_y + fit_h) / chh)) * chh;
+    rows = canvas_h / chh;
+    baseline = pic_y + fit_h;
+  }
+  auto canvas = make_canvas(scaled, cols, rows, canvas_w, canvas_h, baseline, pic_y);
   canvas->source = src;
   canvas->natural_w = img.w;
   canvas->natural_h = img.h;
@@ -407,8 +521,15 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_image(const std::string&
 }
 
 // -------------------------------------------------------------- layout ------
+bool DocView::poll_images() {
+  if (!loader_.take_changed()) return false;
+  relayout();  // rebuild the picture rows; the image is cached in the loader
+  return true;
+}
+
 void DocView::relayout() {
   layout_dirty_ = false;  // the flag only means "layout may be stale"
+  clip_cache_.clear();    // the assets the cuts refer to are gone
   assets_.clear();
   asset_map_.clear();
   layout_.clear();
@@ -429,8 +550,10 @@ void DocView::relayout() {
 // the cell it covers the transcription completely, and because the bitmap is
 // already the size of the cells it is drawn into, the terminal does not scale
 // it (that is what keeps formulas sharp elsewhere too).
-std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece& pc, int cw, int chh) {
-  std::string key = fmt("CM|%d|%d|%d|%d|%s", cw, chh, pc.cols, pc.display ? 1 : 0, pc.tex.c_str());
+std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece& pc, int cw, int chh,
+                                                             RGB bg) {
+  std::string key = fmt("CM|%d|%d|%d|%d|%06x|%s", cw, chh, pc.cols, pc.display ? 1 : 0,
+                        (bg.r << 16) | (bg.g << 8) | bg.b, pc.tex.c_str());
   auto it = asset_map_.find(key);
   if (it != asset_map_.end()) return it->second;
   auto a = std::make_shared<ImageAsset>();
@@ -442,9 +565,15 @@ std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece
   if (!m.ok) { a->failed = true; a->err = "cannot typeset"; return a; }
   int w = std::max(2, pc.cols) * cw;
   int h = chh;
-  // scale the formula so it fits both the width and the cell height
+  int cb = cell_baseline_px();
+  // scale the formula so it fits the width, the cell height, and leaves room
+  // for the baseline: the ink has to sit inside one cell with its baseline on
+  // the cell's text baseline, otherwise the bitmap cannot be placed on the
+  // grid without hanging over its neighbours
   double scale = std::min(1.0, (double)w / std::max(1.0, m.px_w));
   if (m.px_h * scale > h - 2) scale = (h - 2) / std::max(1.0, m.px_h);
+  if (m.baseline_px > 1 && m.baseline_px * scale > cb) scale = (double)cb / m.baseline_px;
+  if (m.px_h * scale > h) scale = (double)h / std::max(1.0, m.px_h);
   Image img;
   int off_x = 0, off_y = 0;
   if (!math_->raster_grid(pc.tex, false, em * scale, w, h, theme_.math_fg, img, &off_x, &off_y)) {
@@ -452,9 +581,19 @@ std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece
     a->err = "raster failed";
     return a;
   }
-  // paint the page colour behind the ink, so the transcription underneath is
-  // covered instead of showing through the transparent parts
-  RGB bg = theme_.bg;
+  // shift the ink so that its baseline lands exactly on the cell baseline
+  int shift = (int)std::lround(cb - m.baseline_px * scale) - off_y;
+  if (shift != 0) {
+    std::vector<unsigned char> moved((size_t)w * h * 4, 0);
+    for (int y = 0; y < h; y++) {
+      int sy = y - shift;
+      if (sy < 0 || sy >= h) continue;
+      memcpy(&moved[(size_t)y * w * 4], &img.rgba[(size_t)sy * w * 4], (size_t)w * 4);
+    }
+    img.rgba.swap(moved);
+  }
+  // paint the cell background behind the ink, so anything underneath is covered
+  // instead of showing through the transparent parts
   for (size_t i = 0; i + 3 < img.rgba.size(); i += 4) {
     double al = img.rgba[i + 3] / 255.0;
     for (int k = 0; k < 3; k++) {
@@ -469,14 +608,16 @@ std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece
   a->px_h = h;
   a->cols = std::max(2, pc.cols);
   a->rows = 1;
-  // put the formula's baseline on the baseline of the cell text
-  a->baseline_px = off_y + m.baseline_px * scale;
+  a->baseline_px = cb;  // the ink was baked onto this baseline
+  if (getenv("MDT_DEBUG_CELLMATH"))
+    fprintf(stderr, "[mdt]   %s: px=%dx%d baseline=%.1f off_y=%d scale=%.3f -> base_in_box=%.1f\n",
+            pc.tex.c_str(), (int)m.px_w, (int)m.px_h, m.baseline_px, off_y, scale, a->baseline_px);
   a->png = png_encode(a->rgba.data(), w, h);
   if (a->png.empty()) a->failed = true;
   if (getenv("MDT_DEBUG_CELLMATH")) {  // write the bitmap out for inspection
     static int n = 0;
     std::string path = fmt("/tmp/cellmath-%d.png", n++);
-    if (FILE* f = fopen(path.c_str(), "wb")) {
+    if (FILE* f = plat::open_file(path, "wb")) {
       fwrite(a->png.data(), 1, a->png.size(), f);
       fclose(f);
       fprintf(stderr, "[mdt] cell maths %dx%d px -> %s (%s)\n", w, h, path.c_str(),
@@ -487,31 +628,42 @@ std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece
 }
 
 // Places the cell's formulas as bitmaps on top of their transcription.
-void DocView::place_cell_math(int cell_x, int cell_w, int yy, const TCell& tc, int cw, int chh,
-                              int scroll_row) {
-  if (tc.pieces.empty() || !term_ || !term_->caps.can_show_images()) return;
-  if (opt_.text_math) return;
+void DocView::place_cell_math(Screen* scr, int cell_x, int cell_w, int yy, const TCell& tc, int cw,
+                              int chh, int scroll_row, RGB bg) {
+  if (tc.pieces.empty()) return;
+  if (opt_.text_math || !math_) return;
+  if (!offscreen_ && term_ && !term_->caps.can_show_images()) return;
+  if (yy - scroll_row < 0) return;  // this row is scrolled out
   int inner = std::max(2, cell_w - 2);
   for (const TCell::Piece& pc : tc.pieces) {
     if (pc.col + pc.cols > inner) continue;  // does not fit the column: text only
-    auto a = cell_math_asset(pc, cw, chh);
+    auto a = cell_math_asset(pc, cw, chh, bg);
     if (a->failed || a->png.empty()) continue;
+    cell_assets_.push_back(a);  // PlacedImage only holds pointers into it
     PlacedImage im;
-    im.x = cell_x + 1 + pc.col;
+    // cell_x is already the first column of the cell's content (the caller adds
+    // its padding and alignment), so the piece only adds its own column.
+    im.x = cell_x + pc.col;
+    // The bitmap is one cell tall with the formula's baseline baked in at the
+    // cell's own baseline (see cell_math_asset), so it is placed exactly on the
+    // cell row: no sub-cell offset, nothing spilling into the row above or
+    // below, and the transcription underneath is covered completely.
     im.y = yy - scroll_row;
+    im.sub_y = 0;
     im.cols = a->cols;
     im.rows = 1;
     im.px_w = a->px_w;
     im.px_h = a->px_h;
-    // vertical: shift the ink down onto the text baseline (sub_y is honoured
-    // by kitty; the others draw it at the cell, which is right for one row)
-    double down = cell_baseline_px() - a->baseline_px;
-    int suby = (int)std::lround(down);
-    if (suby < 0) { im.y -= 1; suby += chh; }
-    im.sub_y = suby;
     im.png = &a->png;
     im.rgba = &a->rgba;
     images_.push_back(im);
+    // Terminals paint cell text above placed images, so the Unicode
+    // transcription has to go from the text layer or it shows through/around
+    // the bitmap.  Without graphics the transcription is what remains.
+    if (scr) {
+      for (int k = 0; k < pc.cols && pc.col + k < cell_w; k++)
+        scr->put(im.x + k, im.y, ' ', theme_.fg, bg);
+    }
   }
 }
 
@@ -711,7 +863,7 @@ void DocView::layout_blocks() {
             if (li2 == 0) { lines[li2].marker = hashes + " "; lines[li2].marker_w = marker_w; }
             lines[li2].row = row - bl.row;
             bl.lines.push_back(lines[li2]);
-            row++;
+            row += lines[li2].rows;
           }
           Line rule;
           rule.kind = Line::Rule;
@@ -726,7 +878,7 @@ void DocView::layout_blocks() {
             if (li2 == 0) { lines[li2].marker = hashes + " "; lines[li2].marker_w = marker_w; }
             lines[li2].row = row - bl.row;
             bl.lines.push_back(lines[li2]);
-            row++;
+            row += lines[li2].rows;
           }
         }
         break;
@@ -753,6 +905,7 @@ void DocView::layout_blocks() {
             l.img = (int)assets_.size();
             assets_.push_back(a);
             l.img_rows = a->rows;
+            l.rows = a->rows;
           } else {
             l.kind = Line::Text;
           }
@@ -760,7 +913,7 @@ void DocView::layout_blocks() {
           int rows_needed = (!a->failed ? a->rows : 1);
           row += rows_needed;
           if (!a->failed) row += 0;
-        } else if (img_only) {
+        } else if (img_only && opt_.inline_images) {  // a text dump keeps the alt text
           for (auto* sp : meaningful) {
             if (sp->kind != Span::Image) continue;
             int maxw = content_w_ * cw - 8;
@@ -773,6 +926,7 @@ void DocView::layout_blocks() {
               l.img = (int)assets_.size();
               assets_.push_back(a);
               l.img_rows = a->rows;
+              l.rows = a->rows;
               row += a->rows + 1;
             } else {
               l.kind = Line::Text;
@@ -783,7 +937,7 @@ void DocView::layout_blocks() {
         } else {
           std::vector<Line> lines;
           build_lines(b.spans, 1, content_w_ - 1, Span{}, lines);
-          for (auto& l : lines) { l.row = row - bl.row; bl.lines.push_back(l); row++; }
+          for (auto& l : lines) { l.row = row - bl.row; bl.lines.push_back(l); row += l.rows; }
         }
         row += opt_.paragraph_gap;
         break;
@@ -824,78 +978,27 @@ void DocView::layout_blocks() {
         break;
       }
       case Block::Quote: {
-        int inner_indent = 3;
         int start_row = row;
-        std::vector<BlockLayout> subs;
-        for (auto& sublist : b.items) {
+        std::vector<std::vector<Line>> chunks;
+        for (auto& sublist : b.items)
           for (const Block& sb : sublist) {
-            // lay out the sub-block with an indent by re-using layout_blocks logic
-            BlockLayout inner;
-            inner.block = (int)bi;
-            inner.row = row;
-            // simple approach: paragraphs/headings/lists inside quotes
             std::vector<Line> lines;
-            const Block& sb2 = sb;
-            switch (sb2.type) {
-              case Block::Heading: {
-                Span base;
-                base.bold = true;
-                base.has_color = true;
-                base.color = theme_.heading[std::min(6, std::max(1, sb2.level))];
-                build_lines(sb2.spans, inner_indent, content_w_ - inner_indent, base, lines);
-                break;
-              }
-              case Block::Paragraph:
-              case Block::Html: {
-                Span base;
-                base.has_color = true;
-                base.color = theme_.quote_fg;
-                build_lines(sb2.spans.empty() ? std::vector<Span>{} : sb2.spans, inner_indent,
-                            content_w_ - inner_indent, base, lines);
-                break;
-              }
-              case Block::CodeBlock: {
-                Span base;
-                base.has_color = true;
-                base.color = theme_.code_fg;
-                for (auto& cl : split_lines(sb2.code)) {
-                  Line l;
-                  l.kind = Line::Code;
-                  l.bar = inner_indent - 2;
-                  Run r;
-                  r.text = cl;
-                  r.x = inner_indent;
-                  r.width = str_width(cl);
-                  r.style = base;
-                  l.runs.push_back(r);
-                  lines.push_back(l);
-                }
-                break;
-              }
-              case Block::Hr: {
-                Line l;
-                l.kind = Line::Rule;
-                l.bar = inner_indent - 2;
-                lines.push_back(l);
-                break;
-              }
-              default: {
-                Line l;
-                l.kind = Line::Text;
-                lines.push_back(l);
-                break;
-              }
-            }
-            for (auto& l : lines) {
-              l.bar = inner_indent - 2;
-              l.row = row - bl.row;
-              bl.lines.push_back(l);
-              row++;
-            }
-            inner.rows = row - inner.row;
-            subs.push_back(inner);
+            quote_lines(lines, sb, 3, std::vector<int>{1});
+            if (!lines.empty()) chunks.push_back(std::move(lines));
           }
-          row += 0;
+        for (size_t k = 0; k < chunks.size(); k++) {
+          if (k) {  // the blank line that separated the two paragraphs
+            Line gap;
+            gap.bars = std::vector<int>{1};
+            gap.row = row - bl.row;
+            bl.lines.push_back(gap);
+            row++;
+          }
+          for (Line& l : chunks[k]) {
+            l.row = row - bl.row;
+            bl.lines.push_back(l);
+            row += l.rows;
+          }
         }
         if (row == start_row) {
           Line l;
@@ -903,7 +1006,6 @@ void DocView::layout_blocks() {
           bl.lines.push_back(l);
           row++;
         }
-        (void)subs;
         row += opt_.paragraph_gap;
         break;
       }
@@ -1007,52 +1109,12 @@ void DocView::layout_blocks() {
               }
               case Block::Quote: {
                 // a quote inside a list item keeps its bar, just indented
-                int qind = item_indent + 2;
-                for (auto& sublist : sb.items) {
+                for (auto& sublist : sb.items)
                   for (const Block& qb : sublist) {
-                    Span qbase;
-                    qbase.has_color = true;
-                    qbase.color = theme_.quote_fg;
                     std::vector<Line> qlines;
-                    if (qb.type == Block::Heading) {
-                      qbase.bold = true;
-                      qbase.color = theme_.heading[std::min(6, std::max(1, qb.level))];
-                      build_lines(qb.spans, qind, content_w_ - qind, qbase, qlines);
-                    } else if (qb.type == Block::Paragraph || qb.type == Block::Html) {
-                      build_lines(qb.spans, qind, content_w_ - qind, qbase, qlines);
-                    } else if (qb.type == Block::CodeBlock) {
-                      Span cb;
-                      cb.has_color = true;
-                      cb.color = theme_.code_fg;
-                      for (auto& cl : split_lines(qb.code)) {
-                        Line l2;
-                        l2.kind = Line::Code;
-                        Run r;
-                        r.text = cl;
-                        r.x = qind;
-                        r.width = str_width(cl);
-                        r.style = cb;
-                        l2.runs.push_back(r);
-                        qlines.push_back(l2);
-                      }
-                    } else {
-                      std::string t = !qb.spans.empty() ? spans_plain_text(qb.spans) : qb.code;
-                      if (!t.empty()) {
-                        std::vector<Span> sp;
-                        Span s2;
-                        s2.text = t;
-                        s2.has_color = true;
-                        s2.color = theme_.quote_fg;
-                        sp.push_back(s2);
-                        build_lines(sp, qind, content_w_ - qind, qbase, qlines);
-                      }
-                    }
-                    for (auto& l2 : qlines) {
-                      l2.bar = item_indent;
-                      lines.push_back(l2);
-                    }
+                    quote_lines(qlines, qb, item_indent + 2, std::vector<int>{item_indent});
+                    for (Line& l2 : qlines) lines.push_back(l2);
                   }
-                }
                 break;
               }
               case Block::Table: {
@@ -1099,7 +1161,7 @@ void DocView::layout_blocks() {
               }
               l.row = row - bl.row;
               bl.lines.push_back(l);
-              row++;
+              row += l.rows;
             }
             if (!first_line_done) {
               Line l;
@@ -1149,6 +1211,7 @@ void DocView::layout_blocks() {
           l.img = (int)assets_.size();
           assets_.push_back(a);
           l.img_rows = a->rows;
+          l.rows = a->rows;
           row += a->rows;
         } else {
           std::vector<Span> sp;
@@ -1198,6 +1261,80 @@ void DocView::layout_blocks() {
 }
 
 // Builds wrapped, styled lines from a list of spans.
+void DocView::quote_lines(std::vector<Line>& out, const Block& qb, int indent,
+                          std::vector<int> bars) {
+  if (qb.type == Block::Quote) {
+    // > > nested: one more bar in the column the inner text used to start at
+    bars.push_back(indent);
+    for (auto& sublist : qb.items)
+      for (const Block& inner : sublist) quote_lines(out, inner, indent + 2, bars);
+    return;
+  }
+  std::vector<Line> lines;
+  switch (qb.type) {
+    case Block::Heading: {
+      Span base;
+      base.bold = true;
+      base.has_color = true;
+      base.color = theme_.heading[std::min(6, std::max(1, qb.level))];
+      build_lines(qb.spans, indent, content_w_ - indent, base, lines);
+      break;
+    }
+    case Block::Paragraph:
+    case Block::Html: {
+      Span base;
+      base.has_color = true;
+      base.color = theme_.quote_fg;
+      build_lines(qb.spans.empty() ? std::vector<Span>{} : qb.spans, indent,
+                  content_w_ - indent, base, lines);
+      break;
+    }
+    case Block::CodeBlock: {
+      Span base;
+      base.has_color = true;
+      base.color = theme_.code_fg;
+      for (auto& cl : split_lines(qb.code)) {
+        Line l;
+        l.kind = Line::Code;
+        Run r;
+        r.text = cl;
+        r.x = indent;
+        r.width = str_width(cl);
+        r.style = base;
+        l.runs.push_back(r);
+        lines.push_back(l);
+      }
+      break;
+    }
+    case Block::Hr: {
+      Line l;
+      l.kind = Line::Rule;
+      lines.push_back(l);
+      break;
+    }
+    default: {
+      std::string t = !qb.spans.empty() ? spans_plain_text(qb.spans) : qb.code;
+      if (!t.empty()) {
+        std::vector<Span> sp;
+        Span s2;
+        s2.text = t;
+        s2.has_color = true;
+        s2.color = theme_.quote_fg;
+        sp.push_back(s2);
+        Span base;
+        base.has_color = true;
+        base.color = theme_.quote_fg;
+        build_lines(sp, indent, content_w_ - indent, base, lines);
+      }
+      break;
+    }
+  }
+  for (Line& l : lines) {
+    l.bars = bars;
+    out.push_back(l);
+  }
+}
+
 void DocView::build_lines(const std::vector<Span>& spans, int indent, int width, const Span& base,
                           std::vector<Line>& out) {
   if (width <= 4) width = 4;
@@ -1376,6 +1513,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
   int x = 0;
   auto start_line = [&]() {
     cur.runs.clear();
+    cur.rows = 1;
     x = 0;
   };
   size_t i = 0;
@@ -1393,6 +1531,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
         r.rows = std::max(1, (int)std::ceil((double)a.px_h / chh));
         r.width = a.w;
       }
+      cur.rows = std::max(cur.rows, r.rows);
       if (!cur.runs.empty() && cur.runs.back().img < 0 && r.img < 0 &&
           cur.runs.back().style.color == r.style.color &&
           cur.runs.back().style.bold == r.style.bold &&
@@ -1461,6 +1600,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
         l.img = (int)assets_.size();
         assets_.push_back(asset);
         l.img_rows = asset->rows;
+        l.rows = asset->rows;
       } else {
         std::vector<Span> sp;
         Span s2;

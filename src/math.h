@@ -55,8 +55,10 @@ class MathRenderer {
   // inside a canvas that is exactly the cell grid (canvas_w x canvas_h).  The
   // terminals then place the image 1:1 instead of rescaling it, which is what
   // made formulas look soft.  *off_x/*off_y receive the drawing's offset.
+  // ink_y places the drawing at that row of the canvas instead of centring it
+  // (used to bake a sub-cell offset into the bitmap; the default centres).
   bool raster_grid(const std::string& tex, bool display, double em_px, int canvas_w, int canvas_h,
-                   RGB fg, Image& out, int* off_x, int* off_y);
+                   RGB fg, Image& out, int* off_x, int* off_y, int ink_y = -1000000);
 
   size_t cache_entries() const { return raster_cache_.size() + metrics_cache_.size(); }
 

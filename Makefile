@@ -30,7 +30,7 @@ ifneq ($(findstring mingw,$(CXX)),)
   CXXFLAGS += $(WIN_DEFS)
   CFLAGS   += $(WIN_DEFS)
   # static libgcc/libstdc++/winpthread so the .exe has no MinGW DLL deps
-  LDLIBS   := -lm -lws2_32 -static -static-libgcc -static-libstdc++
+  LDLIBS   := -lm -lws2_32 -lwininet -static -static-libgcc -static-libstdc++
 endif
 
 BIN      := $(BUILD)/mdt$(if $(WINDOWS),.exe,)

@@ -1,6 +1,7 @@
 // render.h : document layout + drawing (text grid) with graphics overlays.
 #pragma once
 #include <map>
+#include <tuple>
 #include <memory>
 #include <string>
 #include <vector>
@@ -60,6 +61,8 @@ struct RenderOptions {
   int max_image_rows_pct = 60;  // image height cap (% of the viewport)
   bool show_line_numbers = false;
   bool inline_images = true;
+  bool remote_images = true;   // fetch http(s):// pictures at all
+  bool async_images = false;   // ... on a worker thread (interactive reading)
   bool text_math = false;       // force the plain-Unicode maths fallback
   bool lazy_metrics = true;     // typeset only formulas that are on screen
   int em_px_override = 0;       // 0 = derive from the cell size
@@ -85,6 +88,9 @@ class DocView {
   // estimate; the caller should relayout once (all metrics are cached by then).
   bool layout_dirty() const { return layout_dirty_; }
   void set_lazy_metrics(bool on) { lazy_metrics_ = on; }
+  // Off-screen rendering (--screenshot): there is no terminal to ask, and the
+  // caller composites the images itself, so bitmaps are always built.
+  void set_offscreen(bool on) { offscreen_ = on; }
   int cell_w() const;
   int cell_h() const;
 
@@ -106,6 +112,12 @@ class DocView {
   // Renders the visible part into `scr` and fills images() with placements.
   void draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row);
   const std::vector<PlacedImage>& images() const { return images_; }
+  // Downloads that finished since the last call; the event loop then relayouts
+  // and redraws.  Never blocks.
+  bool poll_images();
+  bool images_pending() const { return loader_.busy(); }
+  // Forget downloaded pictures (the "reload images" key).
+  void clear_image_cache() { loader_.clear(); }
 
   std::string plain_text() const;
 
@@ -143,9 +155,14 @@ class DocView {
     std::vector<Run> runs;
     std::vector<TCell> cells;   // kind == Table
     int row = 0;                // row offset inside the block
-    int bar = -1;               // blockquote bar column (-1 = none)
+    std::vector<int> bars;      // blockquote bar columns, outermost first
     int img = -1;               // kind == Image
     int img_rows = 1;
+    // How many terminal rows this line occupies.  A text line that carries an
+    // inline formula or picture taller than one row has to reserve the extra
+    // rows, otherwise the bitmap is drawn over whatever the layout put below
+    // it (a multi-line aligned block used to cover the next paragraph).
+    int rows = 1;
     int code_index = -1;        // source line index for code blocks
     int x = 0;                  // extra column offset (blocks inside list items)
     std::string code_text;      // wrapped code line (code blocks)
@@ -183,9 +200,14 @@ class DocView {
   int cols_ = 80, view_rows_ = 24, content_w_ = 78;
   int total_rows_ = 0, scroll_ = 0;
   bool lazy_metrics_ = true;
+  bool offscreen_ = false;
   bool layout_dirty_ = false;
   std::vector<BlockLayout> layout_;
   std::vector<PlacedImage> images_;
+  mutable RemoteImageLoader loader_;   // remote pictures, fetched off-thread
+  // Keeps the cell-formula bitmaps alive while the frame is being emitted:
+  // PlacedImage holds raw pointers into them.
+  std::vector<std::shared_ptr<ImageAsset>> cell_assets_;
   std::vector<std::shared_ptr<ImageAsset>> assets_;
   std::map<std::string, std::shared_ptr<ImageAsset>> asset_map_;
 
@@ -199,16 +221,22 @@ class DocView {
                                               bool inline_mode);
   std::shared_ptr<ImageAsset> resolve_asset(const ImageAsset& a);
   std::shared_ptr<ImageAsset> make_canvas(Image& img, int cols, int rows, int target_w_px,
-                                          int target_h_px, double baseline_px);
+                                          int target_h_px, double baseline_px,
+                                          int ink_y = -1000000);
+  // The part of a bitmap that is visible when the viewport cuts it: rows
+  // [clip_top, clip_top+vis_h) on a fresh grid-aligned canvas.  Cached, because
+  // scrolling revisits the same cut over and over.
+  std::shared_ptr<ImageAsset> sub_variant(const ImageAsset& a, int clip_top, int vis_h);
+  std::map<std::tuple<const ImageAsset*, int, int>, std::shared_ptr<ImageAsset>> clip_cache_;
 
   void layout_blocks();
   // Lays a table out into bl, starting at column `indent` with `avail` columns
   // available.  Also used for tables nested in list items and quotes.
   void layout_table(const Block& b, int indent, int avail, BlockLayout& bl, int& row);
-  void place_cell_math(int cell_x, int cell_w, int yy, const TCell& tc, int cw, int chh,
-                       int scroll_row);
+  void place_cell_math(Screen* scr, int cell_x, int cell_w, int yy, const TCell& tc, int cw,
+                       int chh, int scroll_row, RGB bg);
   // Bitmap for a formula inside a table cell (see TCell::Piece).
-  std::shared_ptr<ImageAsset> cell_math_asset(const TCell::Piece& pc, int cw, int chh);
+  std::shared_ptr<ImageAsset> cell_math_asset(const TCell::Piece& pc, int cw, int chh, RGB bg);
   // Code blocks: the frame hugs the code instead of spanning the page, and long
   // lines are wrapped rather than cut off at the frame edge.
   int code_frame_width(const Block& b) const;
@@ -216,6 +244,9 @@ class DocView {
                              std::vector<std::pair<std::string, int>>& out);
   int layout_paragraph(const std::vector<Span>& spans, int indent, int width, int row_start,
                        const Span& base, std::vector<Line>& out);
+  // Lines for one block inside a blockquote (recurses for nested quotes: the
+  // nested block gets one more bar and two more columns of indent).
+  void quote_lines(std::vector<Line>& out, const Block& qb, int indent, std::vector<int> bars);
   void build_lines(const std::vector<Span>& spans, int indent, int width, const Span& base,
                    std::vector<Line>& out);
   void draw_line(Screen& scr, int x0, int y0, int w, const Line& line, int sy);

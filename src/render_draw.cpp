@@ -66,7 +66,8 @@ void DocView::draw_line(Screen& scr, int x0, int y0, int w, const Line& line, in
     case Line::Code:
     case Line::Text:
     default: {
-      if (line.bar >= 0) scr.put(x0 + line.bar, sy, 0x2502, theme_.quote_bar, theme_.bg);
+      for (int bcol : line.bars)
+        if (bcol >= 0) scr.put(x0 + bcol, sy, 0x2502, theme_.quote_bar, theme_.bg);
       if (!line.marker.empty())  // dimmed "#" before a heading
         scr.put_str(x0 + 1, sy, line.marker, theme_.muted, theme_.bg, A_DIM);
       for (const Run& r : line.runs) {
@@ -194,7 +195,8 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
       scr.put(x + tc.width, yy, 0x2502, border, theme_.bg);
       // formulas in this cell are drawn as bitmaps over their transcription
       if (!tc.pieces.empty())
-        place_cell_math(x + off, tc.width, yy, tc, std::max(1, cell_w()), std::max(1, cell_h()), 0);
+        place_cell_math(&scr, x + off, tc.width, yy, tc, std::max(1, cell_w()),
+                        std::max(1, cell_h()), 0, bg);
     }
   }
 }
@@ -224,7 +226,7 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
           std::string dt;
           for (auto& dr : dl.runs) dt += "[" + std::to_string(dr.x) + ":" + dr.text + "]";
           fprintf(stderr, "  line %zu kind=%d row=%d bar=%d x=%d cells=%zu %s\n", k, (int)dl.kind,
-                  dl.row, dl.bar, dl.x, dl.cells.size(), dt.c_str());
+                  dl.row, (dl.bars.empty() ? -1 : dl.bars[0]), dl.x, dl.cells.size(), dt.c_str());
         }
     }
     for (size_t i = 0; i < assets_.size(); i++)
@@ -233,6 +235,7 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
               assets_[i]->cols, assets_[i]->rows, assets_[i]->baseline_px);
   }
   images_.clear();
+  cell_assets_.clear();  // rebuilt with the frame (see place_cell_math)
   scr.fill_rect(x0, y0, w, h, theme_.bg);
   int chh = std::max(1, cell_h());
   for (const BlockLayout& bl : layout_) {
@@ -251,13 +254,18 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
     }
     for (const Line& l : bl.lines) {
       int row = bl.row + l.row;
-      if (row < scroll_row) continue;
+      // A line may span several rows (a picture, a multi-row formula): cull it
+      // only once its LAST row is above the viewport, otherwise scrolling the
+      // top of a picture out of view made the whole picture disappear.
+      int span = std::max(1, l.rows);
+      if (row + span <= scroll_row) continue;
       if (row >= scroll_row + h) break;
       int sy = y0 + row - scroll_row;
       draw_line(scr, x0, sy, w, l, sy);
       // graphics for this line
       if (l.kind == Line::Image && l.img >= 0) {
-        if (row < scroll_row) continue;
+        // No `row < scroll_row` skip here: a picture whose top rows scrolled
+        // off is still (partially) visible and gets clipped below.
         auto a = assets_[(size_t)l.img];
         if (a->pending) {
           auto real = resolve_asset(*a);
@@ -265,9 +273,29 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
           assets_[(size_t)l.img] = real;
           a = real;
         }
+        if (getenv("MDT_DEBUG_SVG"))
+          fprintf(stderr, "[mdt] line image row=%d sy=%d px=%dx%d cols=%d rows=%d pending=%d src=%.50s\n",
+                  row, sy, a->px_w, a->px_h, a->cols, a->rows, a->pending ? 1 : 0,
+                  a->source.c_str());
+        // A block image may hang over either edge of the viewport.  The
+        // visible part is sent as its own (cached, grid-aligned) bitmap, so
+        // the picture is cut by the window edge instead of disappearing or
+        // being pinned to the top row.
+        int clip = 0, vis = a->px_h;
+        int sy2 = sy;
+        if (sy < 0) {
+          clip = -sy * chh;
+          if (clip >= a->px_h) continue;      // wholly above the top
+          vis -= clip;
+          sy2 = 0;
+        }
+        int vis_rows = std::min(a->rows, h - sy2);
+        if (vis_rows <= 0) continue;          // wholly below the fold
+        if (vis_rows * chh < vis) vis = vis_rows * chh;
+        if (clip || vis != a->px_h) a = sub_variant(*a, clip, vis);
         PlacedImage im;
         im.x = x0 + opt_.content_margin + std::max(0, (content_w_ - a->cols) / 2);
-        im.y = sy;
+        im.y = sy2;
         im.cols = 0;  // native pixels
         im.rows = 0;
         im.px_w = a->px_w;
@@ -281,9 +309,10 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
         images_.push_back(im);
       }
       if (l.kind == Line::Text) {
-        // Absolute pixel position of this line's baseline; inline graphics are
-        // aligned so that their own baseline lands on it.
-        double baseline_px = (double)row * chh + cell_baseline_px();
+        // Inline graphics start at the top of the line's reserved rows: the
+        // bitmap canvas is baked so that its own ink sits where the text
+        // baseline wants it (round-11 bake), and the layout reserves as many
+        // rows as the bitmap spans (Line::rows), so nothing is drawn over.
         for (const Run& r : l.runs) {
           if (r.img < 0 || r.img >= (int)assets_.size()) continue;
           auto a = assets_[(size_t)r.img];
@@ -293,19 +322,39 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
             assets_[(size_t)r.img] = real;
             a = real;
           }
-          double top_px = baseline_px - a->baseline_px;
-          int grow = (int)std::floor(top_px / chh);
-          int sub = (int)std::lround(top_px - (double)grow * chh);
-          if (sub < 0) { sub += chh; grow -= 1; }
-          if (sub >= chh) { sub -= chh; grow += 1; }
-          if (grow < scroll_row) {
-            // clipped at the top of the viewport: leave a marker
+          // The canvas top IS the placement boundary: one row for ordinary
+          // inline formulas, as many rows as the bitmap spans for tall ones
+          // (aligned blocks, matrices, inline pictures), which the layout
+          // reserved for this line.
+          int grow = row;
+          int sub = 0;
+          int screen_y = y0 + grow - scroll_row;  // top cell of the image
+          // Whether the bitmap is visible is decided in PIXELS: a one-cell
+          // image whose anchor is the row above the viewport is still almost
+          // completely on screen (the old cell-based test threw it away and
+          // drew a placeholder box instead).
+          if (getenv("MDT_DEBUG_SVG"))
+            fprintf(stderr, "[mdt] place img row=%d x=%d y0=%d grow=%d sub=%d rows=%d px=%dx%d\n",
+                    row, x0 + r.x, y0, grow, sub, a->rows, a->px_w, a->px_h);
+          int top_px_screen = screen_y * chh + sub;
+          if (top_px_screen >= h * chh) continue;                    // below the fold
+          if (top_px_screen + a->px_h <= 0) {                        // above the top
             scr.put_str(x0 + r.x, sy, "\u25a1", theme_.muted, theme_.bg);
             continue;
           }
+          if (top_px_screen < 0) {
+            // cut off what the viewport top hides and show the rest
+            int clip = -top_px_screen;
+            a = sub_variant(*a, clip, a->px_h - clip);
+            screen_y = 0;
+            sub = 0;
+          }
+          int vis_rows = std::min(a->rows, h - screen_y);            // cut at the bottom
+          if (vis_rows <= 0) continue;
+          if (vis_rows * chh < a->px_h) a = sub_variant(*a, 0, vis_rows * chh);
           PlacedImage im;
           im.x = x0 + r.x;
-          im.y = y0 + grow - scroll_row;
+          im.y = screen_y;
           im.sub_y = sub;
           im.px_w = a->px_w;
           im.px_h = a->px_h;

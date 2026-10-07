@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "app.h"
+#include "platform.h"
 #include "util.h"
 
 #ifndef MDT_VERSION
@@ -23,11 +24,16 @@ static bool arg_value(const std::string& arg, const char* name, std::string* out
 }
 
 int main(int argc, char** argv) {
+  plat::console_init();  // UTF-8 console, so Chinese file names print correctly
+  // Windows hands us argv in the ANSI code page; take it from the wide command
+  // line instead so a 中文 path stays intact.
+  std::vector<std::string> av = plat::utf8_args(argc, argv);
+  int ac = (int)av.size();
   AppOptions opts;
   std::vector<std::string> positional;
   bool no_more_flags = false;
-  for (int i = 1; i < argc; i++) {
-    std::string a = argv[i];
+  for (int i = 1; i < ac; i++) {
+    std::string a = av[i];
     if (no_more_flags || a.empty() || a == "-" || a[0] != '-') {  // "-" = stdin
       positional.push_back(a);
       continue;
@@ -36,9 +42,9 @@ int main(int argc, char** argv) {
     std::string v;
     if (a == "-h" || a == "--help") { print_usage(); return 0; }
     if (a == "-v" || a == "--version") { printf("mdt %s\n", MDT_VERSION); return 0; }
-    if (arg_value(a, "--gfx", &v) || (a == "--gfx" && i + 1 < argc && (v = argv[++i], true))) { opts.gfx = v; continue; }
+    if (arg_value(a, "--gfx", &v) || (a == "--gfx" && i + 1 < ac && (v = av[++i], true))) { opts.gfx = v; continue; }
     if (arg_value(a, "--math", &v)) { opts.math = v; continue; }
-    if (a == "--theme" && i + 1 < argc) { opts.theme = argv[++i]; continue; }
+    if (a == "--theme" && i + 1 < ac) { opts.theme = av[++i]; continue; }
     if (arg_value(a, "--theme", &v)) { opts.theme = v; continue; }
     if (a == "--toc") { opts.toc = true; continue; }
     if (a == "--no-color") { opts.no_color = true; opts.theme = "monochrome"; continue; }
@@ -53,6 +59,14 @@ int main(int argc, char** argv) {
     if (a == "--terminal-bg") { opts.terminal_bg = true; continue; }
     if (arg_value(a, "--font-px", &v)) { opts.font_px = atoi(v.c_str()); continue; }
     if (arg_value(a, "--width", &v)) { opts.width = atoi(v.c_str()); continue; }
+    if (arg_value(a, "--cell", &v)) {  // --cell=10x20 (or 10,20): cell size in pixels
+      int cw = 0, ch = 0;
+      if (sscanf(v.c_str(), "%dx%d", &cw, &ch) == 2 || sscanf(v.c_str(), "%d,%d", &cw, &ch) == 2) {
+        opts.cell_w = cw;
+        opts.cell_h = ch;
+      }
+      continue;
+    }
     if (arg_value(a, "--height", &v)) { opts.height = atoi(v.c_str()); continue; }
     if (arg_value(a, "--screenshot", &v)) { opts.screenshot = v; continue; }
     if (a == "--compat") { opts.compat = true; continue; }

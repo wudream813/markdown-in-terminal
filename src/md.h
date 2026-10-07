@@ -64,6 +64,8 @@ struct MdDocument {
   bool entities_unescaped = false;  // the source looked HTML-escaped and was decoded
   int backslashes_removed = 0;      // >0 when the source looked backslash-escaped
   int invisible_removed = 0;        // BOM / ZWSP / NBSP characters dropped
+  int code_gaps_collapsed = 0;      // code blocks with every line double-spaced
+  int code_refs_decoded = 0;        // code blocks whose HTML references were decoded
   bool loose_markers = false;       // "#标题" / "-项目" style markers were accepted
   std::string title;               // first h1 if present
   std::vector<LinkRef> links;      // all links in document order
@@ -73,7 +75,7 @@ struct MdDocument {
 struct MdOptions {
   enum Entities { EntOff = 0, EntAuto = 1, EntForce = 2 };
   enum Escapes { EscOff = 0, EscAuto = 1, EscForce = 2 };
-  int entities = EntAuto;    // decode HTML character references (see md.cpp)
+  int entities = EntOff;     // auto-repair of HTML-escaped sources is opt-in (--entities=force)
   int escapes = EscAuto;     // drop markdown backslash escapes a generator left in
   bool math = true;          // recognise $...$ / $$...$$
   bool tables = true;
@@ -97,6 +99,8 @@ class MarkdownParser {
  public:
   int html_depth_ = 0;      // recursion guard for HTML -> Markdown conversion
   bool loose_markers_ = false;  // accept "#标题" / "-项目" / "1.项目" (see MdOptions::loose)
+  int code_gaps_collapsed_ = 0;  // fenced blocks that had a blank line after every line
+  int code_refs_decoded_ = 0;    // fenced blocks whose HTML references were decoded
 
  private:
   MdOptions opt_;

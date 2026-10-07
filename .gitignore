@@ -5,3 +5,4 @@ mdt
 *.o
 dist/
 release/
+__pycache__/

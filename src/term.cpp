@@ -119,15 +119,15 @@ std::string Screen::emit_sgr(const Cell& c, const Cell& prev) {
   return out;
 }
 
-std::string Screen::render_full() {
+std::string Screen::render_full(bool sync) {
   force_full_ = true;
-  return render_diff();
+  return render_diff(sync);
 }
 
-std::string Screen::render_diff() {
+std::string Screen::render_diff(bool sync) {
   std::string out;
   out.reserve((size_t)w_ * h_ / 2);
-  if (!no_sync_update_) out += "\x1b[?2026h";  // synchronized output
+  if (sync && !no_sync_update_) out += "\x1b[?2026h";  // synchronized output
   // Where the terminal's cursor and SGR state are believed to be.  After a jump
   // both are unknown, so the next cell re-emits position and style.
   int cx = -1, cy = -1;
@@ -191,7 +191,7 @@ std::string Screen::render_diff() {
     }
   }
   if (!cursor_hidden_) out += "\x1b[?25h"; else out += "\x1b[?25l";
-  if (!no_sync_update_) out += "\x1b[?2026l";
+  if (sync && !no_sync_update_) out += "\x1b[?2026l";
   prev_ = cells_;
   force_full_ = false;
   return out;
@@ -226,7 +226,9 @@ bool Terminal::init(const std::string& gfx_override) {
   raw_saved_ = true;
 
   wout("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H");  // alt screen
-  wout("\x1b[?1000h\x1b[?1006h");              // mouse: wheel + SGR coords
+  // 1002 also reports motion while a button is held, which is what makes a
+  // scrollbar drag update live; 1000 alone only reports press and release.
+  wout("\x1b[?1002h\x1b[?1006h");              // mouse: wheel + drag + SGR coords
   if (!g_compat) wout("\x1b[>1u");             // kitty keyboard (best effort)
 
   handle_resize();
@@ -328,7 +330,7 @@ void Terminal::query_capabilities(int timeout_ms) {
 // Byte-for-byte the same sequence shutdown() writes, but in a static buffer so
 // it can be emitted from a signal handler.
 static const char kPanicExit[] =
-    "\x1b[?2026l\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[0m\x1b[?1049l";
+    "\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?25h\x1b[0m\x1b[?1049l";
 
 void Terminal::panic_restore() {
   plat::write_out(kPanicExit, sizeof(kPanicExit) - 1);
@@ -337,7 +339,7 @@ void Terminal::panic_restore() {
 void Terminal::shutdown() {
   if (!initialized_) return;
   clear_images();
-  wout("\x1b[?2026l\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[0m\x1b[?1049l");
+  wout("\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?25h\x1b[0m\x1b[?1049l");
   if (raw_saved_) {
     plat::raw_end();
     raw_saved_ = false;
@@ -437,6 +439,7 @@ Terminal::KeyEvent Terminal::read_event(int timeout_ms) {
             k.mx = atoi(parts[1].c_str()) - 1; k.my = atoi(parts[2].c_str()) - 1;
             if (btn == '<' && (b & 64)) { if (b & 1) k.wheel_down = true; else k.wheel_up = true; }
             k.drag = (b & 32) != 0;
+            k.release = (final == 'm');   // button-up
             return k;
           }
           return k;

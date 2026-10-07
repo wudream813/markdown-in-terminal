@@ -1,9 +1,16 @@
 #include "image.h"
 
+#include "platform.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <set>
 #ifdef _WIN32
 #include <process.h>
 #define popen _popen
@@ -64,7 +71,10 @@ bool http_get(const std::string& url, std::string& out, std::string* err) {
   extern bool curl_http_get(const std::string& url, std::string& out, std::string* err);
   return curl_http_get(url, out, err);
 #else
-  // Fall back to the curl binary when present (keeps the binary dependency-free).
+  // Windows: the system stack (WinINet), so no curl.exe and no shell.
+  if (plat::http_get_system(url, out, err)) return true;
+  if (getenv("MDT_NO_CURL")) return false;  // (no shell here: report instead)
+  // Elsewhere: fall back to the curl binary when present.
   if (!getenv("MDT_NO_CURL")) {
     std::string cmd = "curl -sfL --max-time 20 --max-filesize 26214400 \"" + url + "\" 2>/dev/null";
     FILE* f = popen(cmd.c_str(), "r");
@@ -166,5 +176,135 @@ bool curl_http_get(const std::string& url, std::string& out, std::string* err) {
   }
   return true;
 }
+
 }  // namespace mdt
-#endif
+#endif  // MDT_HAVE_CURL
+
+namespace mdt {
+// ------------------------------------------------ remote image downloads ---
+// The worker holds a reference to State, so the loader can be destroyed while a
+// download is still in flight: the thread finishes, sees "stop" and exits.  The
+// caller is never blocked.
+struct RemoteImageLoader::State {
+  std::mutex mu;
+  std::deque<std::string> queue;
+  std::set<std::string> seen;             // queued or finished at least once
+  std::map<std::string, Result> results;  // url -> finished download
+  bool stop = false;
+  bool changed = false;
+  int in_flight = 0;
+};
+
+static bool remote_fetch(const std::string& url, RemoteImage& out) {
+  Image img;
+  std::string err;
+  if (image_load_source(url, img, &err, nullptr)) {
+    out.img = img;
+    out.ok = true;
+    return true;
+  }
+  out.err = err.empty() ? std::string("download failed") : err;
+  return false;
+}
+
+RemoteImageLoader::~RemoteImageLoader() {
+  if (st_) {
+    std::lock_guard<std::mutex> lk(st_->mu);
+    st_->stop = true;
+  }
+  st_.reset();  // the worker keeps its own reference and exits by itself
+}
+
+void RemoteImageLoader::worker_entry(void* self) {
+  std::unique_ptr<std::shared_ptr<State>> holder((std::shared_ptr<State>*)self);
+  std::shared_ptr<State> st = *holder;
+  holder.reset();
+  for (;;) {
+    std::string url;
+    {
+      std::lock_guard<std::mutex> lk(st->mu);
+      if (st->stop) return;
+      if (!st->queue.empty()) {
+        url = st->queue.front();
+        st->queue.pop_front();
+        st->in_flight++;
+      }
+    }
+    if (url.empty()) {
+      // Park between requests: a newly queued picture is picked up within
+      // 100 ms (the placeholder is on screen until then), and an idle reader
+      // does not wake up the CPU every few milliseconds.
+      plat::sleep_ms(100);
+      continue;
+    }
+    auto r = std::make_shared<RemoteImage>();
+    r->url = url;
+    remote_fetch(url, *r);
+    r->done = true;
+    std::lock_guard<std::mutex> lk(st->mu);
+    st->in_flight--;
+    st->results[url] = r;
+    st->changed = true;
+  }
+}
+
+void RemoteImageLoader::request(const std::string& url) {
+  if (!st_) st_ = std::make_shared<State>();
+  {
+    std::lock_guard<std::mutex> lk(st_->mu);
+    if (st_->seen.count(url)) return;  // already queued or fetched
+    st_->seen.insert(url);
+  }
+  if (!started_ && !no_thread_) {
+    started_ = true;
+    auto* arg = new std::shared_ptr<State>(st_);
+    if (!plat::thread_start(&RemoteImageLoader::worker_entry, arg)) {
+      delete arg;
+      no_thread_ = true;  // no threads here: fetch when asked
+      started_ = false;
+    }
+  }
+  if (no_thread_) {
+    auto r = std::make_shared<RemoteImage>();
+    r->url = url;
+    remote_fetch(url, *r);
+    r->done = true;
+    std::lock_guard<std::mutex> lk(st_->mu);
+    st_->results[url] = r;
+    st_->changed = true;
+    return;
+  }
+  std::lock_guard<std::mutex> lk(st_->mu);
+  st_->queue.push_back(url);
+}
+
+RemoteImageLoader::Result RemoteImageLoader::get(const std::string& url) const {
+  if (!st_) return nullptr;
+  std::lock_guard<std::mutex> lk(st_->mu);
+  auto it = st_->results.find(url);
+  return it == st_->results.end() ? nullptr : it->second;
+}
+
+bool RemoteImageLoader::take_changed() {
+  if (!st_) return false;
+  std::lock_guard<std::mutex> lk(st_->mu);
+  bool c = st_->changed;
+  st_->changed = false;
+  return c;
+}
+
+bool RemoteImageLoader::busy() const {
+  if (!st_) return false;
+  std::lock_guard<std::mutex> lk(st_->mu);
+  return st_->in_flight > 0 || !st_->queue.empty();
+}
+
+void RemoteImageLoader::clear() {
+  if (!st_) return;
+  std::lock_guard<std::mutex> lk(st_->mu);
+  st_->results.clear();
+  st_->seen.clear();
+  st_->queue.clear();
+}
+
+}  // namespace mdt

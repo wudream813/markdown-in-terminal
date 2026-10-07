@@ -392,11 +392,19 @@ bool svg_parse(const std::string& xml, SvgImage& out, std::string* err) {
   stack.push_back(State{Mat{}, RGB{0, 0, 0}, false, 1.0});
   bool in_svg = false, done = false;
   int skip_depth = 0;
+  // MathJax draws an extensible delimiter (a bracketed matrix with three rows
+  // or more, big parentheses around anything tall) as a nested <svg> holding
+  // one stretchy piece.  Those have their own viewport, and only the outermost
+  // </svg> may end the document.
+  int svg_depth = 0;
   while (!done && p.next_tag(name, attrs, closing, self)) {
     if (closing) {
       if (!stack.empty()) stack.pop_back();
       if (skip_depth > 0) skip_depth--;
-      if (name == "svg") done = true;
+      if (name == "svg") {
+        if (svg_depth > 0) svg_depth--;
+        if (svg_depth == 0) done = true;
+      }
       continue;
     }
     if (skip_depth > 0 || name == "defs" || name == "title" || name == "desc" || name == "style" ||
@@ -429,7 +437,30 @@ bool svg_parse(const std::string& xml, SvgImage& out, std::string* err) {
         out.vb_w = out.w_px > 0 ? out.w_px : 1;
         out.vb_h = out.h_px > 0 ? out.h_px : 1;
       }
+      svg_depth = 1;
       if (!self) stack.push_back(stack.back());
+      continue;
+    }
+    if (name == "svg") {
+      // nested <svg>: a viewport of its own - x/y/width/height in the parent's
+      // units plus its own viewBox, exactly as the SVG spec defines it
+      svg_depth++;
+      State st = stack.back();
+      double x = parse_len(attr(attrs, "x"), 0);
+      double y = parse_len(attr(attrs, "y"), 0);
+      double w = parse_len(attr(attrs, "width"), 0);
+      double h = parse_len(attr(attrs, "height"), 0);
+      std::vector<double> v;
+      numbers_of(attr(attrs, "viewBox"), v);
+      double sx = 1, sy = 1, tx = x, ty = y;
+      if (v.size() >= 4 && v[2] > 0 && v[3] > 0) {
+        if (w > 0) sx = w / v[2];
+        if (h > 0) sy = h / v[3];
+        tx = x - v[0] * sx;
+        ty = y - v[1] * sy;
+      }
+      st.m = st.m.mul(Mat::translate(tx, ty)).mul(Mat::scale(sx, sy));
+      if (!self) stack.push_back(st);
       continue;
     }
     if (!in_svg) continue;

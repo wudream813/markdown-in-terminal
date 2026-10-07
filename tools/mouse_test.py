@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Checks the mouse support: wheel scrolling (both encodings), the scrollbar
-glyphs and clicking on the scrollbar to jump.
+glyphs, clicking on the scrollbar to jump and dragging the scrollbar: every
+motion event between press and release has to move the view live, not only
+the release (reported as "拖动滚动条没用实时更新").
 
     python3 tools/mouse_test.py ./build/mdt
     python3 tools/mouse_test.py build/win/mdt.exe wine64
@@ -65,6 +67,56 @@ def run(argv, keys, cols=80, rows=24, settle=2.0, after=1.6, total=None):
     return out
 
 
+def run_steps(argv, steps, cols=80, rows=24, settle=2.0):
+    """Like run(), but captures the output at marked points (payload None)."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        env = dict(os.environ)
+        env["TERM"] = "xterm-256color"
+        os.execvpe(argv[0], argv, env)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    out = b""
+    caps = []
+
+    def drain(sec):
+        nonlocal out
+        t = time.time()
+        while time.time() - t < sec:
+            r, _, _ = select.select([fd], [], [], 0.05)
+            if r:
+                try:
+                    chunk = os.read(fd, 1 << 20)
+                except OSError:
+                    return
+                if not chunk:
+                    return
+                out += chunk
+
+    drain(settle)
+    for payload, wait in steps:
+        if payload:
+            try:
+                os.write(fd, payload)
+            except OSError:
+                break
+        drain(wait if wait else 0.4)
+        if payload is None:
+            caps.append(out)
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.kill(pid, 15)
+    except ProcessLookupError:
+        pass
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+    return caps
+
+
 def status(out):
     txt = ANSI.sub("", out.decode("utf-8", "replace"))
     m = re.findall(r"(\d+)%", txt)
@@ -109,6 +161,27 @@ def main():
     ok = 0 <= p4 <= 20
     print(("   ok   " if ok else "   FAIL ") + f"click near the top jumped to {p4}%")
     fails += [] if ok else ["scrollbar click up"]
+
+    # a drag has to move the view while the button is still held:
+    # press near the top, motion to the middle, motion further down, release
+    caps = run_steps(argv, [
+        (b"\x1b[<0;80;3M", 0.5),    # press on the scrollbar
+        (b"\x1b[<32;80;12M", 0.5),  # motion: middle of the track
+        (None, 0),                   # snapshot A: before the release
+        (b"\x1b[<32;80;20M", 0.5),  # motion: near the foot
+        (None, 0),                   # snapshot B: before the release
+        (b"\x1b[<0;80;20m", 0.5),   # release
+        (None, 0),                   # snapshot C
+    ])
+    if len(caps) == 3:
+        a, b, c = (status(x) for x in caps)
+        ok = 25 < a < 80 and b > a + 5 and c == b
+        print(("   ok   " if ok else "   FAIL ") +
+              f"drag tracks live: {a}% mid-drag, {b}% lower, {c}% after release")
+        fails += [] if ok else ["scrollbar drag"]
+    else:
+        print("   FAIL  drag: no captures")
+        fails += ["scrollbar drag"]
 
     if fails:
         print("\nmouse checks failed:", ", ".join(fails))

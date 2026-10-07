@@ -139,10 +139,25 @@ MathMetrics MathRenderer::metrics(const std::string& tex, bool display, double e
   auto m = std::make_shared<MathMetrics>();
   m->text = latex_to_unicode(tex, display);
   if (js_ok_) {
-    std::string svg;
-    if (js_.render_svg(tex, display, svg, nullptr)) {
+    std::string svg, jerr2;
+    bool rendered = js_.render_svg(tex, display, svg, &jerr2);
+    if (getenv("MDT_DEBUG_SVG") && !rendered)
+      fprintf(stderr, "[mdt] js failed: %s for: %s\n", jerr2.c_str(), tex.c_str());
+    if (rendered) {
+      if (getenv("MDT_DEBUG_SVG")) {  // dump the SVG MathJax produced
+        static int n = 0;
+        std::string path = "/tmp/math-" + std::to_string(n++) + ".svg";
+        if (FILE* f = fopen(path.c_str(), "wb")) {
+          fwrite(svg.data(), 1, svg.size(), f);
+          fclose(f);
+          fprintf(stderr, "[mdt] svg %s (%zu bytes) for: %s\n", path.c_str(), svg.size(),
+                  tex.c_str());
+        }
+      }
       SvgImage doc;
       std::string perr;
+      if (getenv("MDT_DEBUG_SVG"))
+        fprintf(stderr, "[mdt] parse: %s\n", perr.empty() ? "(pending)" : perr.c_str());
       if (svg_parse(svg, doc, &perr) && doc.vb_w > 0 && doc.vb_h > 0) {
         double scale = em_px / 1000.0;  // MathJax viewBox units: 1000 per em
         m->px_w = doc.vb_w * scale;
@@ -150,6 +165,9 @@ MathMetrics MathRenderer::metrics(const std::string& tex, bool display, double e
         m->baseline_px = -doc.vb_y * scale;
         m->svg = svg;
         m->ok = true;
+      } else if (getenv("MDT_DEBUG_SVG")) {
+        fprintf(stderr, "[mdt] FAILED %s (%s) vb=%gx%g shapes=%zu for: %s\n", perr.c_str(),
+                doc.ok ? "ok" : "no", doc.vb_w, doc.vb_h, doc.shapes.size(), tex.c_str());
       }
     }
   }
@@ -183,20 +201,39 @@ bool MathRenderer::raster(const std::string& tex, bool display, double em_px, in
 }
 
 bool MathRenderer::raster_grid(const std::string& tex, bool display, double em_px, int canvas_w,
-                               int canvas_h, RGB fg, Image& out, int* off_x, int* off_y) {
-  if (canvas_w <= 0 || canvas_h <= 0) return false;
+                               int canvas_h, RGB fg, Image& out, int* off_x, int* off_y, int ink_y) {
+  if (canvas_w <= 0 || canvas_h <= 0) {
+    if (getenv("MDT_DEBUG_SVG"))
+      fprintf(stderr, "[mdt] raster_grid: bad canvas %dx%d for: %s\n", canvas_w, canvas_h,
+              tex.c_str());
+    return false;
+  }
   MathMetrics m = metrics(tex, display, em_px);
   if (!m.ok) return false;
   SvgImage doc;
-  if (!svg_parse(m.svg, doc, nullptr)) return false;
+  if (!svg_parse(m.svg, doc, nullptr)) {
+    if (getenv("MDT_DEBUG_SVG")) fprintf(stderr, "[mdt] raster_grid: reparse failed: %s\n", tex.c_str());
+    return false;
+  }
   int ink_w = std::max(1, (int)std::lround(m.px_w));
   int ink_h = std::max(1, (int)std::lround(m.px_h));
   if (ink_w > canvas_w) ink_w = canvas_w;
   if (ink_h > canvas_h) ink_h = canvas_h;
   Image ink;
-  if (!svg_rasterize(doc, ink_w, fg, ink, 0, ink_h, true)) return false;
+  if (!svg_rasterize(doc, ink_w, fg, ink, 0, ink_h, true)) {
+    if (getenv("MDT_DEBUG_SVG"))
+      fprintf(stderr, "[mdt] raster_grid: rasterise failed (%dx%d px, %zu shapes) for: %s\n",
+              ink_w, ink_h, doc.shapes.size(), tex.c_str());
+    return false;
+  }
   int ox = (canvas_w - ink.w) / 2;
-  int oy = (canvas_h - ink.h) / 2;
+  int oy = (ink_y == -1000000) ? (canvas_h - ink.h) / 2 : ink_y;
+  if (oy + ink.h > canvas_h) oy = canvas_h - ink.h;   // never clip the drawing
+  if (getenv("MDT_DEBUG_BASE"))
+    fprintf(stderr, "[mdt] raster_grid %s: em=%.1f box=%.1fx%.1f ink_req=%dx%d ink=%dx%d "
+            "oy=%d baseline=%.1f -> canvas %dx%d\n",
+            tex.substr(0, 24).c_str(), em_px, m.px_w, m.px_h, ink_w, ink_h, ink.w, ink.h,
+            oy, m.baseline_px, canvas_w, canvas_h);
   if (ox < 0) ox = 0;
   if (oy < 0) oy = 0;
   out.w = canvas_w;

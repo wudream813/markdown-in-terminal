@@ -1,5 +1,7 @@
 #include "util.h"
 
+#include "platform.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -318,12 +320,9 @@ std::string dir_name(const std::string& path) {
   if (p == 0) return "/";
   return path.substr(0, p);
 }
-bool file_exists(const std::string& path) {
-  struct stat st;
-  return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
-}
+bool file_exists(const std::string& path) { return plat::regular_file_exists(path); }
 bool read_file(const std::string& path, std::string& out) {
-  FILE* f = fopen(path.c_str(), "rb");
+  FILE* f = plat::open_file(path, "rb");  // Windows: the path is UTF-8
   if (!f) return false;
   fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
   out.resize((size_t)std::max(0L, n));

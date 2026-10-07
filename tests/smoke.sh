@@ -26,14 +26,24 @@ echo "== maths modes =="
 "$BIN" --math=off --screenshot="$TMP/nomath.png" --width=80 --height=20 demo/demo.md > /dev/null && echo "  maths off ok"
 
 echo "== HTML-escaped source =="
-"$BIN" --dump --width=64 tests/fixtures/escaped.md > "$TMP/escaped.txt"
-grep -q "HTML-escaped Markdown" "$TMP/escaped.txt" && echo "  heading restored"
-grep -q "• first item" "$TMP/escaped.txt" && echo "  list restored"
-grep -q "┌" "$TMP/escaped.txt" && echo "  table restored"
-grep -q "int x = 1" "$TMP/escaped.txt" && echo "  code block restored"
-"$BIN" --entities=off --dump --width=64 tests/fixtures/escaped.md | grep -q '\*\*bold\*\*' && echo "  --entities=off leaves the syntax escaped"
-"$BIN" --dump --width=64 tests/fixtures/escaped-twice.md | grep -q "Escaped twice" && echo "  double-escaped source decoded"
+# The auto-repair was removed at the reporter's request: escaping a document is
+# a property of how it was pasted, not of the document, so nothing is guessed
+# any more.  --entities=force is the explicit repair.
+"$BIN" --dump --width=64 tests/fixtures/escaped.md > "$TMP/raw-escaped.txt"
+! grep -q "┌" "$TMP/raw-escaped.txt" && ! grep -q "• " "$TMP/raw-escaped.txt" \
+  && echo "  the default leaves an escaped source alone (no repaired table or list)"
+"$BIN" --entities=force --dump --width=64 tests/fixtures/escaped.md > "$TMP/escaped.txt"
+grep -q "HTML-escaped Markdown" "$TMP/escaped.txt" && echo "  --entities=force restores the heading"
+grep -q "• first item" "$TMP/escaped.txt" && echo "  --entities=force restores the list"
+grep -q "┌" "$TMP/escaped.txt" && echo "  --entities=force restores the table"
+grep -q "int x = 1" "$TMP/escaped.txt" && echo "  --entities=force restores the code block"
+"$BIN" --entities=force --dump --width=64 tests/fixtures/escaped-twice.md | grep -q "Escaped twice" && echo "  double-escaped source decoded"
 "$BIN" --dump --width=64 tests/fixtures/normal-entities.md | grep -q "AT&T and 5 < 7" && echo "  ordinary entities untouched"
+# a document with formulas and code is never rewritten behind the reader's back
+"$BIN" --dump --width=200 tests/fixtures/abc397d.md > "$TMP/sol.txt"
+grep -q 'is_cbr(n + i \* i \* i)' "$TMP/sol.txt" \
+  && grep -q "两式相减" "$TMP/sol.txt" \
+  && echo "  a 题解 with formulas and code is never 'repaired'"
 
 
 echo "== backslash-escaped source =="
@@ -118,25 +128,79 @@ grep -q '^ # Invisible' "$TMP/invis.txt" && echo "  heading recognised behind a 
 grep -q '• item two' "$TMP/invis.txt" && echo "  list recognised behind a zero width space"
 "$BIN" --diag tests/fixtures/invisible.md | grep -q 'invisible chars=' && echo "  --diag reports the cleanup"
 
+echo "== a slow picture host does not block the reader =="
+python3 tools/async_image_test.py "$BIN" || exit 1
+
 echo "== images are not drawn over the UI =="
 python3 tools/image_overlay_test.py "$BIN" || exit 1
 
 echo "== images are placed on the cell grid =="
 python3 tools/image_scale_test.py "$BIN" || exit 1
 
-echo "== escaped line breaks (&#10; plus a real newline) =="
-"$BIN" --dump --width=44 tests/fixtures/escaped-newlines.md > "$TMP/eol.txt"
+echo "== --entities=force: escaped line breaks (&#10; plus a real newline) =="
+"$BIN" --entities=force --dump --width=44 tests/fixtures/escaped-newlines.md > "$TMP/eol.txt"
 grep -q '#include <iostream>' "$TMP/eol.txt" && echo "  code content kept"
 grep -q '#include <vector>' "$TMP/eol.txt" && echo "  second code line kept"
 lines=$(grep -c '^$' "$TMP/eol.txt")
 test "$lines" -le 3 && echo "  no empty line added between the code lines ($lines blank lines in the dump)"
 test "$(grep -c '│ *│' "$TMP/eol.txt")" = 0 && echo "  no blank row inside the code frame"
 
+echo "== a blank line after every code line is a paste artifact =="
+"$BIN" --dump --width=44 tests/fixtures/code-double-spaced.md > "$TMP/gaps.txt"
+test "$(grep -c '│ *│' "$TMP/gaps.txt")" = 0 && echo "  no blank row inside the code frame"
+grep -q '#include <vector>' "$TMP/gaps.txt" && echo "  every code line kept"
+grep -q 'int main' "$TMP/gaps.txt" && echo "  the tail of the block kept"
+
+echo "== deliberately grouped code keeps its blank lines =="
+"$BIN" --dump --width=44 tests/fixtures/code-grouped.md > "$TMP/grouped.txt"
+test "$(grep -c '│ *│' "$TMP/grouped.txt")" -ge 3 && echo "  blank rows kept"
+grep -q 'part two' "$TMP/grouped.txt" && echo "  content kept"
+
+echo "== maths is not mistaken for a backslash-escaped source =="
+"$BIN" --diag tests/fixtures/matrix.md | grep -q 'backslash escapes=0' \
+  && echo "  a matrix document is not 'repaired'"
+python3 tools/matrix_test.py "$BIN" || exit 1
+# every fixture stays classified the way it should be
+for f in escaped.md escaped-twice.md escaped-newlines.md; do
+  "$BIN" --diag "tests/fixtures/$f" | grep -q 'entities=no' \
+    && echo "  $f is left untouched by default"
+  "$BIN" --entities=force --diag "tests/fixtures/$f" | grep -q 'entities=yes' \
+    && echo "  $f is decoded with --entities=force"
+done
+
+echo "== cell bitmaps cover their transcription, on their own row =="
+python3 tools/cell_cover_test.py "$BIN" || exit 1
+
+echo "== inline formulas stay on their own row (no placeholder box) =="
+python3 tools/img_anchor_test.py "$BIN" || exit 1
+
+echo "== inline bitmaps sit on the text line in every protocol =="
+python3 tools/subcell_align_test.py "$BIN" || exit 1
+
+echo "== a multi-line formula reserves its rows =="
+python3 tools/tall_math_test.py "$BIN" || exit 1
+
+echo "== a file name outside ASCII survives the round trip =="
+"$BIN" --dump --width=40 "tests/fixtures/中文标题.md" > "$TMP/cn.txt"
+"$BIN" --diag "tests/fixtures/中文标题.md" > "$TMP/cn2.txt" 2>&1
+grep -q '中文标题' "$TMP/cn2.txt" && echo "  file name survives the command line"
+grep -q '这是一段中文内容' "$TMP/cn.txt" && echo "  contents read"
+grep -q '中文文件名测试' "$TMP/cn.txt" && echo "  heading rendered"
+
+echo "== nested quotes get a bar each =="
+"$BIN" --dump --width=44 tests/fixtures/nested-quotes.md > "$TMP/nq.txt"
+grep -q '│ │ 二级' "$TMP/nq.txt" && echo "  two levels"
+grep -q '│ │ │ 三级' "$TMP/nq.txt" && echo "  three levels"
+grep -q '│ 回到一级' "$TMP/nq.txt" && echo "  back to one level"
+
 echo "== frame cost (runs, not per-cell escapes) =="
 python3 tools/frame_cost_test.py "$BIN"
 
 echo "== mouse + scrollbar (pty) =="
 python3 tools/mouse_test.py "$BIN"
+
+echo "== top-edge clipping + synchronized frames (pty) =="
+python3 tools/scroll_clip_test.py "$BIN" || exit 1
 
 echo "== protocols (pty) =="
 python3 tools/pty_test.py

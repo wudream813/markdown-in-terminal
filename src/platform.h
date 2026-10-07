@@ -5,10 +5,32 @@
 //                      WaitForSingleObject/ReadFile, polling for resizes.
 #pragma once
 #include <cstddef>
+#include <cstdio>
 #include <string>
+#include <vector>
 
 namespace mdt {
 namespace plat {
+
+// Windows: switch the console in/out code pages to UTF-8 and remember the
+// originals (raw_end() puts them back).  Called first thing in main(), so
+// --dump/--diag/--help and error messages with non-ASCII text are readable.
+void console_init();
+
+// Open a file whose path is UTF-8.  Windows console arguments and files are not
+// UTF-8 (argv is in the ANSI code page, the file API is UTF-16), so everything
+// that touches a path the user gave us goes through here.
+FILE* open_file(const std::string& utf8_path, const char* mode);
+bool regular_file_exists(const std::string& utf8_path);
+
+// The command line as UTF-8 (Windows: rebuilt from GetCommandLineW()).
+std::vector<std::string> utf8_args(int argc, char** argv);
+
+// Start a detached worker thread.  Returns false when the platform refuses
+// (the caller then has to do the work inline).
+bool thread_start(void (*fn)(void*), void* arg);
+// Sleep, used by polling loops inside worker threads.
+void sleep_ms(int ms);
 
 bool stdin_is_tty();
 bool stdout_is_tty();
@@ -42,6 +64,10 @@ int read_input(char* buf, size_t n);
 
 // Writes everything to stdout (loops until done).
 bool write_out(const char* data, size_t n);
+
+// Windows: fetch `url` with the system WinINet stack (no libcurl, no shell).
+// Linux/macOS return false so the caller can use libcurl or the curl binary.
+bool http_get_system(const std::string& url, std::string& out, std::string* err);
 
 // Command that opens `url` in the user's browser.
 std::string open_url_command(const std::string& url);

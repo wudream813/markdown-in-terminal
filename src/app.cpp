@@ -90,14 +90,16 @@ struct App {
   int toc_sel = 0, toc_off = 0, toc_panel_w = 0;
   std::string file;
   size_t file_index = 0;
-  struct stat file_stat{};
   bool needs_frame = true;
   bool images_dirty = true;
   bool show_scrollbar = true;
   bool terminal_bg = false;
   bool scrollbar_active = false;   // set while drawing; used for hit testing
+  bool scroll_drag = false;        // a scrollbar drag is in progress
   Screen scr;
   int frame_log_no_ = 0;           // frame counter for MDT_FRAME_LOG
+
+  bool images_pending_ = false;    // mirror of view.images_pending()
 
   void set_status(const std::string& s, double secs = 3.0) {
     status_msg = s;
@@ -122,12 +124,9 @@ bool App::load_file(const std::string& path, std::string* err) {
     return false;
   }
   file = path;
-  stat(path.c_str(), &file_stat);
   MdOptions mo;
   mo.math = (opt.math != "off");
-  mo.entities = opt.entities == "off"      ? MdOptions::EntOff
-                : opt.entities == "force"  ? MdOptions::EntForce
-                                           : MdOptions::EntAuto;
+  mo.entities = opt.entities == "force" ? MdOptions::EntForce : MdOptions::EntOff;
   mo.escapes = opt.escapes == "off"      ? MdOptions::EscOff
              : opt.escapes == "force"    ? MdOptions::EscForce
                                          : MdOptions::EscAuto;
@@ -313,6 +312,7 @@ void App::render() {
   if (view.doc().backslashes_removed > 0) engine += " +escapes";
   if (view.doc().loose_markers) engine += " +loose";
   if (view.doc().invisible_removed > 0) engine += " +clean";
+  if (view.doc().code_gaps_collapsed > 0 || view.doc().code_refs_decoded > 0) engine += " +code";
   std::string msg = status_msg;
   if (now_ms() > status_until) msg.clear();
   std::string text;
@@ -328,7 +328,14 @@ void App::render() {
   }
 
   // ---- output -------------------------------------------------------------
-  std::string out = scr.render_full();
+  // Text and graphics go out inside ONE synchronized update (DEC 2026): if the
+  // window closed before the placements, the terminal painted the new text
+  // with the old pictures for one frame and every drag flickered.  Only the
+  // cells that changed are written (render_diff, not render_full).
+  bool sync = scr.sync_update();
+  std::string out;
+  if (sync) out += "\x1b[?2026h";
+  out += scr.render_diff(false);
   // ---- image placement ----------------------------------------------------
   // Images are drawn by the terminal on top of the text, and the non-kitty
   // protocols cannot be erased cell by cell.  So anything a panel covers (the
@@ -354,10 +361,11 @@ void App::render() {
                 place.end());
   }
   out += term.emit_images(place);
+  if (sync) out += "\x1b[?2026l";
   if (const char* log = getenv("MDT_FRAME_LOG")) {
     // Writes exactly what mdt sent, with escape sequences spelled out, so a
     // rendering problem can be told apart from a terminal problem.
-    if (FILE* f = fopen(log, "ab")) {
+    if (FILE* f = plat::open_file(log, "ab")) {
       fprintf(f, "--- frame %d, %dx%d, %zu bytes ---\n", frame_log_no_++, term.caps.cols,
               term.caps.rows, out.size());
       std::string vis;
@@ -380,6 +388,39 @@ void App::render() {
 
 // ------------------------------------------------------------------- run ----
 void App::run() {
+  // One mouse event per redraw is too coarse for a drag (the terminal reports
+  // motion faster than we should paint) and too fine to waste frames on:
+  // apply_mouse folds an event into the view and says whether anything moved.
+  auto apply_mouse = [&](const Terminal::KeyEvent& e) -> bool {
+    if (e.wheel_up) {
+      int s0 = view.scroll_top(); view.scroll_by(-3); return view.scroll_top() != s0;
+    }
+    if (e.wheel_down) {
+      int s0 = view.scroll_top(); view.scroll_by(3); return view.scroll_top() != s0;
+    }
+    if (e.release) { scroll_drag = false; return false; }
+    if (scroll_drag || (!e.drag && scrollbar_active &&
+                        e.mx >= view_cols() - 1 && e.my >= 0 && e.my < view_rows())) {
+      if (!e.drag) scroll_drag = true;
+      int total = view.total_rows(), vrows = view_rows();
+      int max_scroll = std::max(0, total - vrows);
+      int my = std::min(std::max(0, e.my), vrows - 1);
+      double frac = vrows > 1 ? (double)my / (double)(vrows - 1) : 0.0;
+      int s0 = view.scroll_top();
+      view.scroll_to((int)std::lround(frac * max_scroll));
+      return view.scroll_top() != s0;
+    }
+    if (!e.drag && toc_open && toc_panel_w > 0 && e.my >= 1 && e.mx >= term.caps.cols - toc_panel_w) {
+      int idx = toc_off + (e.my - 1);
+      if (idx >= 0 && idx < (int)outline.size()) {
+        toc_sel = idx;
+        int s0 = view.scroll_top();
+        view.scroll_to(std::max(0, view.row_of_block(outline[(size_t)idx].block) - 1));
+        return view.scroll_top() != s0 || true;
+      }
+    }
+    return false;
+  };
   while (!quit) {
     if (term.resized()) {
       term.handle_resize();
@@ -391,27 +432,27 @@ void App::run() {
       needs_frame = true;
       continue;
     }
+    if (view.poll_images()) {  // a picture finished downloading
+      needs_frame = true;
+      continue;
+    }
+    bool pending = view.images_pending();
+    if (pending != images_pending_) {
+      images_pending_ = pending;
+      if (pending) set_status("loading images…", 3600);
+      else set_status("images loaded", 1.5);
+      needs_frame = true;
+    }
     Terminal::KeyEvent e = term.read_event(120);
     if (e.type == Terminal::KeyEvent::None) continue;
     if (e.type == Terminal::KeyEvent::Mouse) {
-      if (e.wheel_up) { view.scroll_by(-3); needs_frame = true; }
-      else if (e.wheel_down) { view.scroll_by(3); needs_frame = true; }
-      else if (scrollbar_active && e.mx >= view_cols() - 1 && e.my >= 0 && e.my < view_rows()) {
-        // click on the scrollbar: jump to the proportional position
-        int total = view.total_rows(), vrows = view_rows();
-        int max_scroll = std::max(0, total - vrows);
-        double frac = vrows > 1 ? (double)e.my / (double)(vrows - 1) : 0.0;
-        view.scroll_to((int)std::lround(frac * max_scroll));
-        needs_frame = true;
-      }
-      else if (toc_open && toc_panel_w > 0 && e.my >= 1 && e.mx >= term.caps.cols - toc_panel_w) {
-        int idx = toc_off + (e.my - 1);
-        if (idx >= 0 && idx < (int)outline.size()) {
-          toc_sel = idx;
-          view.scroll_to(std::max(0, view.row_of_block(outline[(size_t)idx].block) - 1));
-          needs_frame = true;
-        }
-      }
+      // Drain everything the terminal has queued: a drag reports one event per
+      // cell crossed, and only the last position of this batch needs a frame.
+      bool changed = apply_mouse(e);
+      Terminal::KeyEvent e2;
+      while ((e2 = term.read_event(0)).type == Terminal::KeyEvent::Mouse)
+        changed = apply_mouse(e2) || changed;
+      if (changed) needs_frame = true;
       continue;
     }
     if (e.type == Terminal::KeyEvent::Special && e.code == -1) break;  // EOF
@@ -532,6 +573,7 @@ void App::run() {
       }
       case 'R': {
         term.drop_image_cache();
+        view.clear_image_cache();
         view.set_theme(theme);
         needs_frame = true;
         set_status(fmt("[%s] %dx%d cells, cell %dx%d px, window %dx%d px",
@@ -638,6 +680,17 @@ int run_app(const AppOptions& opts) {
 
   mdt::set_compat_mode(opts.compat);
   if (!app.term.init(opts.compat ? "none" : opts.gfx)) return 1;
+  // --cell forces a cell pixel size.  Honour it in interactive mode too (it
+  // used to apply to --snap only), so a pty or an exotic terminal whose probe
+  // reports nothing can still be tested with realistic cell geometry.
+  if (opts.cell_w > 0) {
+    app.term.caps.cell_w = opts.cell_w;
+    app.term.caps.win_w = app.term.caps.cols * opts.cell_w;
+  }
+  if (opts.cell_h > 0) {
+    app.term.caps.cell_h = opts.cell_h;
+    app.term.caps.win_h = app.term.caps.rows * opts.cell_h;
+  }
   app.scr.set_sync_update(!opts.compat);
   app.scr.set_safe_paint(opts.compat);
 
@@ -650,9 +703,11 @@ int run_app(const AppOptions& opts) {
   ro.text_math = (opts.math == "unicode");
   ro.lazy_metrics = true;  // only typeset formulas that come into view
   ro.code_fit = opts.code_fit;
+  ro.async_images = true;  // never block the reader on the network
   if (!app.term.caps.can_show_images()) {
     ro.text_math = true;  // no graphics protocol: formulas would be invisible
     ro.inline_images = false;
+    ro.remote_images = false;  // ... and nothing is worth downloading
   }
   app.view.set_options(ro);
   app.view.set_width(app.view_cols());
@@ -820,9 +875,7 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
   int width = opt.width > 0 ? opt.width : 100;
   MdOptions mo;
   mo.math = (opt.math != "off");
-  mo.entities = opt.entities == "off"      ? MdOptions::EntOff
-                : opt.entities == "force"  ? MdOptions::EntForce
-                                           : MdOptions::EntAuto;
+  mo.entities = opt.entities == "force" ? MdOptions::EntForce : MdOptions::EntOff;
   mo.escapes = opt.escapes == "off"      ? MdOptions::EscOff
              : opt.escapes == "force"    ? MdOptions::EscForce
                                          : MdOptions::EscAuto;
@@ -848,6 +901,7 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
   ro.text_math = true;  // a text dump cannot contain bitmaps
   ro.lazy_metrics = false;
   ro.code_fit = opt.code_fit;
+  ro.inline_images = false;  // a text dump needs no pixels (and no network)
   view.set_options(ro);
   view.set_width(width);
   view.set_document(std::move(doc), path, dir_name(abs_path(path)));
@@ -870,7 +924,7 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
   if (opt.dump == "-" || opt.dump.empty()) {
     printf("%s", out.c_str());
   } else {
-    FILE* f = fopen(opt.dump.c_str(), "wb");
+    FILE* f = plat::open_file(opt.dump, "wb");
     if (!f) { *err = "cannot write " + opt.dump; return false; }
     fwrite(out.data(), 1, out.size(), f);
     fclose(f);
@@ -888,13 +942,12 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   if (path == "-") path = "<stdin>";
   int cols = opt.width > 0 ? opt.width : 110;
   int rows = opt.height > 0 ? opt.height : 48;
-  int cell_w = 9, cell_h = 19;
+  int cell_w = opt.cell_w > 0 ? opt.cell_w : 9;
+  int cell_h = opt.cell_h > 0 ? opt.cell_h : 19;
 
   MdOptions mo;
   mo.math = (opt.math != "off");
-  mo.entities = opt.entities == "off"      ? MdOptions::EntOff
-                : opt.entities == "force"  ? MdOptions::EntForce
-                                           : MdOptions::EntAuto;
+  mo.entities = opt.entities == "force" ? MdOptions::EntForce : MdOptions::EntOff;
   mo.escapes = opt.escapes == "off"      ? MdOptions::EscOff
              : opt.escapes == "force"    ? MdOptions::EscForce
                                          : MdOptions::EscAuto;
@@ -921,6 +974,7 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   view.set_terminal(&term);
   view.set_math(&math);
   view.set_theme(theme);
+  view.set_offscreen(true);  // the images are composited into the PNG below
   RenderOptions ro;
   ro.show_line_numbers = opt.show_line_numbers;
   ro.em_px_override = opt.font_px;
@@ -957,10 +1011,21 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
       fr.draw_cell(img, x, y, c.cp, c.fg, c.bg, c.attr);
     }
   // composite the document images (maths, pictures) on top
+  if (getenv("MDT_DEBUG_CELLMATH"))
+    fprintf(stderr, "[mdt] screenshot: %zu placed images, cell %dx%d px\n",
+            view.images().size(), cell_w, cell_h);
+  // MDT_SNAP_SUBCELL makes --screenshot composite the way a terminal that
+  // cannot place an image at a pixel offset inside a cell has to (iTerm2,
+  // sixel): the bitmap lands on its anchor cell.  The two renders must be
+  // identical - tools/subcell_align_test.py checks exactly that.
+  bool snap_subcell = getenv("MDT_SNAP_SUBCELL") != nullptr;
   for (const PlacedImage& im : view.images()) {
+    if (getenv("MDT_DEBUG_CELLMATH"))
+      fprintf(stderr, "[mdt]   image at (%d,%d) %dx%d px, off (%d,%d), rgba=%d\n", im.x, im.y,
+              im.px_w, im.px_h, im.sub_x, im.sub_y, im.rgba ? 1 : 0);
     if (!im.rgba) continue;
     int ox = im.x * cell_w;
-    int oy = im.y * cell_h + im.sub_y;
+    int oy = im.y * cell_h + (snap_subcell ? 0 : im.sub_y);
     for (int y = 0; y < im.px_h; y++) {
       int yy = oy + y;
       if (yy < 0 || yy >= img.h) continue;
@@ -980,7 +1045,7 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   }
   auto png = png_encode(img.rgba.data(), img.w, img.h);
   std::string out = opt.screenshot;
-  FILE* f = fopen(out.c_str(), "wb");
+  FILE* f = plat::open_file(out, "wb");
   if (!f) { *err = "cannot write " + out; return false; }
   fwrite(png.data(), 1, png.size(), f);
   fclose(f);
@@ -1008,7 +1073,7 @@ void print_usage() {
       "  --panels                             tinted backgrounds for code/quote/table\n"
       "  --terminal-bg                        keep the terminal's own background\n"
       "  --no-scrollbar                       hide the scrollbar\n"
-      "  --entities=auto|off|force            HTML-escaped sources (default: auto)\n"
+      "  --entities=off|force                 repair a HTML-escaped source (default: off)\n"
       "  --escapes=auto|off|force             backslash-escaped sources (default: auto)\n"
       "  --loose=auto|off|on                  \"#标题\" and \"-项目\" without a space (default: auto)\n"
       "  --diag                               print what mdt sees of the file/terminal\n"

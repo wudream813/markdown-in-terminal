@@ -14,7 +14,7 @@ struct AppOptions {
   bool no_color = false;
   bool show_line_numbers = false;
   bool syntax = true;
-  std::string entities = "auto";   // auto | off | force - HTML-escaped sources
+  std::string entities = "off";    // off | force - repair HTML-escaped sources
   std::string escapes = "auto";    // auto | off | force - backslash-escaped sources
   std::string loose = "auto";      // auto | off | on - "#标题" / "-项目" without a space
   bool panels = false;             // draw tinted backgrounds behind code/quote/table
@@ -23,6 +23,8 @@ struct AppOptions {
   int font_px = 0;                 // override the derived em size
   int width = 0;                   // force a width in columns (dump/screenshot)
   int height = 0;
+  int cell_w = 0;                  // force the cell size in pixels (dump/screenshot)
+  int cell_h = 0;
   std::string dump;
   bool diag = false;               // print what mdt sees of the file and of the terminal
   bool compat = false;             // --compat: plain output for terminals that misbehave

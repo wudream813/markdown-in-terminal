@@ -16,6 +16,7 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -61,6 +62,50 @@ void maybe_install_debug_signal() {
   int ms = atoi(v) > 0 ? atoi(v) : 1000;
   pthread_t t;
   if (pthread_create(&t, nullptr, debug_signal_thread, (void*)(intptr_t)ms) == 0) pthread_detach(t);
+}
+
+namespace {
+struct ThreadStart {
+  void (*fn)(void*);
+  void* arg;
+};
+void* thread_trampoline(void* p) {
+  ThreadStart ts = *(ThreadStart*)p;
+  delete (ThreadStart*)p;
+  ts.fn(ts.arg);
+  return nullptr;
+}
+}  // namespace
+
+bool thread_start(void (*fn)(void*), void* arg) {
+  pthread_t t;
+  auto* ts = new ThreadStart{fn, arg};
+  if (pthread_create(&t, nullptr, thread_trampoline, ts) != 0) {
+    delete ts;
+    return false;
+  }
+  pthread_detach(t);
+  return true;
+}
+
+void sleep_ms(int ms) {
+  struct timespec ts;
+  ts.tv_sec = ms / 1000;
+  ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+  nanosleep(&ts, nullptr);
+}
+
+FILE* open_file(const std::string& path, const char* mode) { return fopen(path.c_str(), mode); }
+
+bool regular_file_exists(const std::string& path) {
+  struct stat st;
+  return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+}
+
+void console_init() {}  // nothing to do: the terminal is UTF-8 already
+
+std::vector<std::string> utf8_args(int argc, char** argv) {
+  return std::vector<std::string>(argv, argv + argc);
 }
 
 bool stdin_is_tty() { return isatty(STDIN_FILENO) == 1; }
@@ -150,6 +195,12 @@ bool write_out(const char* data, size_t n) {
   return true;
 }
 
+// POSIX has no system HTTP stack: the caller uses libcurl or the curl binary.
+bool http_get_system(const std::string& url, std::string& out, std::string* err) {
+  (void)url; (void)out; (void)err;
+  return false;
+}
+
 std::string open_url_command(const std::string& url) {
 #ifdef __APPLE__
   return "open '" + url + "' >/dev/null 2>&1 &";
@@ -181,6 +232,9 @@ void system_font_dirs(std::string& windows_fonts, std::string& user_fonts) {
 
 #include <windows.h>
 
+#include <shellapi.h>
+#include <wininet.h>  // WinINet: remote pictures
+
 #include <cstdint>
 #include <io.h>
 #include <process.h>
@@ -197,6 +251,7 @@ static HANDLE g_out = INVALID_HANDLE_VALUE;
 static DWORD g_saved_in_mode = 0;
 static DWORD g_saved_out_mode = 0;
 static UINT g_saved_out_cp = 0;
+static bool g_cp_saved = false;
 static UINT g_saved_in_cp = 0;
 static bool g_modes_saved = false;
 static int g_last_cols = 0, g_last_rows = 0;
@@ -252,6 +307,86 @@ void maybe_install_debug_signal() {
   if (h) CloseHandle(h);
 }
 
+static std::wstring utf8_to_wide(const std::string& s) {
+  if (s.empty()) return std::wstring();
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+  if (n <= 0) return std::wstring();
+  std::wstring w((size_t)n, L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &w[0], n);
+  return w;
+}
+static std::string wide_to_utf8(const wchar_t* w, int len) {
+  if (!w || len <= 0) return std::string();
+  int n = WideCharToMultiByte(CP_UTF8, 0, w, len, nullptr, 0, nullptr, nullptr);
+  if (n <= 0) return std::string();
+  std::string out((size_t)n, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, w, len, &out[0], n, nullptr, nullptr);
+  return out;
+}
+
+// Windows console arguments are in the ANSI code page, not UTF-8: a Chinese
+// file name arrives as GBK bytes and comes out as mojibake.  Rebuild the whole
+// command line from its wide form instead.
+std::vector<std::string> utf8_args(int argc, char** argv) {
+  std::vector<std::string> out;
+  int n = 0;
+  LPWSTR* w = CommandLineToArgvW(GetCommandLineW(), &n);
+  if (w) {
+    for (int i = 0; i < n; i++) out.push_back(wide_to_utf8(w[i], (int)wcslen(w[i])));
+    LocalFree(w);
+    if (!out.empty()) return out;
+  }
+  for (int i = 0; i < argc; i++) out.push_back(argv[i]);
+  return out;
+}
+
+struct ThreadStart {
+  void (*fn)(void*);
+  void* arg;
+};
+static DWORD WINAPI win_thread_trampoline(LPVOID p) {
+  ThreadStart ts = *(ThreadStart*)p;
+  delete (ThreadStart*)p;
+  ts.fn(ts.arg);
+  return 0;
+}
+
+bool thread_start(void (*fn)(void*), void* arg) {
+  auto* ts = new ThreadStart{fn, arg};
+  HANDLE h = CreateThread(nullptr, 0, win_thread_trampoline, ts, 0, nullptr);
+  if (!h) {
+    delete ts;
+    return false;
+  }
+  CloseHandle(h);
+  return true;
+}
+
+void sleep_ms(int ms) { Sleep((DWORD)ms); }
+
+FILE* open_file(const std::string& path, const char* mode) {
+  std::wstring wpath = utf8_to_wide(path);
+  std::wstring wmode(mode, mode + std::strlen(mode));
+  return _wfopen(wpath.c_str(), wmode.c_str());
+}
+
+bool regular_file_exists(const std::string& path) {
+  DWORD a = GetFileAttributesW(utf8_to_wide(path).c_str());
+  return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+// Do this before anything is printed: --dump, --diag and error messages go
+// through the CRT, which encodes stdout with the console code page.
+void console_init() {
+  if (!g_cp_saved) {
+    g_saved_out_cp = GetConsoleOutputCP();
+    g_saved_in_cp = GetConsoleCP();
+    g_cp_saved = true;
+  }
+  SetConsoleOutputCP(CP_UTF8);
+  SetConsoleCP(CP_UTF8);
+}
+
 bool stdin_is_tty() { return _isatty(_fileno(stdin)) != 0; }
 bool stdout_is_tty() { return _isatty(_fileno(stdout)) != 0; }
 
@@ -268,8 +403,11 @@ bool raw_begin(std::string* err) {
   }
   g_modes_saved = true;
   // UTF-8 in and out, VT sequences in both directions.
-  g_saved_out_cp = GetConsoleOutputCP();
-  g_saved_in_cp = GetConsoleCP();
+  if (!g_cp_saved) {  // console_init() usually got there first
+    g_saved_out_cp = GetConsoleOutputCP();
+    g_saved_in_cp = GetConsoleCP();
+    g_cp_saved = true;
+  }
   SetConsoleOutputCP(CP_UTF8);
   SetConsoleCP(CP_UTF8);
   DWORD in_mode = g_saved_in_mode;
@@ -373,6 +511,57 @@ bool write_out(const char* data, size_t n) {
     off += written;
   }
   return true;
+}
+
+// Remote pictures on Windows go through WinINet: it is part of the system, so
+// the reader needs no libcurl and no curl.exe on the PATH.
+bool http_get_system(const std::string& url, std::string& out, std::string* err) {
+  HINTERNET net = InternetOpenA("mdt/0.1 (+terminal markdown reader)",
+                                INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
+  if (!net) { if (err) *err = "cannot open the internet session"; return false; }
+  HINTERNET req = InternetOpenUrlA(net, url.c_str(), nullptr, 0,
+                                   INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE, 0);
+  if (!req) {
+    DWORD e = GetLastError();
+    if (err) *err = "http failed (wininet " + std::to_string((long)e) + ")";
+    InternetCloseHandle(net);
+    return false;
+  }
+  // The response length is known from the headers: a short read is a broken
+  // download, not an end of data (a truncated PNG decodes to "chunk not known",
+  // which looks like a decoder bug).
+  long long want = -1;
+  {
+    char len[64] = {0};
+    DWORD ln = sizeof(len), idx = 0;
+    if (HttpQueryInfoA(req, HTTP_QUERY_CONTENT_LENGTH, len, &ln, &idx))
+      want = _strtoi64(len, nullptr, 10);
+  }
+  char buf[65536];
+  bool ok = true;
+  for (;;) {
+    DWORD n = 0;
+    if (!InternetReadFile(req, buf, sizeof(buf), &n)) {
+      DWORD e = GetLastError();
+      if (e != ERROR_SUCCESS && e != ERROR_HANDLE_EOF) {
+        ok = false;
+        if (err) *err = "download failed (wininet " + std::to_string((long)e) + ")";
+      }
+      break;
+    }
+    if (n == 0) break;  // end of data
+    out.append(buf, n);
+    if (out.size() > 32u * 1024 * 1024) { ok = false; if (err) *err = "picture too large"; break; }
+  }
+  if (ok && want > 0 && (long long)out.size() != want) {
+    ok = false;
+    if (err) *err = "short download (" + std::to_string((long long)out.size()) + "/" +
+                    std::to_string(want) + " bytes)";
+  }
+  InternetCloseHandle(req);
+  InternetCloseHandle(net);
+  if (out.empty() && ok) { if (err) *err = "empty response"; return false; }
+  return ok;
 }
 
 std::string open_url_command(const std::string& url) {

@@ -10,6 +10,15 @@ set -e
 
 cd "$(dirname "$0")/.."
 EXE=${EXE:-build/win/mdt.exe}
+# Wine converts the Unix command line to UTF-16 with the host locale: under
+# LC_CTYPE=POSIX a Chinese file name would arrive mangled before mdt ever sees
+# it (a real Windows console hands over UTF-16 directly).  Give Wine a UTF-8
+# locale so a non-ASCII path can be tested at all.
+case "${LC_ALL:-${LC_CTYPE:-$LANG}}" in
+  *UTF-8*|*utf8*) ;;
+  *) export LC_ALL=C.UTF-8 ;;
+esac
+
 WINE=${WINE:-wine64}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -117,10 +126,33 @@ grep -q "\[x\] done item" "$TMP/tk.txt" && echo "   task markers are ASCII"
 grep -q "Invisible leading characters" "$TMP/iv.txt" && echo "   zero width spaces stripped"
 "$WINE" "$EXE" --dump --width=50 tests/fixtures/code-wrap.md 2>/dev/null | tr -d '\r' > "$TMP/cw.txt"
 grep -q "argument_four)" "$TMP/cw.txt" && echo "   code lines wrapped, not truncated"
-"$WINE" "$EXE" --dump --width=44 tests/fixtures/escaped-newlines.md 2>/dev/null | tr -d '\r' > "$TMP/el.txt"
+"$WINE" "$EXE" --entities=force --dump --width=44 tests/fixtures/escaped-newlines.md 2>/dev/null | tr -d '\r' > "$TMP/el.txt"
 grep -q "#include <vector>" "$TMP/el.txt" && echo "   escaped line breaks not doubled"
 test "$(grep -c '│ *│' "$TMP/el.txt")" = 0 && echo "   no blank row inside the code frame"
+"$WINE" "$EXE" --dump --width=40 "tests/fixtures/中文标题.md" 2>/dev/null | tr -d '\r' > "$TMP/cn.txt"
+"$WINE" "$EXE" --diag tests/fixtures/matrix.md 2>/dev/null | tr -d '\r' | grep -q 'backslash escapes=0' \
+  && echo "   matrices are not 'repaired' as escaped markdown"
+python3 tools/matrix_test.py "$EXE" "$WINE" 2>/dev/null || \
+  python3 tools/matrix_test.py "$EXE" "$WINE"
+python3 tools/subcell_align_test.py "$EXE" "$WINE" 2>/dev/null || \
+  python3 tools/subcell_align_test.py "$EXE" "$WINE"
+python3 tools/tall_math_test.py "$EXE" "$WINE" 2>/dev/null || \
+  python3 tools/tall_math_test.py "$EXE" "$WINE"
+"$WINE" "$EXE" --diag "tests/fixtures/中文标题.md" 2>/dev/null | tr -d '\r' > "$TMP/cn2.txt"
+grep -q '中文标题' "$TMP/cn2.txt" && echo "   non-ASCII file name survives the command line"
+grep -q '这是一段中文内容' "$TMP/cn.txt" && echo "   non-ASCII path opened and read"
+"$WINE" "$EXE" --dump --width=44 tests/fixtures/nested-quotes.md 2>/dev/null | tr -d '\r' > "$TMP/nq.txt"
+grep -q '│ │ 二级' "$TMP/nq.txt" && echo "   nested quotes get a bar each"
+"$WINE" "$EXE" --entities=force --dump --width=44 tests/fixtures/code-double-spaced.md 2>/dev/null | tr -d '\r' > "$TMP/ds.txt"
+test "$(grep -c '│ *│' "$TMP/ds.txt")" = 0 && echo "   no blank row when every line is spaced"
+grep -q '#include <vector>' "$TMP/ds.txt" && echo "   double-spaced code stays complete"
+"$WINE" "$EXE" --dump --width=44 tests/fixtures/code-grouped.md 2>/dev/null | tr -d '\r' > "$TMP/gr.txt"
+test "$(grep -c '│ *│' "$TMP/gr.txt")" -ge 3 && echo "   deliberately grouped code keeps its blank lines"
 "$WINE" "$EXE" --dump --width=60 demo/demo.md 2>/dev/null | tr -d '\r' | grep -q "^ ## " && echo "   dimmed # before headings"
+
+echo "== a slow picture host does not block the reader =="
+python3 tools/async_image_test.py "$EXE" "$WINE" 2>/dev/null || \
+  python3 tools/async_image_test.py "$EXE" "$WINE" || exit 1
 
 echo "== mouse + scrollbar (pty) =="
 python3 tools/mouse_test.py "$EXE" "$WINE" || exit 1

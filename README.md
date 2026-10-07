@@ -34,17 +34,28 @@ self-contained binary.
   with MinGW-w64 (one `make windows`); see the cross compilation section below.
 * **Mouse and scrollbar.** The wheel scrolls (SGR *and* X10 mouse reports,
   so it also works in terminals without SGR mouse mode), clicking the
-  scrollbar in the right margin jumps through the document, and clicking
-  links/headings/outline entries works as before.
+  scrollbar in the right margin jumps through the document and dragging it
+  tracks live (button-event motion reporting, mode 1002: every motion event
+  between press and release moves the view, not only the release), and
+  clicking links/headings/outline entries works as before.
 * **Forgiving with generated Markdown.** Files that came out of a generator
   instead of somebody's hands are recognised and repaired before parsing:
   * *HTML-escaped sources* ("copy as markdown", CMS exports): every Markdown
     character arrives as a character reference - `&#35;` for `#`, `&#x09;`
-    for a tab. `--entities=off|force` controls the decoding.
+    for a tab. The repair is **opt-in** (`--entities=force`): mdt used to guess
+    from the shape of the text, and because the escaping belongs to how a file
+    was pasted rather than to the file itself, a wrong guess rewrote maths and
+    code silently. Character references in ordinary prose are still decoded the
+    way CommonMark asks for (`&amp;` -> `&`).
   * *Backslash-escaped sources*: every syntax character is escaped - `\#`,
     `\-`, `\*`, `1\.`. Detected and unescaped (double escapes such as `\\#`
     too), so headings, lists, tables and emphasis come back.
-    `--escapes=off|force` controls it.
+    `--escapes=off|force` controls it. The repair never looks inside maths or
+    code: backslashes are syntax there (a matrix row separator is `\\`, a code
+    block is literal text), so a document full of `pmatrix` rows used to be
+    mistaken for an escaped source and lost one backslash per row - every
+    matrix collapsed into a single row. `\\` is no longer counted as an escape
+    either.
   * *HTML inside a `.md` file*: `<p>`, `<h2>`, `<ul><li>`, `<table>`, `<pre>`
     and inline tags are converted to the Markdown they stand for, including
     `<strong>`/`<em>`/`<code>`/`<a href>`/`<img>`; prose placeholders such as
@@ -54,6 +65,19 @@ self-contained binary.
     that contains no space-separated marker at all (`--loose=off|on` overrides).
   The status bar shows which repairs were applied (`+entities`, `+escapes`,
   `+loose`).
+* **Blockquotes nest.** `>`, `> >`, `> > >` … each level gets its own bar and
+  two more columns of indent, and a nested block of any kind (paragraph, code,
+  list, table, another quote) lives inside the quote. Wrapped lines keep every
+  bar, and two paragraphs separated by a `>` blank line stay in one quote while
+  a bare blank line starts a new one (CommonMark).
+* **Non-ASCII file names work on Windows.** Windows hands `main()` its
+  arguments in the ANSI code page, not UTF-8, so `mdt 中文.md` used to fail with
+  a mangled path (and a UTF-8 path never reached the file API, which wants
+  UTF-16). The command line is now rebuilt from `GetCommandLineW()`, every path
+  is opened through `_wfopen`/`GetFileAttributesW`, and the console code page is
+  switched to UTF-8 before anything is printed - so file names in the status
+  bar, in `--diag` and in error messages come out right too. On the POSIX side
+  nothing changes: paths were always bytes and still are.
 * **Blocks nested in list items** keep their shape: quotes keep their bar,
   tables are drawn as a frame indented under the bullet, and any other block
   falls back to its text instead of disappearing.
@@ -79,6 +103,37 @@ self-contained binary.
   in every font). A code block's frame spans the page (as it always did; use
   `--code-fit` for a frame that hugs the code) and long code lines wrap instead
   of being cut off at the frame edge.
+* **Graphics inside table cells.** A formula in a table cell is typeset as a
+  bitmap that is as wide as the cell's Unicode transcription and exactly one
+  cell tall. Its baseline is baked into the bitmap (the formula is shifted and,
+  if need be, scaled so that its baseline lands on the cell's text baseline),
+  which means the bitmap is placed exactly on the cell's row - no sub-cell
+  offset, so it cannot hang over the row above or below. The page colour is
+  painted behind the ink *and* the transcription is removed from the text layer
+  while the bitmap is up (terminals draw cell text above placed images, which is
+  how the transcription used to peek out from under a formula). Without a
+  graphics protocol the transcription stays and is all you see.
+* **Images sit on the nearest cell row.** Formula and picture bitmaps are
+  anchored to the cell row the text baseline falls into (rounded, not floored).
+  Rounding down put a formula whose baseline was a fraction of a pixel above the
+  text baseline one row too high - in a table it looked shifted, and on the
+  first line of a document it was treated as scrolled off the top and replaced
+  by a placeholder box. Visibility is now decided in pixels, so a bitmap whose
+  anchor row is the row above the viewport is clamped, not dropped.
+* **A blank line after every code line is a paste artifact.** Some generators
+  emit a blank line between each pair of lines of a code block. If a block is
+  double spaced like that throughout it is reflowed tightly (the file is not
+  changed, only the drawing); a block with a few deliberate blank lines, or with
+  a real empty region, is left exactly as written.
+* **Pictures from the network never block the reader.** A `![](https://…)`
+  is downloaded on a worker thread: the first frame is on screen in a fraction
+  of a second with a `[loading…]` placeholder, scrolling and every key keep
+  working, and the layout is refreshed the moment the bytes arrive (the status
+  bar says `loading images…` meanwhile). Before this, the event loop sat in the
+  download - a 题解 with three pictures on a slow CDN took 17 s to show anything
+  and answered keys ~3 s late, which read exactly like "scrolling, `?` and Esc
+  are broken". `R` forgets the downloads so a picture can be fetched again; a
+  terminal without a graphics protocol never touches the network at all.
 * **Escaped line endings are not doubled.** A generator that escapes line
   breaks writes `&#10;` and then a real newline; decoding that used to put an
   empty line between every two lines - very visible inside a code block. The
@@ -144,7 +199,8 @@ Notes:
   `-funsigned-char -D_GNU_SOURCE -DCONFIG_VERSION='"2025-09-13"'` and links
   against `-lws2_32`.
 * libcurl is not used in the Windows build (a host libcurl cannot be linked
-  into a PE binary); remote images fall back to the `curl` command line.
+  into a PE binary); remote pictures go through **WinINet** instead, which is
+  part of Windows - no curl.exe on the PATH is needed.
 * Fonts come from `%WINDIR%\Fonts` (Consolas/Cascadia Mono for text, MS YaHei /
   SimSun / Noto CJK for wide characters), discovered at runtime.
 
@@ -228,7 +284,10 @@ Mathjax TeX→SVG (JS, embedded)         ← KaTeX-compatible syntax, TeX supers
    run by QuickJS inside the binary
         │  <svg viewBox="0 -1562.5 8064.8 2808.5" width="18.2ex">
         ▼
-svg.cpp: XML + path (M/C/S/Q/A/Z, transforms, matrices) parser
+svg.cpp: XML + path (M/C/S/Q/A/Z, transforms, matrices, nested <svg>
+   viewports - MathJax draws an extensible bracket as three stacked pieces in
+   an inner <svg>, which used to be skipped entirely, leaving matrices with a
+   single bracket) parser
    → flattened into polygons, scan-line rasteriser with non-zero winding,
      supersampled anti-aliasing, composited to RGBA
         ▼
@@ -266,7 +325,21 @@ the whole battery (themes, maths modes, stdin, text export, all three
 protocols) against `./build/mdt`. For the Windows build, `sh tests/windows.sh`
 does the same through Wine (including the console path, via
 `tools/wine_pty_test.py`) and compares the rendered text with the native
-binary. `tools/build_windows.sh` makes the release zip.
+binary. `tools/async_image_test.py` opens a document whose pictures sit on a slow host
+and checks that the first frame is up in well under a second, that the keys
+answer while the downloads run, that each picture is fetched exactly once and
+that it does get drawn in the end. `tools/subcell_align_test.py` guards the
+vertical alignment of inline formulas and pictures: the sub-cell offset is
+baked into the bitmap, so a terminal that cannot place an image at a pixel
+offset inside a cell (iTerm2, sixel) draws it on exactly the same rows as one
+that can; the test renders the same document twice - `MDT_SNAP_SUBCELL=1`
+makes `--screenshot` composite the "no sub-cell offset" way - and requires the
+two pictures to be identical. `tools/tall_math_test.py` guards the other half
+of the same story: a multi-line formula (`$\begin{aligned}...$`, inline
+delimiters) spans several terminal rows, so the line that carries it reserves
+them (`Line::rows`); the test checks in the screenshot that no pixel row mixes
+formula ink with prose ink and that the prose after the block starts below it.
+`tools/build_windows.sh` makes the release zip.
 
 ## Performance notes
 
@@ -292,10 +365,11 @@ the final geometry is exact.
 | `--panels` | tinted backgrounds behind code blocks, quotes and table headers (off by default: the page uses one background colour) |
 | `--terminal-bg` | emit SGR 49 for the page background, so the terminal's own colour/transparency shows through |
 | `--no-scrollbar` | hide the scrollbar |
-| `--entities=auto\|off\|force` | control the HTML-entity decoding described above |
+| `--entities=off\|force` | repair a source that was HTML-escaped before it reached you (off by default) |
 | `--escapes=auto\|off\|force` | control the backslash-escape repair described above |
 | `--loose=auto\|off\|on` | accept `#标题` / `-项目` / `1.项目` without a space |
 | `--code-fit` | code frames hug the code instead of spanning the page |
+| `--cell=WxH` | cell size in pixels for `--dump`/`--screenshot` (default 9x19), so a screenshot can match your terminal exactly |
 | `--compat` | no graphics, no DEC 2026 synchronized output, no keyboard-protocol push, no capability probe - for terminals whose support for those is broken |
 | `--diag` | print what mdt sees of the file (encoding, escapes, block census, first characters) and of the terminal; works without a tty |
 
