@@ -7,7 +7,7 @@ Two reported problems in one harness:
    to be clamped (drawn from its first row, or not drawn at all when the
    cursor move went negative) instead of being cut.  mdt now sends the visible
    part as its own bitmap: after scrolling a four-row picture eight rows past
-   the top, the kitty stream must carry a second transmission (the cut bitmap,
+   the top, the kitty stream must crop via a placement source rectangle (no
    smaller than the original) and place it at screen row 1.
 
 2. "每次拖动重绘会闪烁" - the frame used to close the DEC 2026 synchronized
@@ -124,20 +124,27 @@ def main():
         p.drain(0.8)
         scrolled = p.out
 
-        # ---- 1. the cut bitmap is transmitted and placed at row 1 -----------
+        # ---- 1. the cut is a source-rect placement, no re-transmission -----
         trans = re.findall(rb"\x1b_Ga=t,f=100,i=(\d+),q=2,m=0;((?:.|\n)*?)\x1b\\", scrolled)
-        place = re.findall(rb"\x1b\[(\-?\d+);(\d+)H\x1b_Ga=p,i=(\d+),p=1", scrolled)
-        sizes = {tid: len(payload) for tid, payload in trans}
-        ok = bool(place) and place[-1][0] == b"1" and len(trans) >= 3
-        if ok:
-            last_id = place[-1][2]
-            full_id = max(sizes, key=sizes.get)   # the uncut four-row bitmap
-            ok = last_id != full_id and sizes[last_id] < sizes[full_id]
+        place = re.findall(rb"\x1b\[(\-?\d+);(\d+)H\x1b_Ga=p,i=(\d+),p=1,([^\x1b]*)",
+                           scrolled)
+        ok, crop = False, "-"
+        if place:
+            row, _col, _pid, keys = place[-1]
+            my = re.search(rb",y=(\d+),", keys)
+            mh = re.search(rb",h=(\d+),", keys)
+            crop = (my.group(1) + b"/" + mh.group(1)).decode() if my and mh else "-"
+            # the picture row sits at the viewport top and the placement crops
+            # the hidden rows off; the bitmap itself was sent once, earlier
+            # the bitmap goes out once; every later edge cut is a placement
+            # source rectangle on that same id, never a second transmission
+            ok = (row == b"1" and bool(my) and int(my.group(1)) > 0 and len(trans) <= 1
+                  and (not trans or place[-1][2] == trans[0][0]))
         print(("   ok   " if ok else "   FAIL ") +
-              "picture over the top edge: a smaller cut bitmap is transmitted and "
-              "placed at row 1 (%d transmissions, last placement row %s, id %s)"
-              % (len(trans), place[-1][0].decode() if place else "-",
-                 place[-1][2].decode() if place else "-"))
+              "picture over the top edge: placed at row 1 with a source crop on "
+              "the once-transmitted id (%d transmissions while scrolling, last "
+              "placement row %s, crop y/h %s)"
+              % (len(trans), place[-1][0].decode() if place else "-", crop))
         fails += [] if ok else ["top clip"]
 
         # ---- 2. a drag paints inside one synchronized window --------------

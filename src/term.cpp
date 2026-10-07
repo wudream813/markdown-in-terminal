@@ -541,10 +541,18 @@ std::string Terminal::kitty_transmit(int id, const std::vector<uint8_t>& png) {
   }
   return out;
 }
-std::string Terminal::kitty_place(int id, int cols, int rows, int sub_x, int sub_y) {
+std::string Terminal::kitty_place(int id, const PlacedImage& im, int cols, int rows) {
+  std::string s;
   if (cols > 0 && rows > 0)
-    return fmt("\x1b_Ga=p,i=%d,p=1,c=%d,r=%d,X=%d,Y=%d,z=0,q=2\x1b\\", id, cols, rows, sub_x, sub_y);
-  return fmt("\x1b_Ga=p,i=%d,p=1,X=%d,Y=%d,z=0,q=2\x1b\\", id, sub_x, sub_y);
+    s = fmt("\x1b_Ga=p,i=%d,p=1,c=%d,r=%d,X=%d,Y=%d", id, cols, rows, im.sub_x, im.sub_y);
+  else
+    s = fmt("\x1b_Ga=p,i=%d,p=1,X=%d,Y=%d", id, im.sub_x, im.sub_y);
+  // source crop (lowercase x,y,w,h): shows only part of the already-cached
+  // image, so clipping at a viewport edge costs no re-transmission
+  if (im.src_w > 0 && im.src_h > 0 && (im.src_y > 0 || im.src_h < im.px_h))
+    s += fmt(",x=%d,y=%d,w=%d,h=%d", im.src_x, im.src_y, im.src_w, im.src_h);
+  s += ",z=0,q=2\x1b\\";
+  return s;
 }
 std::string Terminal::kitty_delete_all_placements() { return "\x1b_Ga=d,d=a,q=2\x1b\\"; }  // placements only
 
@@ -607,7 +615,7 @@ std::string Terminal::emit_images(const std::vector<PlacedImage>& imgs) {
         // drawn 1:1; without it, leave c/r out so kitty uses the pixel size.
         bool know_cells = caps.cell_w > 0 && caps.cell_h > 0;
         int pc = know_cells ? im.cols : 0, pr = know_cells ? im.rows : 0;
-        out += kitty_place(id, pc, pr, im.sub_x, im.sub_y);
+        out += kitty_place(id, im, pc, pr);
       }
       // evict images that have not been used for a while
       for (size_t i = 0; i < kitty_cache_.size();) {

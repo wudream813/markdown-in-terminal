@@ -1207,7 +1207,8 @@ void DocView::layout_blocks() {
       }
 
       case Block::Directive: {
-        directive_layout(bl, b, row, 1, std::vector<int>{}, false, RGB{0, 0, 0});
+        directive_layout(bl, b, row, 1, std::vector<int>{}, std::vector<RGB>{}, false,
+                         RGB{0, 0, 0});
         row += opt_.paragraph_gap;
         break;
       }
@@ -1282,12 +1283,14 @@ void DocView::layout_blocks() {
 
 // Builds wrapped, styled lines from a list of spans.
 void DocView::quote_lines(std::vector<Line>& out, const Block& qb, int indent,
-                          std::vector<int> bars) {
+                          std::vector<int> bars, std::vector<RGB> bar_cols) {
   if (qb.type == Block::Quote) {
     // > > nested: one more bar in the column the inner text used to start at
     bars.push_back(indent);
+    bar_cols.push_back(theme_.quote_bar);
     for (auto& sublist : qb.items)
-      for (const Block& inner : sublist) quote_lines(out, inner, indent + 2, bars);
+      for (const Block& inner : sublist)
+        quote_lines(out, inner, indent + 2, bars, bar_cols);
     return;
   }
   std::vector<Line> lines;
@@ -1351,6 +1354,7 @@ void DocView::quote_lines(std::vector<Line>& out, const Block& qb, int indent,
   }
   for (Line& l : lines) {
     l.bars = bars;
+    l.bar_rgbs = bar_cols;
     out.push_back(l);
   }
 }
@@ -1360,31 +1364,42 @@ void DocView::quote_lines(std::vector<Line>& out, const Block& qb, int indent,
 // an unknown name (content passes through unchanged).  Nesting works because
 // children go through directive_child_layout, which calls back into here.
 void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int indent,
-                               const std::vector<int>& bars, bool custom, RGB bar_rgb) {
+                               const std::vector<int>& bars, const std::vector<RGB>& bar_cols,
+                               bool custom, RGB bar_rgb) {
   if (b.dir_leaf) return;
   bool callout = is_callout_name(b.dir_name);
   RGB c = callout ? callout_color(b.dir_name) : bar_rgb;
   bool cu = custom || callout;
+  // A callout draws its own bar in column `indent`; everything belonging to it
+  // (title, content, nested containers) carries that column plus its colour.
+  std::vector<int> own_bars = bars;
+  std::vector<RGB> own_cols = bar_cols;
+  if (callout) { own_bars.push_back(indent); own_cols.push_back(c); }
   if (callout && !b.dir_label.empty()) {
-    Line l;
-    Run r;
-    r.text = b.dir_label;
-    r.x = indent;
-    r.width = str_width(r.text);
-    r.style.bold = true;
-    r.style.has_color = true;
-    r.style.color = c;
-    l.runs.push_back(r);
-    l.bars = bars;
-    l.bars_custom = cu;
-    l.bar_rgb = c;
-    l.row = row - bl.row;
-    bl.lines.push_back(l);
-    row += 1;
+    // The title is ordinary inline markup - Luogu titles regularly carry
+    // formulas (:::info[$x^2$ 标题]) - so parse and wrap it like a paragraph.
+    std::vector<Span> sp = inline_parser_.parse_inline(b.dir_label);
+    Span base;
+    base.bold = true;
+    base.has_color = true;
+    base.color = c;
+    std::vector<Line> tl;
+    build_lines(sp, indent + 2, content_w_ - indent - 2, base, tl);
+    if (tl.empty()) tl.resize(1);
+    for (Line& l : tl) {
+      l.bars = own_bars;
+      l.bar_rgbs = own_cols;
+      l.bars_custom = cu;
+      l.bar_rgb = c;
+      l.row = row - bl.row;
+      bl.lines.push_back(l);
+      row += l.rows;
+    }
   }
-  std::vector<int> bars2 = bars;
+  std::vector<int> bars2 = own_bars;
+  std::vector<RGB> cols2 = own_cols;
   int ind2 = indent;
-  if (callout) { bars2.push_back(indent); ind2 = indent + 2; }
+  if (callout) ind2 = indent + 2;
 
   std::string a = to_lower(b.dir_attrs);
   Align al = Align::Left;
@@ -1400,7 +1415,8 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
   size_t first = bl.lines.size();
   static const std::vector<Block> no_blocks;
   const std::vector<Block>& sub = b.items.empty() ? no_blocks : b.items[0];
-  for (const Block& sb : sub) directive_child_layout(bl, sb, row, ind2, bars2, cu, c);
+  for (const Block& sb : sub)
+    directive_child_layout(bl, sb, row, ind2, bars2, cols2, cu, c);
 
   if (shift) {
     // move each built line so its content sits centred / right-aligned inside
@@ -1421,10 +1437,11 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
     }
   }
   if (epi) {
+    // readable quote colour instead of DIM-on-muted: the epigraph used to be
+    // the darkest text on the page
     for (size_t k = first; k < bl.lines.size(); k++)
       for (auto& r : bl.lines[k].runs) {
-        r.style.dim = true;
-        if (!r.style.has_color) { r.style.has_color = true; r.style.color = theme_.muted; }
+        if (!r.style.has_color) { r.style.has_color = true; r.style.color = theme_.quote_fg; }
       }
     if (!b.dir_label.empty()) {
       Line l;
@@ -1434,9 +1451,9 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
       r.x = std::max(1, content_w_ - 1 - r.width);
       r.style.has_color = true;
       r.style.color = theme_.muted;
-      r.style.dim = true;
       l.runs.push_back(r);
       l.bars = bars;
+      l.bar_rgbs = bar_cols;
       l.bars_custom = custom;
       l.bar_rgb = bar_rgb;
       l.row = row - bl.row;
@@ -1450,11 +1467,12 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
 // of the SAME BlockLayout (tables go through layout_table, formulas through
 // build_lines so their bitmaps reserve rows just like everywhere else).
 void DocView::directive_child_layout(BlockLayout& bl, const Block& sb, int& row, int indent,
-                                     const std::vector<int>& bars, bool custom, RGB bar_rgb) {
+                                     const std::vector<int>& bars,
+                                     const std::vector<RGB>& bar_cols, bool custom, RGB bar_rgb) {
   auto stamp = [&](std::vector<Line>& lines) {
     for (auto& l : lines) {
       if (!l.bars.empty() || !bars.empty()) {
-        if (l.bars.empty()) l.bars = bars;
+        if (l.bars.empty()) { l.bars = bars; l.bar_rgbs = bar_cols; }
         if (custom) { l.bars_custom = true; l.bar_rgb = bar_rgb; }
       }
       l.row = row - bl.row;
@@ -1464,7 +1482,7 @@ void DocView::directive_child_layout(BlockLayout& bl, const Block& sb, int& row,
   };
   switch (sb.type) {
     case Block::Directive:
-      directive_layout(bl, sb, row, indent, bars, custom, bar_rgb);
+      directive_layout(bl, sb, row, indent, bars, bar_cols, custom, bar_rgb);
       return;
     case Block::Heading: {
       Span base;
@@ -1525,7 +1543,7 @@ void DocView::directive_child_layout(BlockLayout& bl, const Block& sb, int& row,
       return;
     case Block::Quote: {
       std::vector<Line> lines;
-      quote_lines(lines, sb, indent, bars);
+      quote_lines(lines, sb, indent, bars, bar_cols);
       if (custom)
         for (auto& l : lines) { l.bars_custom = true; l.bar_rgb = bar_rgb; }
       stamp(lines);
@@ -1544,7 +1562,7 @@ void DocView::directive_child_layout(BlockLayout& bl, const Block& sb, int& row,
         bool firstm = true;
         for (const Block& ib : sb.items[k]) {
           if (ib.type != Block::Paragraph && ib.type != Block::Html) {
-            directive_child_layout(bl, ib, row, indent + mw, bars, custom, bar_rgb);
+            directive_child_layout(bl, ib, row, indent + mw, bars, bar_cols, custom, bar_rgb);
             firstm = false;
             continue;
           }

@@ -160,6 +160,8 @@ class DocView {
     std::vector<int> bars;      // blockquote bar columns, outermost first
     bool bars_custom = false;   // bars use bar_rgb instead of the quote colour
     RGB bar_rgb{0, 0, 0};       // Luogu callouts colour their bar by severity
+    std::vector<RGB> bar_rgbs;  // per-bar-column colours, parallel to bars;
+                                // empty falls back to bars_custom/quote colour
     int img = -1;               // kind == Image
     int img_rows = 1;
     // How many terminal rows this line occupies.  A text line that carries an
@@ -199,6 +201,7 @@ class DocView {
   MathRenderer* math_ = nullptr;
   MdDocument doc_;
   Theme theme_;
+  MarkdownParser inline_parser_;   // callout titles carry inline markup / maths
   RenderOptions opt_;
   std::string path_, base_dir_;
   int cols_ = 80, view_rows_ = 24, content_w_ = 78;
@@ -250,13 +253,16 @@ class DocView {
                        const Span& base, std::vector<Line>& out);
   // Lines for one block inside a blockquote (recurses for nested quotes: the
   // nested block gets one more bar and two more columns of indent).
-  void quote_lines(std::vector<Line>& out, const Block& qb, int indent, std::vector<int> bars);
+  void quote_lines(std::vector<Line>& out, const Block& qb, int indent, std::vector<int> bars,
+                   std::vector<RGB> bar_cols = {});
   // Luogu remark-directive containers (callouts / align / epigraph / unknown):
   // laid out into the same BlockLayout as everything else, with coloured bars.
   void directive_layout(BlockLayout& bl, const Block& b, int& row, int indent,
-                        const std::vector<int>& bars, bool custom, RGB bar_rgb);
+                        const std::vector<int>& bars, const std::vector<RGB>& bar_cols,
+                        bool custom, RGB bar_rgb);
   void directive_child_layout(BlockLayout& bl, const Block& sb, int& row, int indent,
-                              const std::vector<int>& bars, bool custom, RGB bar_rgb);
+                              const std::vector<int>& bars, const std::vector<RGB>& bar_cols,
+                              bool custom, RGB bar_rgb);
   void build_lines(const std::vector<Span>& spans, int indent, int width, const Span& base,
                    std::vector<Line>& out);
   void draw_line(Screen& scr, int x0, int y0, int w, const Line& line, int sy);

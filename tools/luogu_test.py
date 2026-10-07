@@ -120,6 +120,62 @@ def main():
     # lines=2-3,5 get a warm tint over the theme background {24,26,31}
     check(fails, "48;2;50;47;39" in frame, "code lines 2-3,5 are highlighted")
 
+    # ---- round-17 features (second fixture) ---------------------------------
+    def capture(path, rows=40, need=None):
+        pid, fd = ptymod.fork()
+        if pid == 0:
+            env = dict(os.environ)
+            env["TERM"] = "xterm-256color"
+            os.execvpe(argv[0], argv + ["--gfx=none", path], env)
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, 100, 0, 0))
+        buf = b""
+        t0 = time.time()
+        while time.time() - t0 < 12.0:
+            r, _, _ = select.select([fd], [], [], 0.2)
+            if r:
+                try:
+                    chunk = os.read(fd, 1 << 20)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                buf += chunk
+            # wine's first frame can take seconds: wait for what we need
+            if b"for help" in buf and time.time() - t0 > 1.0 \
+                    and (need is None or need in buf):
+                break
+        try:
+            os.close(fd)
+            os.kill(pid, 15)
+            os.waitpid(pid, 0)
+        except (OSError, ChildProcessError):
+            pass
+        # wine's console wrapper splits escapes with CR CR LF; rejoin them
+        return buf.replace(b"\r\r\n", b"").decode("utf-8", "replace")
+
+    fixture2 = os.path.normpath(os.path.join(os.path.dirname(fixture), "luogu2.md"))
+    dump2 = subprocess.run(argv + ["--dump", "--width=80", fixture2],
+                           capture_output=True).stdout.decode("utf-8", "replace")
+    check(fails, "标题公式" in dump2 and "内层" in dump2 and "引言文字亮一点。" in dump2,
+          "round-17 fixture dumps cleanly (titles, epigraph)")
+    frame2 = capture(fixture2, need=b"int main")
+
+    plain = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[_\]][^\x07\x1b]*(\x07|\x1b\\)?",
+                   "", frame2)
+    # wine's console can split an SGR in two; drop orphan "12;34;56m" leftovers
+    plain = re.sub(r"(?<![0-9])(?:\d+;)+\d+m", "", plain)
+    check(fails, " 1 int main() {" in plain, "luogu code block shows line numbers")
+    pos = frame2.find("内内容")
+    seg = frame2[max(0, pos - 300):pos] if pos >= 0 else ""
+    iw, isucc = seg.rfind("38;2;224;175;104"), seg.rfind("38;2;158;206;106")
+    check(fails, pos >= 0 and iw != -1 and isucc != -1 and iw < isucc,
+          "nested bars keep per-level colours (warning outer, success inner)")
+    me = re.search(r"\x1b\[([0-9;]*)m引言文字", frame2)
+    ma = re.search(r"\x1b\[([0-9;]*)m——某人", frame2)
+    ok = bool(me) and bool(ma) and me.group(1) != ma.group(1) \
+        and not me.group(1).startswith("0;2;") and not ma.group(1).startswith("0;2;")
+    check(fails, ok, "epigraph is bright: no DIM, content colour differs from attribution")
+
     if fails:
         print("luogu checks failed:", ", ".join(fails))
         return 1

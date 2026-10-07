@@ -354,7 +354,8 @@ void App::render() {
     int vrows = view_rows();
     place.erase(std::remove_if(place.begin(), place.end(),
                                [&](const PlacedImage& im) {
-                                 int rows = (im.px_h + std::max(1, term.caps.px_cell_h()) - 1) /
+                                 int ph = im.src_h > 0 ? im.src_h : im.px_h;
+                                 int rows = (ph + std::max(1, term.caps.px_cell_h()) - 1) /
                                             std::max(1, term.caps.px_cell_h());
                                  return im.y + rows > vrows;  // would cover the status bar
                                }),
@@ -426,7 +427,9 @@ void App::run() {
       term.handle_resize();
       needs_frame = true;
     }
-    if (needs_frame) render();
+    if (needs_frame) {
+      render();
+    }
     if (view.layout_dirty()) {  // a formula was measured: refresh the layout once
       view.relayout();
       needs_frame = true;

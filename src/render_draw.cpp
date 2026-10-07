@@ -69,10 +69,14 @@ void DocView::draw_line(Screen& scr, int x0, int y0, int w, const Line& line, in
     case Line::Code:
     case Line::Text:
     default: {
-      for (int bcol : line.bars)
-        if (bcol >= 0)
-          scr.put(x0 + bcol, sy, 0x2502,
-                  line.bars_custom ? line.bar_rgb : theme_.quote_bar, theme_.bg);
+      for (size_t bi = 0; bi < line.bars.size(); bi++) {
+        int bcol = line.bars[bi];
+        if (bcol < 0) continue;
+        RGB bc = bi < line.bar_rgbs.size()
+                     ? line.bar_rgbs[bi]
+                     : (line.bars_custom ? line.bar_rgb : theme_.quote_bar);
+        scr.put(x0 + bcol, sy, 0x2502, bc, theme_.bg);
+      }
       if (!line.marker.empty())  // dimmed "#" before a heading
         scr.put_str(x0 + 1, sy, line.marker, theme_.muted, theme_.bg, A_DIM);
       for (const Run& r : line.runs) {
@@ -120,8 +124,11 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
   }
   CodeHighlight hl = theme_.syntax ? highlight_code(b.code, b.lang, theme_) : CodeHighlight();
   int text_x = frame_x + 2;
+  // Luogu's editor shows the line-number plugin by default, so Luogu documents
+  // get gutters without asking; everybody else opts in with --line-numbers.
+  bool nums = opt_.show_line_numbers || doc_.luogu;
   int line_no_w = 0;
-  if (opt_.show_line_numbers) {
+  if (nums) {
     int nlines = (int)split_lines(b.code).size();
     line_no_w = (int)std::to_string(nlines).size() + 2;
   }
@@ -143,7 +150,7 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
     if (lbg.r != bg.r || lbg.g != bg.g || lbg.b != bg.b)
       for (int xx = frame_x + 1; xx < frame_x + frame_w - 1; xx++)
         scr.put(xx, yy, ' ', theme_.code_fg, lbg);
-    if (opt_.show_line_numbers && l.code_col == 0) {
+    if (nums && l.code_col == 0) {
       std::string num = fmt("%*d ", line_no_w - 1, l.code_index + 1);
       scr.put_str(text_x, yy, num, theme_.muted, lbg, A_DIM);
     }
@@ -351,7 +358,11 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
         int vis_rows = std::min(a->rows, h - sy2);
         if (vis_rows <= 0) continue;          // wholly below the fold
         if (vis_rows * chh < vis) vis = vis_rows * chh;
-        if (clip || vis != a->px_h) a = sub_variant(*a, clip, vis);
+        // Kitty can crop at placement time (source rectangle), so the full
+        // bitmap is transmitted ONCE and edge cuts cost nothing; every other
+        // protocol still gets a cached sub-bitmap per cut.
+        bool kitty_src = term_ && term_->caps.gfx == GfxProto::Kitty && (clip || vis != a->px_h);
+        if ((clip || vis != a->px_h) && !kitty_src) a = sub_variant(*a, clip, vis);
         PlacedImage im;
         im.x = x0 + opt_.content_margin + std::max(0, (content_w_ - a->cols) / 2);
         im.y = sy2;
@@ -361,6 +372,7 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
         im.px_h = a->px_h;
         im.png = &a->png;
         im.rgba = &a->rgba;
+        if (kitty_src) { im.src_x = 0; im.src_y = clip; im.src_w = a->px_w; im.src_h = vis; }
         if (term_ && term_->caps.gfx == GfxProto::Sixel) {
           im.cols = a->cols;
           im.rows = a->rows;
@@ -401,16 +413,24 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
             scr.put_str(x0 + r.x, sy, "\u25a1", theme_.muted, theme_.bg);
             continue;
           }
+          bool kitty_src = term_ && term_->caps.gfx == GfxProto::Kitty;
+          int src_y = 0, src_h = a->px_h;
           if (top_px_screen < 0) {
             // cut off what the viewport top hides and show the rest
             int clip = -top_px_screen;
-            a = sub_variant(*a, clip, a->px_h - clip);
+            if (kitty_src) { src_y = clip; src_h -= clip; }
+            else a = sub_variant(*a, clip, a->px_h - clip);
             screen_y = 0;
             sub = 0;
           }
-          int vis_rows = std::min(a->rows, h - screen_y);            // cut at the bottom
+          int avail_rows = kitty_src ? (src_h + chh - 1) / chh : a->rows;
+          int vis_rows = std::min(avail_rows, h - screen_y);            // cut at the bottom
           if (vis_rows <= 0) continue;
-          if (vis_rows * chh < a->px_h) a = sub_variant(*a, 0, vis_rows * chh);
+          if (kitty_src) {
+            if (vis_rows * chh < src_h) src_h = vis_rows * chh;
+          } else if (vis_rows * chh < a->px_h) {
+            a = sub_variant(*a, 0, vis_rows * chh);
+          }
           PlacedImage im;
           im.x = x0 + r.x;
           im.y = screen_y;
@@ -424,9 +444,12 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
           // image 1:1 instead of rescaling it (which is what made formulas look
           // soft - a formula used to be squeezed into a single cell).
           im.cols = a->cols;
-          im.rows = a->rows;
+          im.rows = kitty_src ? src_h / chh : a->rows;
           im.sub_x = 0;
           im.sub_y = sub;
+          if (kitty_src && (src_y > 0 || src_h < a->px_h)) {
+            im.src_x = 0; im.src_y = src_y; im.src_w = a->px_w; im.src_h = src_h;
+          }
           images_.push_back(im);
         }
       }

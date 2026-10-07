@@ -46,8 +46,11 @@ self-contained binary.
   `::cute-table{three}` / `::cute-table{tuack[=N]}` table styles, `^`/`<`/`>`
   table cell merging, ```` ```cpp lines=5-6,11 ```` code line highlights, and
   the Luogu convention that a fence without a language tag means C++
-  (`plain`/`plaintext` turns highlighting off). Documents that use no
-  directives keep their previous behaviour.
+  (`plain`/`plaintext` turns highlighting off), line-number gutters in code
+  blocks of Luogu documents, formulas inside callout titles
+  (`:::info[$x^2$ …]`), per-level coloured bars for nested callouts, and a
+  readable (non-dimmed) `:::epigraph`. Documents that use no directives keep
+  their previous behaviour.
 * **Forgiving with generated Markdown.** Files that came out of a generator
   instead of somebody's hands are recognised and repaired before parsing:
   * *HTML-escaped sources* ("copy as markdown", CMS exports): every Markdown

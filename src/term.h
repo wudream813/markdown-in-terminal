@@ -111,6 +111,11 @@ struct PlacedImage {
   std::string key;         // content id used for caching
   int px_w = 0, px_h = 0;
   int sub_x = 0, sub_y = 0;                    // sub-cell pixel offset (kitty)
+  // Source crop in pixels (kitty placement x,y,w,h).  Zero src_h means "the
+  // whole image".  Used instead of re-transmitting a clipped bitmap when a
+  // picture is cut by a viewport edge: the full image stays cached under one
+  // id and the placement itself shows only the visible rows.
+  int src_x = 0, src_y = 0, src_w = 0, src_h = 0;
   const std::vector<uint8_t>* png = nullptr;   // encoded PNG bytes (kitty / iTerm2)
   const std::vector<uint8_t>* rgba = nullptr;  // raw RGBA, px_w*px_h*4 (sixel)
 };
@@ -188,7 +193,7 @@ class Terminal {
   int frame_no_ = 0;
 
   std::string kitty_transmit(int id, const std::vector<uint8_t>& png);
-  std::string kitty_place(int id, int cols, int rows, int sub_x, int sub_y);
+  std::string kitty_place(int id, const PlacedImage& im, int cols, int rows);
   std::string kitty_delete_all_placements();
   std::string iterm_image(const PlacedImage& im, int px_x, int px_y);
   std::string sixel_image(const PlacedImage& im);
