@@ -1,0 +1,87 @@
+# Builds the binaries for every supported platform and publishes a GitHub
+# Release whenever a version tag (v*) is pushed:
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# The build is plain `make` — no cmake, no package manager.  The JS/KaTeX
+# assets are pre-generated and committed (src/generated), so CI never needs
+# node; `touch` keeps make from re-embedding them on checkout timestamps.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-amd64
+          - os: macos-latest
+            target: macos-arm64
+          - os: ubuntu-latest
+            target: win64
+            mingw: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW-w64 cross compiler
+        if: matrix.mingw
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq g++-mingw-w64-x86-64
+
+      - name: Build
+        run: |
+          touch src/generated/assets_js.cpp
+          JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+          if [ "${{ matrix.mingw }}" = "true" ]; then
+            make windows -j"$JOBS"
+            V="${GITHUB_REF_NAME#v}"
+            STAGE="mdt-$V-win64"
+            mkdir -p "$STAGE/demo"
+            cp build/win/mdt.exe README.md "$STAGE/"
+            cp demo/demo.md demo/logo.png "$STAGE/demo/"
+            zip -qr "mdt-$V-win64.zip" "$STAGE"
+            cp build/win/mdt.exe mdt-win64.exe
+          else
+            make -j"$JOBS"
+            cp build/mdt "mdt-${{ matrix.target }}"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            mdt-${{ matrix.target }}
+            mdt-win64.exe
+            *.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Make binaries executable
+        run: chmod +x dist/mdt-linux-amd64 dist/mdt-macos-arm64 2>/dev/null || true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
