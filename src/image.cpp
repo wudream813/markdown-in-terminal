@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <tuple>   // libc++'s <map> needs std::forward_as_tuple (Xcode 15+)
 #include <map>
 #include <memory>
 #include <mutex>

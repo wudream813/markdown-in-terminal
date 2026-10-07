@@ -1,5 +1,6 @@
 // render.h : document layout + drawing (text grid) with graphics overlays.
 #pragma once
+#include <tuple>   // libc++'s <map> needs std::forward_as_tuple (Xcode 15+)
 #include <map>
 #include <tuple>
 #include <memory>

@@ -1,6 +1,7 @@
 // term.h : terminal capability probing, cell framebuffer, graphics protocols.
 #pragma once
 #include <cstdint>
+#include <tuple>   // libc++'s <map> needs std::forward_as_tuple (Xcode 15+)
 #include <map>
 #include <string>
 #include <vector>

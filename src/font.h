@@ -1,5 +1,6 @@
 // font.h : small TrueType text rasteriser used by --screenshot (pure stb_truetype).
 #pragma once
+#include <tuple>   // libc++'s <map> needs std::forward_as_tuple (Xcode 15+)
 #include <map>
 #include <string>
 #include <vector>

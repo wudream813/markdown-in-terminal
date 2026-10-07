@@ -51,6 +51,8 @@ jobs:
           # fonts-dejavu-core: wine ships no fonts of its own, and mdt needs
           # one for --screenshot (tests/windows.sh seeds the wine prefix)
           sudo apt-get install -y --no-install-recommends mingw-w64 wine64 zip file fonts-dejavu-core
+      - name: Native build (the wine suite diffs against ./build/mdt)
+        run: make -j"$(nproc)"
       - name: Cross compile (x86-64)
         run: make windows -j"$(nproc)"
       - name: Cross compile (32 bit, compile check only)

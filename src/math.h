@@ -5,6 +5,7 @@
 // needed at run time - everything lives inside the binary.
 // Engine 2: a plain Unicode transcription, used when the JS engine is absent.
 #pragma once
+#include <tuple>   // libc++'s <map> needs std::forward_as_tuple (Xcode 15+)
 #include <map>
 #include <memory>
 #include <string>
