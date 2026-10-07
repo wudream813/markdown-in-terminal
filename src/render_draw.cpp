@@ -39,6 +39,9 @@ std::string DocView::plain_text() const {
       case Block::CodeBlock: out += "```" + b.lang + "\n" + b.code + "\n```\n\n"; break;
       case Block::MathBlock: out += "$$\n" + b.code + "\n$$\n\n"; break;
       case Block::Hr: out += "---\n\n"; break;
+      case Block::Directive:
+        if (!b.dir_leaf && !b.dir_label.empty()) { out += b.dir_label; out += "\n"; }
+        break;
       case Block::Quote: out += "> "; break;
       case Block::List: out += "- "; break;
       default: break;
@@ -67,7 +70,9 @@ void DocView::draw_line(Screen& scr, int x0, int y0, int w, const Line& line, in
     case Line::Text:
     default: {
       for (int bcol : line.bars)
-        if (bcol >= 0) scr.put(x0 + bcol, sy, 0x2502, theme_.quote_bar, theme_.bg);
+        if (bcol >= 0)
+          scr.put(x0 + bcol, sy, 0x2502,
+                  line.bars_custom ? line.bar_rgb : theme_.quote_bar, theme_.bg);
       if (!line.marker.empty())  // dimmed "#" before a heading
         scr.put_str(x0 + 1, sy, line.marker, theme_.muted, theme_.bg, A_DIM);
       for (const Run& r : line.runs) {
@@ -124,9 +129,23 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
     if (l.kind != Line::Code || l.code_index < 0) continue;  // borders have index -1/-2
     int yy = top + l.row;
     if (yy >= top + rows - 1) break;
+    // Luogu "```cpp lines=5-6,11": the listed source lines get a warm tint
+    RGB lbg = bg;
+    if (!b.hl_ranges.empty()) {
+      int n1 = l.code_index + 1;
+      for (const auto& rg : b.hl_ranges)
+        if (n1 >= rg.first && n1 <= rg.second) {
+          lbg = RGB{(uint8_t)std::min(255, bg.r + 26), (uint8_t)std::min(255, bg.g + 21),
+                    (uint8_t)std::min(255, bg.b + 8)};
+          break;
+        }
+    }
+    if (lbg.r != bg.r || lbg.g != bg.g || lbg.b != bg.b)
+      for (int xx = frame_x + 1; xx < frame_x + frame_w - 1; xx++)
+        scr.put(xx, yy, ' ', theme_.code_fg, lbg);
     if (opt_.show_line_numbers && l.code_col == 0) {
       std::string num = fmt("%*d ", line_no_w - 1, l.code_index + 1);
-      scr.put_str(text_x, yy, num, theme_.muted, bg, A_DIM);
+      scr.put_str(text_x, yy, num, theme_.muted, lbg, A_DIM);
     }
     const std::string& text = l.code_text;
     int x = text_x + line_no_w;
@@ -142,7 +161,7 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
         RGB c = hl.colors[(size_t)l.code_index][src_off];
         if (c.r || c.g || c.b) fg = c;
       }
-      if (x + cwid <= frame_x + frame_w - 1) scr.put(x, yy, cp, fg, bg);
+      if (x + cwid <= frame_x + frame_w - 1) scr.put(x, yy, cp, fg, lbg);
       x += cwid;
     }
   }
@@ -150,54 +169,94 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
 
 void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockLayout& bl) {
   (void)w; (void)h;
+  const Block& b = doc_.blocks[(size_t)bl.block];
+  // Luogu cute-table styles: "three" = booktabs (heavy top/bottom, thin header
+  // rule, no verticals), "tuack" = booktabs plus thin verticals and, with
+  // tuack=N, a heavy vertical rule after column N (1-based).
+  const bool three = b.table_style == "three";
+  const bool tuack = b.table_style == "tuack";
+  const int heavy = tuack ? b.table_style_arg : 0;
   auto border_run = [&](int x, int yy, int n, uint32_t cp) {
     for (int k = 0; k < n; k++) scr.put(x + k, yy, cp, theme_.table_border, theme_.bg);
+  };
+  // merge marker of column c in the source row a border line touches:
+  // which 0 = first row (top border), 1 = last row (bottom border),
+  // 2 = first body row (the rule under the header)
+  auto row_merge = [&](int which, int c) -> int {
+    if (b.rows.empty() || c < 0) return 0;
+    size_t r = 0;
+    if (which == 1) r = b.rows.size() - 1;
+    else if (which == 2) {
+      while (r < b.rows.size() && !b.rows[r].empty() && b.rows[r][0].header) r++;
+    }
+    if (r >= b.rows.size() || c >= (int)b.rows[r].size()) return 0;
+    return b.rows[r][(size_t)c].merge;
   };
   for (const Line& l : bl.lines) {
     if (l.kind != Line::Table || l.cells.empty()) continue;
     int yy = y0 + bl.row + l.row;
     int lx = x0 + l.x;  // nested tables start further right
-    if (l.code_index == 3) {  // rule under the header row
-      scr.put(lx, yy, 0x251C, theme_.table_border, theme_.bg);
-      for (auto& tc : l.cells) {
-        border_run(lx + 1 + tc.x, yy, tc.width, 0x2500);
-        scr.put(lx + 1 + tc.x + tc.width, yy, 0x253C, theme_.table_border, theme_.bg);
+    int span = 1 + l.cells.back().x + l.cells.back().width + 1;  // border columns
+
+    if (l.code_index == 0 || l.code_index == 2 || l.code_index == 3) {  // border / header rule
+      if (three || tuack) {
+        uint32_t cp = l.code_index == 3 ? 0x2500 : 0x2501;  // ─ under the header, ━ top/bottom
+        border_run(lx, yy, span, cp);
+        continue;
       }
-      scr.put(lx + 1 + l.cells.back().x + l.cells.back().width, yy, 0x2524, theme_.table_border, theme_.bg);
-      continue;
-    }
-    if (l.code_index == 0 || l.code_index == 2) {  // top / bottom border
-      uint32_t l_c = l.code_index == 0 ? 0x250C : 0x2514;
-      uint32_t m_c = l.code_index == 0 ? 0x252C : 0x2534;
-      uint32_t r_c = l.code_index == 0 ? 0x2510 : 0x2518;
+      int which = l.code_index == 0 ? 0 : l.code_index == 2 ? 1 : 2;
+      uint32_t l_c, m_c, r_c;
+      if (l.code_index == 0)      { l_c = 0x250C; m_c = 0x252C; r_c = 0x2510; }
+      else if (l.code_index == 2) { l_c = 0x2514; m_c = 0x2534; r_c = 0x2518; }
+      else                        { l_c = 0x251C; m_c = 0x253C; r_c = 0x2524; }
       scr.put(lx, yy, l_c, theme_.table_border, theme_.bg);
-      for (auto& tc : l.cells) {
-        border_run(lx + 1 + tc.x, yy, tc.width, 0x2500);
-        scr.put(lx + 1 + tc.x + tc.width, yy, m_c, theme_.table_border, theme_.bg);
+      for (size_t ci = 0; ci < l.cells.size(); ci++) {
+        const TCell& tc = l.cells[ci];
+        // a "^" cell in the row below continues through the header rule
+        bool through = which == 2 && row_merge(2, (int)ci) == 1;
+        border_run(lx + 1 + tc.x, yy, tc.width, through ? (uint32_t)' ' : (uint32_t)0x2500);
+        // "<"/">" merges remove the junction between two columns
+        bool open = row_merge(which, (int)ci + 1) == 2 || row_merge(which, (int)ci) == 3;
+        scr.put(lx + 1 + tc.x + tc.width, yy, open ? 0x2500 : m_c, theme_.table_border,
+                theme_.bg);
       }
-      scr.put(lx + 1 + l.cells.back().x + l.cells.back().width, yy, r_c, theme_.table_border, theme_.bg);
+      scr.put(lx + 1 + l.cells.back().x + l.cells.back().width, yy, r_c, theme_.table_border,
+              theme_.bg);
       continue;
     }
+
     // content row
-    for (const TCell& tc : l.cells) {
+    for (size_t ci = 0; ci < l.cells.size(); ci++) {
+      const TCell& tc = l.cells[ci];
       int x = lx + 1 + tc.x;
       RGB border = theme_.table_border;
       RGB fg = tc.header ? theme_.table_header_fg : theme_.fg;
       RGB bg = (tc.header && !theme_.flat_bg) ? theme_.table_header_bg : theme_.bg;
-      scr.put(x - 1, yy, 0x2502, border, theme_.bg);
+      // separator to the left of this cell: blank when it continues the cell
+      // on the other side ("<" here, ">" in the neighbour)
+      bool open_left = tc.merge == 2 || (ci > 0 && l.cells[ci - 1].merge == 3);
+      uint32_t sep = three ? (uint32_t)' '
+                   : (tuack && heavy > 0 && (int)ci == heavy) ? 0x2503
+                                                              : 0x2502;
+      scr.put(x - 1, yy, open_left ? (uint32_t)' ' : sep, border, theme_.bg);
       for (int k = 0; k < tc.width; k++) scr.put(x + k, yy, ' ', fg, bg);
       int tw = str_width(tc.text);
       int pad = tc.width - tw;
       int off = tc.align == Align::Right ? pad : (tc.align == Align::Center ? pad / 2 : 0);
-      if (pad < 0) { off = 0; }
-      else if (off > 0) off = off;  // keep some breathing room on the left
+      if (pad < 0) off = 0;
       scr.put_str(x + off, yy, tc.text, fg, bg, tc.header ? A_BOLD : 0);
-      scr.put(x + tc.width, yy, 0x2502, border, theme_.bg);
       // formulas in this cell are drawn as bitmaps over their transcription
       if (!tc.pieces.empty())
         place_cell_math(&scr, x + off, tc.width, yy, tc, std::max(1, cell_w()),
                         std::max(1, cell_h()), 0, bg);
     }
+    // right edge of the box
+    int rx = lx + 1 + l.cells.back().x + l.cells.back().width;
+    bool open_right = l.cells.back().merge == 3;
+    uint32_t sep = three ? (uint32_t)' '
+                 : (tuack && heavy > 0 && (int)l.cells.size() == heavy) ? 0x2503
+                                                                        : 0x2502;
+    scr.put(rx, yy, open_right ? (uint32_t)' ' : sep, theme_.table_border, theme_.bg);
   }
 }
 

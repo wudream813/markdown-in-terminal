@@ -157,6 +157,9 @@ python3 tools/async_image_test.py "$EXE" "$WINE" 2>/dev/null || \
 echo "== mouse + scrollbar (pty) =="
 python3 tools/mouse_test.py "$EXE" "$WINE" || exit 1
 
+echo "== Luogu directives =="
+python3 tools/luogu_test.py "$EXE" "$WINE" || exit 1
+
 echo "== console mode (pty) ="
 if command -v python3 >/dev/null 2>&1; then
   python3 tools/wine_pty_test.py "$EXE" "$WINE" || exit 1

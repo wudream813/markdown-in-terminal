@@ -38,6 +38,16 @@ self-contained binary.
   tracks live (button-event motion reporting, mode 1002: every motion event
   between press and release moves the view, not only the release), and
   clicking links/headings/outline entries works as before.
+* **Luogu (洛谷) dialect.** On top of GFM, mdt understands the
+  remark-directive syntax of the Luogu article editor: `:::info`,
+  `:::success`, `:::warning` and `:::error` callouts (coloured bar, bold
+  title from `[...]`, nesting via longer colon fences), `:::align{left|
+  center|right}`, Codeforces-style `:::epigraph[——author]`, the
+  `::cute-table{three}` / `::cute-table{tuack[=N]}` table styles, `^`/`<`/`>`
+  table cell merging, ```` ```cpp lines=5-6,11 ```` code line highlights, and
+  the Luogu convention that a fence without a language tag means C++
+  (`plain`/`plaintext` turns highlighting off). Documents that use no
+  directives keep their previous behaviour.
 * **Forgiving with generated Markdown.** Files that came out of a generator
   instead of somebody's hands are recognised and repaired before parsing:
   * *HTML-escaped sources* ("copy as markdown", CMS exports): every Markdown
@@ -404,6 +414,11 @@ were used (`+entities`, `+escapes`, `+loose`, `+clean`).
   10 1703+ conhost); it turns VT processing on itself, so `cmd.exe` works too.
   Kitty/iTerm2 protocols are a POSIX-terminal thing — on Windows you get sixel
   (Windows Terminal 1.22+, WezTerm, mintty) or the Unicode maths fallback.
+* Luogu callouts are always shown expanded (the `{open}` attribute is a
+  web-editor concern); Bilibili video embeds are not played — the reader is
+  text and pictures only. `^`/`<`/`>` merge markers and the C++ default for
+  bare fences only apply to documents that use directive syntax, so ordinary
+  Markdown keeps its usual meaning.
 * Mouse input is parsed from both SGR (`\x1b[<b;x;yM`) and X10 (`\x1b[M`) reports;
   the wheel scrolls three lines per notch, the scrollbar jumps proportionally.
 * Resizes: POSIX uses SIGWINCH, Windows polls `GetConsoleScreenBufferInfo`

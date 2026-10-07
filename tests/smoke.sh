@@ -202,6 +202,9 @@ python3 tools/mouse_test.py "$BIN"
 echo "== top-edge clipping + synchronized frames (pty) =="
 python3 tools/scroll_clip_test.py "$BIN" || exit 1
 
+echo "== Luogu directives (callouts / align / epigraph / cute-table / merges / lines=) =="
+python3 tools/luogu_test.py "$BIN" || exit 1
+
 echo "== protocols (pty) =="
 python3 tools/pty_test.py
 

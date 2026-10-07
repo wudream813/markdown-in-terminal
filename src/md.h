@@ -27,16 +27,31 @@ struct TableCell {
   std::vector<Span> spans;
   Align align = Align::Left;
   bool header = false;
+  // Luogu table merging (rehype-extend-table): a cell whose whole content is
+  // one of these markers continues a neighbour instead of holding text.
+  int merge = 0;   // 0 none, 1 = "^" (rowspan, continues the cell above),
+                   // 2 = "<" (colspan, continues the cell to the left),
+                   // 3 = ">" (colspan, continues the cell to the right)
 };
 
 struct Block;
 
 struct Block {
-  enum Type { Paragraph, Heading, CodeBlock, Quote, List, Table, Hr, Html, MathBlock, Image, Definition } type = Paragraph;
+  enum Type { Paragraph, Heading, CodeBlock, Quote, List, Table, Hr, Html, MathBlock, Image, Definition,
+              // Luogu remark-directive block: :::name[label]{attrs} ... :::
+              Directive } type = Paragraph;
   int level = 0;                  // heading level / quote nesting depth
   std::vector<Span> spans;        // paragraph, heading
   std::string code, lang;         // code block
   bool code_is_math = false;
+  std::vector<std::pair<int, int>> hl_ranges;  // Luogu "```cpp lines=5-6,11" (1-based, inclusive)
+  // directive (Luogu): :::name[label]{attrs} / ::name[label]{attrs}
+  std::string dir_name, dir_label, dir_attrs;
+  bool dir_leaf = false;          // "::name" (exactly two colons, own line)
+  int dir_colons = 3;             // colon count of the opening fence
+  // table style from a preceding "::cute-table{...}" leaf directive
+  std::string table_style;        // "", "three", "tuack"
+  int table_style_arg = 0;        // tuack=N: the heavy vertical rule sits after column N
   // list
   bool ordered = false;
   int start_num = 1;
@@ -67,6 +82,7 @@ struct MdDocument {
   int code_gaps_collapsed = 0;      // code blocks with every line double-spaced
   int code_refs_decoded = 0;        // code blocks whose HTML references were decoded
   bool loose_markers = false;       // "#标题" / "-项目" style markers were accepted
+  bool luogu = false;               // remark-directive syntax seen: a Luogu document
   std::string title;               // first h1 if present
   std::vector<LinkRef> links;      // all links in document order
   std::vector<std::pair<int, std::string>> outline;  // (block index, heading text)

@@ -765,6 +765,7 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
           tc.width = w[c];
           tc.align = r[(size_t)c].align;
           tc.header = r[(size_t)c].header;
+          tc.merge = r[(size_t)c].merge;
           tc.text = lno < (int)cell_lines[c].size() ? cell_lines[c][lno] : "";
           // where the formulas sit inside that text, in columns
           int col = 0;
@@ -829,6 +830,20 @@ void DocView::wrap_code_line(const std::string& line, int width,
   }
   out.emplace_back(line.substr(start), (int)start);
 }
+
+namespace {
+// The four Luogu callout severities and their bar colours (tokyo-night-ish,
+// matching the palette the themes already use).
+bool is_callout_name(const std::string& n) {
+  return n == "info" || n == "success" || n == "warning" || n == "error";
+}
+RGB callout_color(const std::string& n) {
+  if (n == "success") return RGB{158, 206, 106};
+  if (n == "warning") return RGB{224, 175, 104};
+  if (n == "error")   return RGB{247, 118, 142};
+  return RGB{126, 197, 255};  // info
+}
+}  // namespace
 
 void DocView::layout_blocks() {
   content_w_ = std::max(20, cols_ - 2 * opt_.content_margin);
@@ -1191,6 +1206,11 @@ void DocView::layout_blocks() {
         break;
       }
 
+      case Block::Directive: {
+        directive_layout(bl, b, row, 1, std::vector<int>{}, false, RGB{0, 0, 0});
+        row += opt_.paragraph_gap;
+        break;
+      }
       case Block::Hr: {
         Line l;
         l.kind = Line::Rule;
@@ -1332,6 +1352,226 @@ void DocView::quote_lines(std::vector<Line>& out, const Block& qb, int indent,
   for (Line& l : lines) {
     l.bars = bars;
     out.push_back(l);
+  }
+}
+
+// One Luogu directive container: callout (coloured bar + bold title),
+// align{left|center|right}, epigraph (right-aligned, dimmed, attribution) or
+// an unknown name (content passes through unchanged).  Nesting works because
+// children go through directive_child_layout, which calls back into here.
+void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int indent,
+                               const std::vector<int>& bars, bool custom, RGB bar_rgb) {
+  if (b.dir_leaf) return;
+  bool callout = is_callout_name(b.dir_name);
+  RGB c = callout ? callout_color(b.dir_name) : bar_rgb;
+  bool cu = custom || callout;
+  if (callout && !b.dir_label.empty()) {
+    Line l;
+    Run r;
+    r.text = b.dir_label;
+    r.x = indent;
+    r.width = str_width(r.text);
+    r.style.bold = true;
+    r.style.has_color = true;
+    r.style.color = c;
+    l.runs.push_back(r);
+    l.bars = bars;
+    l.bars_custom = cu;
+    l.bar_rgb = c;
+    l.row = row - bl.row;
+    bl.lines.push_back(l);
+    row += 1;
+  }
+  std::vector<int> bars2 = bars;
+  int ind2 = indent;
+  if (callout) { bars2.push_back(indent); ind2 = indent + 2; }
+
+  std::string a = to_lower(b.dir_attrs);
+  Align al = Align::Left;
+  bool shift = false, epi = false;
+  if (b.dir_name == "align") {
+    al = a == "center" ? Align::Center : a == "right" ? Align::Right : Align::Left;
+    shift = al != Align::Left;
+  } else if (b.dir_name == "epigraph") {
+    al = Align::Right;
+    shift = epi = true;
+  }
+
+  size_t first = bl.lines.size();
+  static const std::vector<Block> no_blocks;
+  const std::vector<Block>& sub = b.items.empty() ? no_blocks : b.items[0];
+  for (const Block& sb : sub) directive_child_layout(bl, sb, row, ind2, bars2, cu, c);
+
+  if (shift) {
+    // move each built line so its content sits centred / right-aligned inside
+    // the content width
+    for (size_t k = first; k < bl.lines.size(); k++) {
+      Line& l = bl.lines[k];
+      if (l.runs.empty()) continue;
+      int minx = 1 << 30, maxx = 0;
+      for (const auto& r : l.runs) {
+        if (r.width <= 0 && r.text.empty()) continue;
+        minx = std::min(minx, r.x);
+        maxx = std::max(maxx, r.x + r.width);
+      }
+      if (minx > maxx) continue;
+      int delta = al == Align::Center ? (content_w_ - (maxx - minx)) / 2 - minx
+                                      : (content_w_ - 1) - maxx;
+      for (auto& r : l.runs) r.x += delta;
+    }
+  }
+  if (epi) {
+    for (size_t k = first; k < bl.lines.size(); k++)
+      for (auto& r : bl.lines[k].runs) {
+        r.style.dim = true;
+        if (!r.style.has_color) { r.style.has_color = true; r.style.color = theme_.muted; }
+      }
+    if (!b.dir_label.empty()) {
+      Line l;
+      Run r;
+      r.text = b.dir_label;
+      r.width = str_width(r.text);
+      r.x = std::max(1, content_w_ - 1 - r.width);
+      r.style.has_color = true;
+      r.style.color = theme_.muted;
+      r.style.dim = true;
+      l.runs.push_back(r);
+      l.bars = bars;
+      l.bars_custom = custom;
+      l.bar_rgb = bar_rgb;
+      l.row = row - bl.row;
+      bl.lines.push_back(l);
+      row += 1;
+    }
+  }
+}
+
+// One child block inside a directive container.  Everything ends up as lines
+// of the SAME BlockLayout (tables go through layout_table, formulas through
+// build_lines so their bitmaps reserve rows just like everywhere else).
+void DocView::directive_child_layout(BlockLayout& bl, const Block& sb, int& row, int indent,
+                                     const std::vector<int>& bars, bool custom, RGB bar_rgb) {
+  auto stamp = [&](std::vector<Line>& lines) {
+    for (auto& l : lines) {
+      if (!l.bars.empty() || !bars.empty()) {
+        if (l.bars.empty()) l.bars = bars;
+        if (custom) { l.bars_custom = true; l.bar_rgb = bar_rgb; }
+      }
+      l.row = row - bl.row;
+      bl.lines.push_back(l);
+      row += l.rows;
+    }
+  };
+  switch (sb.type) {
+    case Block::Directive:
+      directive_layout(bl, sb, row, indent, bars, custom, bar_rgb);
+      return;
+    case Block::Heading: {
+      Span base;
+      base.bold = true;
+      base.has_color = true;
+      base.color = theme_.heading[std::min(6, std::max(1, sb.level))];
+      std::vector<Line> lines;
+      build_lines(sb.spans, indent, content_w_ - indent, base, lines);
+      stamp(lines);
+      return;
+    }
+    case Block::Paragraph:
+    case Block::Html: {
+      std::vector<Line> lines;
+      build_lines(sb.spans, indent, content_w_ - indent, Span{}, lines);
+      stamp(lines);
+      return;
+    }
+    case Block::CodeBlock: {
+      Span base;
+      base.has_color = true;
+      base.color = theme_.code_fg;
+      int idx = 0;
+      for (auto& cl : split_lines(sb.code)) {
+        Line l;
+        l.kind = Line::Code;
+        l.code_index = idx++;
+        l.code_text = cl;
+        Run r;
+        r.text = cl;
+        r.x = indent;
+        r.width = str_width(cl);
+        r.style = base;
+        l.runs.push_back(r);
+        std::vector<Line> one{std::move(l)};
+        stamp(one);
+      }
+      return;
+    }
+    case Block::Hr: {
+      std::vector<Line> lines(1);
+      lines[0].kind = Line::Rule;
+      stamp(lines);
+      return;
+    }
+    case Block::MathBlock: {
+      Span ms;
+      ms.kind = Span::Math;
+      ms.tex = sb.code;
+      ms.display_math = true;
+      std::vector<Line> lines;
+      build_lines(std::vector<Span>{ms}, indent, content_w_ - indent, Span{}, lines);
+      stamp(lines);
+      return;
+    }
+    case Block::Table:
+      layout_table(sb, indent, content_w_ - indent, bl, row);
+      return;
+    case Block::Quote: {
+      std::vector<Line> lines;
+      quote_lines(lines, sb, indent, bars);
+      if (custom)
+        for (auto& l : lines) { l.bars_custom = true; l.bar_rgb = bar_rgb; }
+      stamp(lines);
+      return;
+    }
+    case Block::List: {
+      int li = 0;
+      for (size_t k = 0; k < sb.items.size(); k++) {
+        bool task = k < sb.item_is_task.size() && sb.item_is_task[k];
+        bool checked = k < sb.item_checked.size() && sb.item_checked[k];
+        std::string marker = task ? (checked ? "[x] " : "[ ] ")
+                           : sb.ordered ? std::to_string(sb.start_num + li) + ". "
+                                        : "\u2022 ";
+        li++;
+        int mw = str_width(marker);
+        bool firstm = true;
+        for (const Block& ib : sb.items[k]) {
+          if (ib.type != Block::Paragraph && ib.type != Block::Html) {
+            directive_child_layout(bl, ib, row, indent + mw, bars, custom, bar_rgb);
+            firstm = false;
+            continue;
+          }
+          std::vector<Line> lines;
+          build_lines(ib.spans, indent + mw, content_w_ - indent - mw, Span{}, lines);
+          for (auto& l : lines) {
+            if (firstm) {
+              Run r;
+              r.text = marker;
+              r.x = indent;
+              r.width = mw;
+              r.style.has_color = true;
+              r.style.color = task ? (checked ? RGB{140, 195, 140} : theme_.muted)
+                                   : theme_.bullet;
+              l.runs.insert(l.runs.begin(), r);
+              firstm = false;
+            }
+            std::vector<Line> one{std::move(l)};
+            stamp(one);
+          }
+        }
+        if (firstm) row += 0;  // empty item: nothing to show
+      }
+      return;
+    }
+    default:
+      return;
   }
 }
 

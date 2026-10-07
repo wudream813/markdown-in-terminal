@@ -1233,6 +1233,29 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
         b.lang = info;
         size_t sp = b.lang.find_first_of(" \t{");
         if (sp != std::string::npos) b.lang = b.lang.substr(0, sp);
+        {
+          // Luogu line-highlight attribute: ```cpp lines=5-6,11 (also {lines=..})
+          size_t lp = info.find("lines=");
+          if (lp != std::string::npos && lp >= b.lang.size()) {
+            size_t q = lp + 6;
+            std::string spec;
+            while (q < info.size() && (isdigit((unsigned char)info[q]) || info[q] == '-' ||
+                                       info[q] == ','))
+              spec += info[q++];
+            size_t i2 = 0;
+            while (i2 < spec.size()) {
+              size_t cm = spec.find(',', i2);
+              std::string part = spec.substr(i2, cm == std::string::npos ? std::string::npos
+                                                                        : cm - i2);
+              i2 = cm == std::string::npos ? spec.size() : cm + 1;
+              if (part.empty()) continue;
+              size_t dash = part.find('-');
+              int a = atoi(part.c_str());
+              int z = dash == std::string::npos ? a : atoi(part.c_str() + dash + 1);
+              if (a > 0 && z >= a) b.hl_ranges.emplace_back(a, z);
+            }
+          }
+        }
         li_++;
         while (li_ < lines_.size()) {
           std::string lt = ltrim(lines_[li_]);
@@ -1328,6 +1351,66 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
       li_++;
       blocks.push_back(b);
       continue;
+    }
+
+    // ------------------------------------------- Luogu remark-directives ---
+    // ":::name[label]{attrs}" opens a container (at least three colons; a
+    // nested container uses MORE colons than its parent and is closed by a
+    // line of only its own colons).  "::name[label]{attrs}" alone on a line
+    // is a leaf directive (it styles the block below it, see the post-pass).
+    // Unknown container names render their content unchanged.
+    {
+      size_t ind = indent_of(line);
+      std::string t = ltrim(line);
+      size_t cn = 0;
+      while (cn < t.size() && t[cn] == ':') cn++;
+      if (ind <= 3 && cn >= 2 && cn < t.size() &&
+          (isalpha((unsigned char)t[cn]) || t[cn] == '_')) {
+        size_t p = cn;
+        while (p < t.size() && (isalnum((unsigned char)t[p]) || t[p] == '-' || t[p] == '_')) p++;
+        b.type = Block::Directive;
+        b.dir_name = to_lower(t.substr(cn, p - cn));
+        b.dir_colons = (int)cn;
+        std::string tail = t.substr(p);
+        if (!tail.empty() && tail[0] == '[') {
+          size_t close = tail.rfind(']');
+          if (close != std::string::npos && close > 0) {
+            b.dir_label = tail.substr(1, close - 1);
+            tail = tail.substr(close + 1);
+          }
+        }
+        tail = trim(tail);
+        if (!tail.empty() && tail[0] == '{') {
+          size_t close = tail.rfind('}');
+          if (close != std::string::npos && close > 0) b.dir_attrs = trim(tail.substr(1, close - 1));
+        }
+        li_++;
+        doc_->luogu = true;
+        if (cn == 2) {  // leaf directive
+          b.dir_leaf = true;
+          blocks.push_back(b);
+          continue;
+        }
+        std::vector<std::string> inner;
+        while (li_ < lines_.size()) {
+          std::string l2 = trim(lines_[li_]);
+          size_t c2 = 0;
+          while (c2 < l2.size() && l2[c2] == ':') c2++;
+          if (c2 >= cn && c2 == l2.size() && c2 >= 3) { li_++; break; }  // closing fence
+          inner.push_back(lines_[li_]);
+          li_++;
+        }
+        MarkdownParser sub;
+        sub.opt_ = opt_;
+        sub.loose_markers_ = loose_markers_;
+        sub.lines_ = inner;
+        sub.src_ = src_;
+        sub.doc_ = doc_;
+        sub.li_ = 0;
+        b.items.push_back(sub.parse_blocks(depth + 1));
+        blocks.push_back(b);
+        continue;
+      }
     }
 
     // ---------------------------------------------------------- blockquote -
@@ -1733,6 +1816,56 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
       doc.blocks = parse_blocks(0);
       doc.loose_markers = true;
     }
+  }
+
+  // ------------------------------------------------------ Luogu post-pass --
+  // - "::cute-table{...}" leaf styles the table right below it and disappears;
+  //   unknown leaf directives disappear too
+  // - in a document that uses directives a bare fence means C++ (the Luogu
+  //   editor default) and "plain"/"plaintext"/"text" means no highlighting
+  // - a table cell whose whole content is "^" / "<" / ">" is a merge marker
+  {
+    struct Post {
+      MdDocument& d;
+      void walk(std::vector<Block>& blocks) {
+        for (size_t i = 0; i < blocks.size();) {
+          Block& b = blocks[i];
+          if (b.type == Block::Directive && b.dir_leaf) {
+            if (b.dir_name == "cute-table" && i + 1 < blocks.size() &&
+                blocks[i + 1].type == Block::Table) {
+              Block& t = blocks[i + 1];
+              std::string a = b.dir_attrs;
+              size_t eq = a.find('=');
+              t.table_style = eq == std::string::npos ? a : trim(a.substr(0, eq));
+              if (eq != std::string::npos) t.table_style_arg = atoi(a.c_str() + eq + 1);
+              blocks.erase(blocks.begin() + (long)i);
+              continue;  // the table moved up to index i
+            }
+            blocks.erase(blocks.begin() + (long)i);
+            continue;
+          }
+          if (b.type == Block::CodeBlock && d.luogu) {
+            std::string low = to_lower(b.lang);
+            if (low.empty() && !b.code_is_math) b.lang = "cpp";
+            else if (low == "plain" || low == "plaintext" || low == "text" || low == "none")
+              b.lang.clear();
+          }
+          if (b.type == Block::Table && d.luogu) {
+            for (auto& r : b.rows)
+              for (auto& c : r) {
+                std::string t = trim(spans_plain_text(c.spans));
+                if (t == "^") c.merge = 1;
+                else if (t == "<") c.merge = 2;
+                else if (t == ">") c.merge = 3;
+                if (c.merge) c.spans.clear();
+              }
+          }
+          for (auto& sublist : b.items) walk(sublist);
+          i++;
+        }
+      }
+    } post{doc};
+    post.walk(doc.blocks);
   }
 
   // collect outline + links + title
