@@ -17,7 +17,7 @@ import sys
 import termios
 import time
 
-TIOCSWINSZ = 0x5414
+TIOCSWINSZ = getattr(termios, "TIOCSWINSZ", 0x5414)  # macOS/BSD differ from Linux
 ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b_G.*?\x1b\\|\x1b\]0;.*?\x07")
 
 

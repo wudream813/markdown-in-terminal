@@ -18,9 +18,10 @@ import select
 import signal
 import struct
 import sys
+import termios
 import time
 
-TIOCSWINSZ = 0x5414  # same value on Linux and the BSDs
+TIOCSWINSZ = getattr(termios, "TIOCSWINSZ", 0x5414)  # macOS/BSD use a different request code than Linux
 
 
 def set_size(fd, rows, cols):
