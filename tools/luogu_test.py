@@ -131,12 +131,12 @@ def main():
     check(fails, "48;2;50;47;39" in frame, "code lines 2-3,5 are highlighted")
 
     # ---- round-17 features (second fixture) ---------------------------------
-    def capture(path, rows=40, need=None):
+    def capture(path, rows=40, need=None, gfx="--gfx=none"):
         pid, fd = ptymod.fork()
         if pid == 0:
             env = dict(os.environ)
             env["TERM"] = "xterm-256color"
-            os.execvpe(argv[0], argv + ["--gfx=none", path], env)
+            os.execvpe(argv[0], argv + [gfx, path], env)
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, 100, 0, 0))
         buf = b""
         t0 = time.time()
@@ -198,6 +198,12 @@ def main():
     check(fails, "38;2;158;206;106;48;2;45;54;43" in frame3
           and "48;2;45;54;43" in frame3,
           "display-math title row carries the wash and the callout bar")
+    # sixel has no alpha: the formula bitmap must be composited over the wash
+    # (45,54,43 -> 18;21;17 percent) instead of the dark page background
+    frame3s = capture(fixture3, gfx="--gfx=sixel")
+    check(fails, re.search(r"#\d+;2;18;21;17", frame3s) is not None
+          and not re.search(r"#\d+;2;9;10;12", frame3s),
+          "sixel formula bitmap is composited over the title wash")
 
     if fails:
         print("luogu checks failed:", ", ".join(fails))

@@ -405,6 +405,7 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
           im.cols = a->cols;
           im.rows = a->rows;
         }
+        if (l.band) { im.comp_bg = l.band_bg; im.has_comp_bg = true; }
         images_.push_back(im);
       }
       if (l.kind == Line::Text) {
@@ -478,6 +479,7 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
           if (kitty_src && (src_y > 0 || src_h < a->px_h)) {
             im.src_x = 0; im.src_y = src_y; im.src_w = a->px_w; im.src_h = src_h;
           }
+          if (l.band) { im.comp_bg = l.band_bg; im.has_comp_bg = true; }
           images_.push_back(im);
         }
       }

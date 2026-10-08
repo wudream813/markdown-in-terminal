@@ -116,6 +116,11 @@ struct PlacedImage {
   // picture is cut by a viewport edge: the full image stays cached under one
   // id and the placement itself shows only the visible rows.
   int src_x = 0, src_y = 0, src_w = 0, src_h = 0;
+  // sixel has no alpha: transparent pixels are composited over this colour
+  // when the bitmap is encoded.  Pictures sitting on a callout title wash
+  // composite over the wash so the band shows through the formula.
+  RGB comp_bg{0, 0, 0};
+  bool has_comp_bg = false;
   const std::vector<uint8_t>* png = nullptr;   // encoded PNG bytes (kitty / iTerm2)
   const std::vector<uint8_t>* rgba = nullptr;  // raw RGBA, px_w*px_h*4 (sixel)
 };

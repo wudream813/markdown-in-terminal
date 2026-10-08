@@ -639,14 +639,16 @@ std::string Terminal::emit_images(const std::vector<PlacedImage>& imgs) {
     case GfxProto::Sixel: {
       for (auto& im : imgs) {
         if (!im.rgba) continue;
+        RGB cb = im.has_comp_bg ? im.comp_bg : image_bg;
         size_t h = hash_bytes(im.rgba->data(), im.rgba->size()) ^ ((size_t)im.px_w << 20) ^ im.px_h;
+        h ^= (size_t)cb.r * 0x9E3779B97F4A7C15ull + (size_t)cb.g * 0x517CC1B727220A95ull + cb.b;
         auto it = sixel_cache_.find(h);
         if (it != sixel_cache_.end()) {
           it->second.last_seen = frame_no_;
           out += fmt("\x1b[%d;%dH", im.y + 1, im.x + 1);
           out += it->second.payload;
         } else {
-          std::string payload = sixel_encode(im.rgba->data(), im.px_w, im.px_h, image_bg);
+          std::string payload = sixel_encode(im.rgba->data(), im.px_w, im.px_h, cb);
           SixelEntry e;
           e.payload = payload;
           e.last_seen = frame_no_;
