@@ -206,6 +206,7 @@ class DocView {
   Theme theme_;
   MarkdownParser inline_parser_;   // callout titles carry inline markup / maths
   RGB band_tint(RGB c) const;      // callout colour mixed towards the background
+  RGB draw_line_chrome(Screen& scr, int x0, int sy, const Line& line);
   RenderOptions opt_;
   std::string path_, base_dir_;
   int cols_ = 80, view_rows_ = 24, content_w_ = 78;

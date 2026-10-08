@@ -191,6 +191,14 @@ def main():
           and frame2.count("38;2;126;197;255;48;2;40;53;66") >= 2,
           "title formula row keeps the wash and the bar continues")
 
+    # ---- display maths in a callout title (third fixture) ------------------
+    fixture3 = os.path.normpath(os.path.join(os.path.dirname(fixture), "luogu3.md"))
+    frame3 = capture(fixture3)
+    # the formula line is a Line::Image: it still owes the wash and the bar
+    check(fails, "38;2;158;206;106;48;2;45;54;43" in frame3
+          and "48;2;45;54;43" in frame3,
+          "display-math title row carries the wash and the callout bar")
+
     if fails:
         print("luogu checks failed:", ", ".join(fails))
         return 1
