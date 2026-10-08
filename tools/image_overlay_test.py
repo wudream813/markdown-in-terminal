@@ -2,9 +2,10 @@
 """Images must not be drawn over the UI.
 
 Two rules are checked here:
-  * with the help panel open no image is transmitted or placed at all (the
-    non-kitty protocols cannot be erased cell by cell, so a formula left
-    underneath the panel stayed on screen and covered it);
+  * with the help panel open nothing is placed *under the box*: kitty crops
+    the visible remainder of a partially covered picture into source-rect
+    pieces, other protocols drop the covered picture - but pictures the box
+    does not touch stay on screen;
   * no image extends into the status bar.
 
     python3 tools/image_overlay_test.py ./build/mdt
@@ -54,7 +55,7 @@ def placements(blob):
     (0 when the terminal never reported its cell size - then the image is
     placed at its own pixel size)."""
     found = []
-    for m in re.finditer(rb"\x1b\[(\d+);(\d+)H\x1b_Ga=p,i=\d+,p=1(?:,c=(\d+),r=(\d+))?", blob):
+    for m in re.finditer(rb"\x1b\[(\d+);(\d+)H\x1b_Ga=p,i=\d+,p=\d+(?:,c=(\d+),r=(\d+))?", blob):
         row, _col, c, r = m.groups()
         found.append((int(row), int(c or 0), int(r or 0)))
     return found
@@ -81,11 +82,18 @@ except ChildProcessError:
 ok = True
 placed_doc = placements(doc_frames)
 print(f"   document: {len(placed_doc)} images placed")
-if placements(help_frames):
-    print(f"   FAIL {len(placements(help_frames))} images are drawn while the help panel is open")
+# help box at 80x24: 74x20 centred in the 23 page rows -> 1-based rows 2..21,
+# columns 4..77; a placement may not START inside that rectangle (crops of a
+# covered picture start outside it)
+HELP_R0, HELP_R1, HELP_C0, HELP_C1 = 2, 21, 4, 77
+bad_help = [p for p in placements(help_frames)
+            if HELP_R0 <= p[0] <= HELP_R1 and HELP_C0 <= p[1] <= HELP_C1]
+if bad_help:
+    print(f"   FAIL {len(bad_help)} placement(s) start under the help box: {bad_help[:4]}")
     ok = False
 else:
-    print("   ok   no image while the help panel is open")
+    print(f"   ok   nothing under the help box "
+          f"({len(placements(help_frames))} placement(s) outside it survive)")
 if re.search(rb"\x1b_Ga=d,d=a", help_frames):
     print("   ok   placements are deleted when the panel opens")
 

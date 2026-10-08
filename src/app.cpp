@@ -343,12 +343,50 @@ void App::render() {
   // simply not placed - the frame that has just been written repaints those
   // cells and the terminal drops the stale bits.
   std::vector<PlacedImage> place = view.images();
+  // Panels occlude pictures partially, not wholly: the visible remainder is
+  // placed as source-rectangle crops (kitty, which can place one image in
+  // several pieces); protocols without that keep the old drop behaviour.
+  int cellw = std::max(1, term.caps.px_cell_w()), cellh = std::max(1, term.caps.px_cell_h());
+  auto clip_against = [&](int rx, int ry, int rw, int rh) {
+    std::vector<PlacedImage> out;
+    for (const PlacedImage& im : place) {
+      int iw = im.cols > 0 ? im.cols : (im.px_w + cellw - 1) / cellw;
+      int ih = im.src_h > 0 ? (im.src_h + cellh - 1) / cellh
+                            : (im.rows > 0 ? im.rows : (im.px_h + cellh - 1) / cellh);
+      int x0 = im.x, y0 = im.y, x1 = x0 + iw, y1 = y0 + ih;
+      int hx0 = std::max(rx, x0), hy0 = std::max(ry, y0);
+      int hx1 = std::min(rx + rw, x1), hy1 = std::min(ry + rh, y1);
+      if (hx0 >= hx1 || hy0 >= hy1) {  // untouched by the panel
+        out.push_back(im);
+        continue;
+      }
+      if (term.caps.gfx != GfxProto::Kitty || im.sub_x || im.sub_y) continue;
+      int pid = 1;
+      auto frag = [&](int fx0, int fy0, int fx1, int fy1) {
+        if (fx1 <= fx0 || fy1 <= fy0) return;
+        PlacedImage f = im;
+        f.place_id = pid++;
+        f.x = fx0;
+        f.y = fy0;
+        f.src_x = im.src_x + (fx0 - x0) * cellw;
+        f.src_y = im.src_y + (fy0 - y0) * cellh;
+        f.src_w = std::min(im.px_w - f.src_x, (fx1 - fx0) * cellw);
+        f.src_h = std::min(im.px_h - f.src_y, (fy1 - fy0) * cellh);
+        if (im.cols > 0) { f.cols = fx1 - fx0; f.rows = fy1 - fy0; }
+        out.push_back(f);
+      };
+      frag(x0, y0, x1, hy0);   // above the panel
+      frag(x0, hy1, x1, y1);   // below it
+      frag(x0, hy0, hx0, hy1);  // left of it
+      frag(hx1, hy0, x1, hy1);  // right of it
+    }
+    place = out;
+  };
   if (help_open) {
-    place.clear();
+    int pw = std::min(74, vcols - 4), ph = std::min(20, vrows - 2);
+    clip_against((vcols - pw) / 2, (vrows - ph) / 2, pw, ph);
   } else if (toc_open && toc_panel_w > 0) {
-    place.erase(std::remove_if(place.begin(), place.end(),
-                               [&](const PlacedImage& im) { return im.x < toc_panel_w + 1; }),
-                place.end());
+    clip_against(0, 0, toc_panel_w + 1, vrows);
   }
   {
     int vrows = view_rows();

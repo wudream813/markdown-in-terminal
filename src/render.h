@@ -140,6 +140,10 @@ class DocView {
     bool header = false;
     int merge = 0;   // Luogu cell merging: 1 "^" up, 2 "<" left, 3 ">" right
     int pad = 1;
+    // vertical merge: this slot shows line `v_lno` of the origin row `v_row`
+    // (-1 = empty slot of the span, -2 = not shifted); layout centres the
+    // origin's content in the display rows of the whole merged block
+    int v_row = -2, v_lno = -2;
     // Typeset formulas inside the cell.  The cell keeps showing the Unicode
     // transcription (so terminals without graphics, and sixel, still read),
     // and the bitmap - exactly as wide as that transcription and one cell

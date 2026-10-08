@@ -111,7 +111,12 @@ void DocView::draw_line(Screen& scr, int x0, int y0, int w, const Line& line, in
         if (r.img >= 0) continue;  // graphics are placed separately
         RGB fg = r.style.has_color ? r.style.color : theme_.fg;
         RGB bg = lbg;
-        if (r.style.kind == Span::Code) bg = theme_.flat_bg ? lbg : theme_.code_bg;
+        if (r.style.kind == Span::Code)
+          bg = theme_.flat_bg
+                   ? RGB{(uint8_t)((lbg.r * 90 + theme_.code_fg.r * 10) / 100),
+                         (uint8_t)((lbg.g * 90 + theme_.code_fg.g * 10) / 100),
+                         (uint8_t)((lbg.b * 90 + theme_.code_fg.b * 10) / 100)}
+                   : theme_.code_bg;
         if (r.style.kind == Span::Code && !r.style.has_color) fg = theme_.code_fg;
         uint8_t attr = 0;
         if (r.style.bold) attr |= A_BOLD;
@@ -260,29 +265,50 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
       continue;
     }
 
-    // content row
+    // content row: pass 1 paints separators and backgrounds, pass 2 the text
+    // and formulas - a merged cell's centred content spans the member columns
+    // and must not be overwritten by their background fill
     for (size_t ci = 0; ci < l.cells.size(); ci++) {
       const TCell& tc = l.cells[ci];
       int x = lx + 1 + tc.x;
       RGB border = theme_.table_border;
       RGB fg = tc.header ? theme_.table_header_fg : theme_.fg;
       RGB bg = (tc.header && !theme_.flat_bg) ? theme_.table_header_bg : theme_.bg;
-      // separator to the left of this cell: blank when it continues the cell
-      // on the other side ("<" here, ">" in the neighbour)
+      (void)fg;
       bool open_left = tc.merge == 2 || (ci > 0 && l.cells[ci - 1].merge == 3);
       uint32_t sep = three ? (uint32_t)' '
                    : (tuack && heavy > 0 && (int)ci == heavy) ? 0x2503
                                                               : 0x2502;
       scr.put(x - 1, yy, open_left ? (uint32_t)' ' : sep, border, theme_.bg);
       for (int k = 0; k < tc.width; k++) scr.put(x + k, yy, ' ', fg, bg);
+    }
+    for (size_t ci = 0; ci < l.cells.size(); ci++) {
+      const TCell& tc = l.cells[ci];
+      int x = lx + 1 + tc.x;
+      RGB fg = tc.header ? theme_.table_header_fg : theme_.fg;
+      RGB bg = (tc.header && !theme_.flat_bg) ? theme_.table_header_bg : theme_.bg;
+      // horizontal merge group ("<"/">"): the content sits in the middle of
+      // the whole merged rectangle, not of the origin column alone
+      int gw = tc.width;
+      bool open_before = ci > 0 && (tc.merge == 2 || l.cells[ci - 1].merge == 3);
+      if (!open_before) {
+        size_t cj = ci + 1;
+        while (cj < l.cells.size() &&
+               (l.cells[cj].merge == 2 || l.cells[cj - 1].merge == 3)) {
+          gw = l.cells[cj].x + l.cells[cj].width - tc.x;
+          cj++;
+        }
+      }
       int tw = str_width(tc.text);
-      int pad = tc.width - tw;
-      int off = tc.align == Align::Right ? pad : (tc.align == Align::Center ? pad / 2 : 0);
+      int pad = gw - tw;
+      int off;
+      if (gw > tc.width) off = std::max(0, pad / 2);
+      else off = tc.align == Align::Right ? pad : (tc.align == Align::Center ? pad / 2 : 0);
       if (pad < 0) off = 0;
       scr.put_str(x + off, yy, tc.text, fg, bg, tc.header ? A_BOLD : 0);
       // formulas in this cell are drawn as bitmaps over their transcription
       if (!tc.pieces.empty())
-        place_cell_math(&scr, x + off, tc.width, yy, tc, std::max(1, cell_w()),
+        place_cell_math(&scr, x + off, gw, yy, tc, std::max(1, cell_w()),
                         std::max(1, cell_h()), 0, bg);
     }
     // right edge of the box

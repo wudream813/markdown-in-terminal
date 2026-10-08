@@ -166,9 +166,13 @@ def main():
     fixture2 = os.path.normpath(os.path.join(os.path.dirname(fixture), "luogu2.md"))
     dump2 = subprocess.run(argv + ["--dump", "--width=80", fixture2],
                            capture_output=True).stdout.decode("utf-8", "replace")
+    dump2 = dump2.replace("\r\n", "\n")   # wine's exe ends lines with CRLF
     check(fails, "标题公式" in dump2 and "内层" in dump2 and "引言文字亮一点。" in dump2,
           "round-17 fixture dumps cleanly (titles, epigraph)")
-    frame2 = capture(fixture2, need=b"int main")
+    # merged block: empty first row of the span, content centred in the middle
+    check(fails, re.search(r"\n│ +│\n│ +跨列合并 +│", dump2) is not None,
+          "merged block centres its content in the whole big cell")
+    frame2 = capture(fixture2, rows=50, need=b"int main")
 
     plain = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[_\]][^\x07\x1b]*(\x07|\x1b\\)?",
                    "", frame2)
@@ -185,6 +189,10 @@ def main():
     ok = bool(me) and bool(ma) and me.group(1) != ma.group(1) \
         and not me.group(1).startswith("0;2;") and not ma.group(1).startswith("0;2;")
     check(fails, ok, "epigraph is bright: no DIM, content colour differs from attribution")
+    m = re.search(r"\x1b\[[0-9;]*48;2;(\d+);(\d+);(\d+)m[^]*code", frame2)
+    tinted = m and (int(m.group(1)) > 24 or int(m.group(2)) > 26 or int(m.group(3)) > 31) \
+        and int(m.group(1)) < 70
+    check(fails, bool(tinted), "inline code sits on a very light wash")
     # a title whose formula reserves a second row keeps the wash there and the
     # bar runs through both rows (success tint of (158,206,106) = 45,54,43)
     check(fails, re.search(r"48;2;40;53;66m[^\x1b]*√", frame2) is not None

@@ -544,9 +544,10 @@ std::string Terminal::kitty_transmit(int id, const std::vector<uint8_t>& png) {
 std::string Terminal::kitty_place(int id, const PlacedImage& im, int cols, int rows) {
   std::string s;
   if (cols > 0 && rows > 0)
-    s = fmt("\x1b_Ga=p,i=%d,p=1,c=%d,r=%d,X=%d,Y=%d", id, cols, rows, im.sub_x, im.sub_y);
+    s = fmt("\x1b_Ga=p,i=%d,p=%d,c=%d,r=%d,X=%d,Y=%d", id, im.place_id, cols, rows,
+            im.sub_x, im.sub_y);
   else
-    s = fmt("\x1b_Ga=p,i=%d,p=1,X=%d,Y=%d", id, im.sub_x, im.sub_y);
+    s = fmt("\x1b_Ga=p,i=%d,p=%d,X=%d,Y=%d", id, im.place_id, im.sub_x, im.sub_y);
   // source crop (lowercase x,y,w,h): shows only part of the already-cached
   // image, so clipping at a viewport edge costs no re-transmission
   if (im.src_w > 0 && im.src_h > 0 && (im.src_y > 0 || im.src_h < im.px_h))

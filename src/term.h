@@ -121,6 +121,7 @@ struct PlacedImage {
   // composite over the wash so the band shows through the formula.
   RGB comp_bg{0, 0, 0};
   bool has_comp_bg = false;
+  int place_id = 1;   // kitty placement id: one image may be placed in pieces
   const std::vector<uint8_t>* png = nullptr;   // encoded PNG bytes (kitty / iTerm2)
   const std::vector<uint8_t>* rgba = nullptr;  // raw RGBA, px_w*px_h*4 (sixel)
 };

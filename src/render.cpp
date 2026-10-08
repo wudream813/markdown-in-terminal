@@ -722,11 +722,14 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
     };
     // ONE box around all rows (a border per row made each row its own box)
     border_line(0);
-    for (auto& r : b.rows) {
-      std::vector<std::vector<std::string>> cell_lines(r.size());
-      int maxlines = 1;
-      for (int c = 0; c < (int)r.size(); c++) {
-        std::string txt = spans_cell_text(r[(size_t)c].spans);
+    size_t nrows = b.rows.size();
+    std::vector<std::vector<std::vector<std::string>>> all_lines(nrows);
+    std::vector<int> maxlines(nrows, 1);
+    for (size_t ri = 0; ri < nrows; ri++) {
+      auto& rr = b.rows[ri];
+      all_lines[ri].assign(rr.size(), {});
+      for (int c = 0; c < (int)rr.size(); c++) {
+        std::string txt = spans_cell_text(rr[(size_t)c].spans);
         int inner = std::max(2, w[c] - 2);
         std::vector<std::string> cl;
         std::string cur;
@@ -749,10 +752,45 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
           curw += cwid;
         }
         cl.push_back(rtrim(cur));
-        cell_lines[c] = cl;
-        maxlines = std::max(maxlines, (int)cl.size());
+        all_lines[ri][c] = cl;
+        maxlines[ri] = std::max(maxlines[ri], (int)cl.size());
       }
-      for (int lno = 0; lno < maxlines; lno++) {
+    }
+    // vertical merges: the origin's content sits in the middle of the display
+    // rows the whole merged block occupies (vmap: slot -> origin row + line)
+    std::vector<std::vector<std::vector<std::pair<int, int>>>> vmap(
+        nrows, std::vector<std::vector<std::pair<int, int>>>());
+    for (size_t ri = 0; ri < nrows; ri++)
+      vmap[ri].assign(b.rows[ri].size(), std::vector<std::pair<int, int>>());
+    for (int c = 0; c < ncols; c++) {
+      size_t ri = 0;
+      while (ri < nrows) {
+        if (c >= (int)b.rows[ri].size() || b.rows[ri][(size_t)c].merge == 1) { ri++; continue; }
+        size_t o = ri, re = ri + 1;
+        while (re < nrows && c < (int)b.rows[re].size() && b.rows[re][(size_t)c].merge == 1) re++;
+        int D = 0;
+        for (size_t t = o; t < re; t++) D += maxlines[t];
+        int dy = (D - maxlines[o]) / 2;
+        if (dy > 0) {
+          int d = 0;
+          for (size_t t = o; t < re; t++) {
+            for (int k = 0; k < maxlines[t]; k++) {
+              int lno = d + k - dy;
+              vmap[t][(size_t)c].resize((size_t)maxlines[t], {-2, -2});
+              vmap[t][(size_t)c][(size_t)k] =
+                  (lno >= 0 && lno < maxlines[o]) ? std::make_pair((int)o, lno)
+                                                  : std::make_pair(-1, -1);
+            }
+            d += maxlines[t];
+          }
+        }
+        ri = re;
+      }
+    }
+    for (size_t ri = 0; ri < nrows; ri++) {
+      auto& r = b.rows[ri];
+      int ml = maxlines[ri];
+      for (int lno = 0; lno < ml; lno++) {
         Line l;
         l.kind = Line::Table;
         l.row = row - bl.row;
@@ -766,15 +804,39 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
           tc.align = r[(size_t)c].align;
           tc.header = r[(size_t)c].header;
           tc.merge = r[(size_t)c].merge;
-          tc.text = lno < (int)cell_lines[c].size() ? cell_lines[c][lno] : "";
+          // a vertically merged block draws the origin's content centred:
+          // this slot may belong to another row of the span (or be empty)
+          int orow = (int)ri, olno = lno;
+          if (c < (int)vmap[ri].size() && lno < (int)vmap[ri][(size_t)c].size()) {
+            auto vm = vmap[ri][(size_t)c][(size_t)lno];
+            if (vm.first == -1) { orow = -1; }
+            else if (vm.first >= 0) { orow = vm.first; olno = vm.second; }
+          }
+          const std::vector<Span>* sp_src = &r[(size_t)c].spans;
+          if (orow == -1) {
+            tc.text = "";
+            sp_src = nullptr;
+          } else if (orow != (int)ri) {
+            tc.v_row = orow;
+            tc.v_lno = olno;
+            tc.text = olno < (int)all_lines[(size_t)orow][c].size()
+                          ? all_lines[(size_t)orow][c][(size_t)olno]
+                          : "";
+            tc.align = b.rows[(size_t)orow][(size_t)c].align;
+            tc.header = b.rows[(size_t)orow][(size_t)c].header;
+            sp_src = &b.rows[(size_t)orow][(size_t)c].spans;
+          } else {
+            tc.text = lno < (int)all_lines[ri][c].size() ? all_lines[ri][c][(size_t)lno] : "";
+          }
           // where the formulas sit inside that text, in columns
           int col = 0;
           bool fits = true;
-          for (const Span& sp : r[(size_t)c].spans) {
+          if (sp_src)
+          for (const Span& sp : *sp_src) {
             if (sp.kind != Span::Math) { col += str_width(sp.text); continue; }
             std::string plain = latex_to_unicode(sp.tex, sp.display_math);
             int pw = str_width(plain);
-            if (lno == 0) {
+            if (olno == 0 && sp_src != nullptr && orow != -1) {
               TCell::Piece pc;
               pc.col = col;
               pc.cols = std::max(2, pw);
@@ -1635,6 +1697,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
     if (sp.kind == Span::Code) {
       style.has_color = true;
       style.color = theme_.code_fg;
+      style.kind = Span::Code;   // runs keep the kind: draw gives them a wash
     }
     if (sp.is_link && sp.kind != Span::Image) {
       style.has_color = true;
