@@ -1363,6 +1363,15 @@ void DocView::quote_lines(std::vector<Line>& out, const Block& qb, int indent,
 // align{left|center|right}, epigraph (right-aligned, dimmed, attribution) or
 // an unknown name (content passes through unchanged).  Nesting works because
 // children go through directive_child_layout, which calls back into here.
+// A callout title sits on a faint wash of its own colour so it reads as a
+// collapsible-box header instead of an ordinary bold line.
+RGB DocView::band_tint(RGB c) const {
+  RGB b = theme_.bg;
+  return RGB{(uint8_t)((b.r * 84 + c.r * 16) / 100),
+             (uint8_t)((b.g * 84 + c.g * 16) / 100),
+             (uint8_t)((b.b * 84 + c.b * 16) / 100)};
+}
+
 void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int indent,
                                const std::vector<int>& bars, const std::vector<RGB>& bar_cols,
                                bool custom, RGB bar_rgb) {
@@ -1386,11 +1395,16 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
     std::vector<Line> tl;
     build_lines(sp, indent + 2, content_w_ - indent - 2, base, tl);
     if (tl.empty()) tl.resize(1);
+    RGB tint = band_tint(c);
     for (Line& l : tl) {
       l.bars = own_bars;
       l.bar_rgbs = own_cols;
       l.bars_custom = cu;
       l.bar_rgb = c;
+      l.band = true;
+      l.band_bg = tint;
+      l.band_x0 = indent;             // from the callout's own bar column ...
+      l.band_x1 = content_w_ - 1;     // ... to the right content edge
       l.row = row - bl.row;
       bl.lines.push_back(l);
       row += l.rows;

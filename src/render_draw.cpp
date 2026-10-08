@@ -69,21 +69,28 @@ void DocView::draw_line(Screen& scr, int x0, int y0, int w, const Line& line, in
     case Line::Code:
     case Line::Text:
     default: {
+      RGB lbg = theme_.bg;
+      if (line.band) {
+        lbg = line.band_bg;
+        int bx0 = x0 + line.band_x0;
+        int bx1 = std::min(x0 + line.band_x1, x0 + cols_ - 1);
+        if (bx1 >= bx0) scr.fill_rect(bx0, sy, bx1 - bx0 + 1, 1, lbg);
+      }
       for (size_t bi = 0; bi < line.bars.size(); bi++) {
         int bcol = line.bars[bi];
         if (bcol < 0) continue;
         RGB bc = bi < line.bar_rgbs.size()
                      ? line.bar_rgbs[bi]
                      : (line.bars_custom ? line.bar_rgb : theme_.quote_bar);
-        scr.put(x0 + bcol, sy, 0x2502, bc, theme_.bg);
+        scr.put(x0 + bcol, sy, 0x2502, bc, lbg);
       }
       if (!line.marker.empty())  // dimmed "#" before a heading
-        scr.put_str(x0 + 1, sy, line.marker, theme_.muted, theme_.bg, A_DIM);
+        scr.put_str(x0 + 1, sy, line.marker, theme_.muted, lbg, A_DIM);
       for (const Run& r : line.runs) {
         if (r.img >= 0) continue;  // graphics are placed separately
         RGB fg = r.style.has_color ? r.style.color : theme_.fg;
-        RGB bg = theme_.bg;
-        if (r.style.kind == Span::Code) bg = theme_.flat_bg ? theme_.bg : theme_.code_bg;
+        RGB bg = lbg;
+        if (r.style.kind == Span::Code) bg = theme_.flat_bg ? lbg : theme_.code_bg;
         if (r.style.kind == Span::Code && !r.style.has_color) fg = theme_.code_fg;
         uint8_t attr = 0;
         if (r.style.bold) attr |= A_BOLD;

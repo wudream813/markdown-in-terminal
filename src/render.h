@@ -162,6 +162,9 @@ class DocView {
     RGB bar_rgb{0, 0, 0};       // Luogu callouts colour their bar by severity
     std::vector<RGB> bar_rgbs;  // per-bar-column colours, parallel to bars;
                                 // empty falls back to bars_custom/quote colour
+    bool band = false;          // callout titles get a light background band
+    RGB band_bg{0, 0, 0};       // ... in a tint of the callout colour
+    int band_x0 = 0, band_x1 = 0;  // band span, content columns inclusive
     int img = -1;               // kind == Image
     int img_rows = 1;
     // How many terminal rows this line occupies.  A text line that carries an
@@ -202,6 +205,7 @@ class DocView {
   MdDocument doc_;
   Theme theme_;
   MarkdownParser inline_parser_;   // callout titles carry inline markup / maths
+  RGB band_tint(RGB c) const;      // callout colour mixed towards the background
   RenderOptions opt_;
   std::string path_, base_dir_;
   int cols_ = 80, view_rows_ = 24, content_w_ = 78;

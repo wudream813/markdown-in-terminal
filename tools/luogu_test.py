@@ -117,6 +117,8 @@ def main():
     check(fails, "38;2;126;197;255" in frame, "info callout bar is blue")
     check(fails, "38;2;158;206;106" in frame, "success callout bar is green")
     check(fails, "38;2;224;175;104" in frame, "warning callout bar is yellow")
+    # info (126,197,255) mixed 16% into the (24,26,31) background = 40,53,66
+    check(fails, "48;2;40;53;66" in frame, "callout title sits on a light background band")
     # lines=2-3,5 get a warm tint over the theme background {24,26,31}
     check(fails, "48;2;50;47;39" in frame, "code lines 2-3,5 are highlighted")
 
