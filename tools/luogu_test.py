@@ -113,12 +113,20 @@ def main():
         os.waitpid(pid, 0)
     except (OSError, ChildProcessError):
         pass
+    out = out.replace(b"\r\r\n", b"")   # wine's console wrapper splits escapes
     frame = out.decode("utf-8", "replace")
     check(fails, "38;2;126;197;255" in frame, "info callout bar is blue")
     check(fails, "38;2;158;206;106" in frame, "success callout bar is green")
     check(fails, "38;2;224;175;104" in frame, "warning callout bar is yellow")
     # info (126,197,255) mixed 16% into the (24,26,31) background = 40,53,66
     check(fails, "48;2;40;53;66" in frame, "callout title sits on a light background band")
+    # a nested title row: the parent bar keeps the plain background (no tint
+    # bleed), the child's own bar stands inside the wash
+    pos = frame.find("我是子容器 1")
+    seg = frame[max(0, pos - 300):pos] if pos >= 0 else ""
+    check(fails, "38;2;224;175;104;48;2;24;26;31" in seg
+          and "38;2;158;206;106;48;2;45;54;43" in seg,
+          "nested title: parent bar on plain bg, child bar inside the wash")
     # lines=2-3,5 get a warm tint over the theme background {24,26,31}
     check(fails, "48;2;50;47;39" in frame, "code lines 2-3,5 are highlighted")
 
@@ -177,6 +185,11 @@ def main():
     ok = bool(me) and bool(ma) and me.group(1) != ma.group(1) \
         and not me.group(1).startswith("0;2;") and not ma.group(1).startswith("0;2;")
     check(fails, ok, "epigraph is bright: no DIM, content colour differs from attribution")
+    # a title whose formula reserves a second row keeps the wash there and the
+    # bar runs through both rows (success tint of (158,206,106) = 45,54,43)
+    check(fails, re.search(r"48;2;40;53;66m[^\x1b]*√", frame2) is not None
+          and frame2.count("38;2;126;197;255;48;2;40;53;66") >= 2,
+          "title formula row keeps the wash and the bar continues")
 
     if fails:
         print("luogu checks failed:", ", ".join(fails))
