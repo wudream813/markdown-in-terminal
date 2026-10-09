@@ -84,6 +84,8 @@ struct App {
   double status_until = 0;
   bool toc_open = false;
   bool help_open = false;
+  bool link_open = false;          // the clicked-link dialog
+  std::string link_url;
   bool search_mode = false;
   bool quit = false;
   std::string search_query;
@@ -266,6 +268,25 @@ void App::render() {
       scr.put_str(px + 2 + ind, i + 1, label, fg, bg, idx == toc_sel ? A_BOLD : 0);
     }
   }
+  if (link_open && !link_url.empty()) {
+    int uw = (int)str_width(link_url);
+    int pw = std::min(vcols - 4, std::max(46, uw + 6));
+    int inner = pw - 4;
+    int ulines = std::max(1, (uw + inner - 1) / inner);
+    int ph = std::min(vrows - 2, ulines + 6);
+    int px = (vcols - pw) / 2, py = (vrows - ph) / 2;
+    RGB pbg = theme.status_bg;
+    scr.fill_rect(px, py, pw, ph, pbg);
+    scr.box_rounded(px, py, pw, ph, theme.code_frame, pbg);
+    scr.put_str(px + 2, py + 1, " link ", theme.muted, pbg);
+    for (int k = 0; k < ulines; k++) {
+      size_t b = (size_t)k * inner;
+      std::string part = link_url.substr(b, inner);
+      scr.put_str(px + 2, py + 2 + k, part, theme.link, pbg);
+    }
+    scr.put_str(px + 2, py + 2 + ulines + 1,
+                "c copy (clipboard)   o open in browser   Esc close", theme.muted, pbg);
+  }
   if (help_open) {
     int pw = std::min(74, vcols - 4), ph = std::min(20, vrows - 2);
     int px = (vcols - pw) / 2, py = (vrows - ph) / 2;
@@ -281,6 +302,7 @@ void App::render() {
       "  Tab               toggle outline  Enter       jump to heading",
       "  /                 search          n / N       next / prev match",
       "  o                 open first link in the browser",
+      "  click a link      show it in a dialog; c copies, o opens",
       "  e                 export the document text to clipboard",
       "  r                 reload file     t           cycle theme",
       "  R                 force redraw    m           toggle maths rendering",
@@ -385,6 +407,12 @@ void App::render() {
   if (help_open) {
     int pw = std::min(74, vcols - 4), ph = std::min(20, vrows - 2);
     clip_against((vcols - pw) / 2, (vrows - ph) / 2, pw, ph);
+  } else if (link_open && !link_url.empty()) {
+    int uw = (int)str_width(link_url);
+    int pw = std::min(vcols - 4, std::max(46, uw + 6));
+    int ulines = std::max(1, (uw + pw - 5) / (pw - 4));
+    int ph = std::min(vrows - 2, ulines + 6);
+    clip_against((vcols - pw) / 2, (vrows - ph) / 2, pw, ph);
   } else if (toc_open && toc_panel_w > 0) {
     clip_against(0, 0, toc_panel_w + 1, vrows);
   }
@@ -429,6 +457,18 @@ void App::render() {
 void App::run() {
   // One mouse event per redraw is too coarse for a drag (the terminal reports
   // motion faster than we should paint) and too fine to waste frames on:
+  auto open_url_in_browser = [&](const std::string& url) {
+    std::string cmd = plat::open_url_command(url);
+#ifdef _WIN32
+    // `start` is a cmd builtin: run it through the shell.
+    std::string full = "cmd /c " + cmd;
+    int rc = system(full.c_str());
+#else
+    int rc = system(cmd.c_str());
+#endif
+    if (rc == 0) set_status("opened: " + url);
+    else set_status("failed to open: " + url);
+  };
   // apply_mouse folds an event into the view and says whether anything moved.
   auto apply_mouse = [&](const Terminal::KeyEvent& e) -> bool {
     if (e.wheel_up) {
@@ -438,6 +478,15 @@ void App::run() {
       int s0 = view.scroll_top(); view.scroll_by(3); return view.scroll_top() != s0;
     }
     if (e.release) { scroll_drag = false; return false; }
+    if (!e.drag) {
+      if (link_open) { link_open = false; return true; }  // click dismisses
+      std::string url;
+      if (view.link_at(e.mx, e.my, url)) {
+        link_url = url;
+        link_open = true;
+        return true;
+      }
+    }
     if (scroll_drag || (!e.drag && scrollbar_active &&
                         e.mx >= view_cols() - 1 && e.my >= 0 && e.my < view_rows())) {
       if (!e.drag) scroll_drag = true;
@@ -515,6 +564,21 @@ void App::run() {
       needs_frame = true;
       continue;
     }
+    if (link_open) {  // the link dialog eats every key until it closes
+      if (key == Terminal::K_ESC || (e.type == Terminal::KeyEvent::Char &&
+                                     (ch == 'q' || ch == '?'))) {
+        link_open = false;
+      } else if (e.type == Terminal::KeyEvent::Char && ch == 'c') {
+        term.set_clipboard(link_url);  // OSC 52: the terminal puts it on the clipboard
+        set_status("copied: " + link_url, 2.5);
+      } else if (key == Terminal::K_ENTER ||
+                 (e.type == Terminal::KeyEvent::Char && ch == 'o')) {
+        open_url_in_browser(link_url);
+        link_open = false;
+      }
+      needs_frame = true;
+      continue;
+    }
     bool page = false;
     switch (key) {
       case Terminal::K_UP: view.scroll_by(-1); break;
@@ -526,7 +590,8 @@ void App::run() {
       case Terminal::K_HOME: view.scroll_home(); break;
       case Terminal::K_END: view.scroll_end(); break;
       case Terminal::K_ESC:
-        if (help_open) help_open = false;
+        if (link_open) link_open = false;
+        else if (help_open) help_open = false;
         else if (toc_open) toc_open = false;
         else quit = true;
         break;
@@ -535,7 +600,10 @@ void App::run() {
     if (page) { needs_frame = true; continue; }
     if (e.type != Terminal::KeyEvent::Char) { needs_frame = true; continue; }
     switch (ch) {
-      case 'q': if (!help_open && !toc_open) quit = true; else { help_open = toc_open = false; } break;
+      case 'q':
+        if (!help_open && !toc_open && !link_open) quit = true;
+        else { help_open = toc_open = link_open = false; }
+        break;
       case 'j': view.scroll_by(1); break;
       case 'k': view.scroll_by(-1); break;
       case ' ': view.scroll_page(1); break;
@@ -567,19 +635,7 @@ void App::run() {
       case 'o': {
         const auto& links = view.doc().links;
         if (links.empty()) set_status("no links in this document");
-        else {
-          std::string url = links[0].url;
-          std::string cmd = plat::open_url_command(url);
-#ifdef _WIN32
-          // `start` is a cmd builtin: run it through the shell.
-          std::string full = "cmd /c " + cmd;
-          int rc = system(full.c_str());
-#else
-          int rc = system(cmd.c_str());
-#endif
-          if (rc == 0) set_status("opened: " + url);
-          else set_status("failed to open: " + url);
-        }
+        else open_url_in_browser(links[0].url);
         break;
       }
       case 'e': {

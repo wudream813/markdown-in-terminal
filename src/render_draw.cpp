@@ -54,6 +54,23 @@ std::string DocView::plain_text() const {
 // The wash behind a callout title plus the blockquote/callout bars, painted
 // before any run so text and formulas sit on top of them.  Returns the line
 // background runs should use.
+bool DocView::link_at(int mx, int my, std::string& url) const {
+  for (const auto& bl : layout_) {
+    int base = bl.row - scroll_;
+    if (my < base || my >= base + bl.rows) continue;
+    for (const auto& line : bl.lines) {
+      if (base + line.row != my) continue;
+      for (const auto& r : line.runs) {
+        if (r.style.is_link && !r.style.link.empty() && mx >= r.x && mx < r.x + r.width) {
+          url = r.style.link;
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 RGB DocView::draw_line_chrome(Screen& scr, int x0, int sy, const Line& line) {
   RGB lbg = theme_.bg;
   int lrows = std::max(1, line.rows);
@@ -238,6 +255,46 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
     int lx = x0 + l.x;  // nested tables start further right
     int span = 1 + l.cells.back().x + l.cells.back().width + 1;  // border columns
 
+    if (l.code_index == 4) {  // rule between two body rows (full grid)
+      if (three || tuack) continue;
+      int ri = l.img;
+      if (ri < 0 || ri + 1 >= (int)b.rows.size()) continue;
+      auto hor_open = [&](int r, int c) {  // vertical separator removed here
+        const auto& rr = b.rows[(size_t)r];
+        return c + 1 < (int)rr.size() &&
+               (rr[(size_t)c + 1].merge == 2 || rr[(size_t)c].merge == 3);
+      };
+      auto seg_open = [&](int c) {  // merged cell continues across the rule
+        const auto& nr = b.rows[(size_t)ri + 1];
+        if (c >= (int)nr.size()) return false;
+        if (nr[(size_t)c].merge == 1) return true;
+        int a = c;  // a "<" cell rides on its group's anchor column
+        while (a > 0 && nr[(size_t)a].merge == 2) a--;
+        return nr[(size_t)a].merge == 1;
+      };
+      auto junc = [&](bool up, bool down, bool left, bool right) -> uint32_t {
+        if (up && down) return right ? (left ? 0x253Cu : 0x251Cu) : (left ? 0x2524u : 0x2502u);
+        if (!up && !down)
+          return right ? (left ? 0x2500u : 0x2576u) : (left ? 0x2574u : (uint32_t)' ');
+        if (up) return right ? (left ? 0x2534u : 0x2514u) : (left ? 0x2518u : 0x2575u);
+        return right ? (left ? 0x252Cu : 0x250Cu) : (left ? 0x2510u : 0x2577u);
+      };
+      scr.put(lx, yy, seg_open(0) ? 0x2502 : 0x251C, theme_.table_border, theme_.bg);
+      for (size_t ci = 0; ci < l.cells.size(); ci++) {
+        const TCell& tc = l.cells[ci];
+        for (int k = 0; k < tc.width; k++)
+          scr.put(lx + 1 + tc.x + k, yy, seg_open((int)ci) ? (uint32_t)' ' : (uint32_t)0x2500,
+                  theme_.table_border, theme_.bg);
+        scr.put(lx + 1 + tc.x + tc.width, yy,
+                junc(!hor_open(ri, (int)ci), !hor_open(ri + 1, (int)ci), !seg_open((int)ci),
+                     !seg_open((int)ci + 1)),
+                theme_.table_border, theme_.bg);
+      }
+      scr.put(lx + 1 + l.cells.back().x + l.cells.back().width, yy,
+              seg_open((int)l.cells.size() - 1) ? 0x2502 : 0x2524, theme_.table_border,
+              theme_.bg);
+      continue;
+    }
     if (l.code_index == 0 || l.code_index == 2 || l.code_index == 3) {  // border / header rule
       if (three || tuack) {
         uint32_t cp = l.code_index == 3 ? 0x2500 : 0x2501;  // ─ under the header, ━ top/bottom

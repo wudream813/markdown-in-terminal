@@ -7,6 +7,7 @@
 Structure checks run against --dump (plain text, so they work everywhere);
 the colour checks (callout bars, highlighted code lines) run in a pty.
 """
+import base64
 import os
 import re
 import subprocess
@@ -32,6 +33,7 @@ def main():
 
     dump = subprocess.run(argv + ["--dump", "--width=80", fixture],
                           capture_output=True).stdout.decode("utf-8", "replace")
+    dump = dump.replace("\r\n", "\n")   # wine's exe ends lines with CRLF
     lines = dump.splitlines()
     fails = []
 
@@ -172,6 +174,16 @@ def main():
     # merged block: empty first row of the span, content centred in the middle
     check(fails, re.search(r"\n│ +│\n│ +跨列合并 +│", dump2) is not None,
           "merged block centres its content in the whole big cell")
+    # round 23: a full grid - a rule between every pair of body rows
+    check(fails, re.search(r"\n│1~2[^\n]+\n├[^\n]+┤\n│3~4", dump) is not None,
+          "tables get a horizontal rule between every row")
+    check(fails, re.search(r"\n│1 +│2 +│\n├─+┼─+┤\n│3 +│4 +│", dump2) is not None,
+          "plain tables get a full grid (┼ junctions between the rows)")
+    # ...but inside a merged span the rules stay invisible and the exit row
+    # reconnects with ┬ junctions
+    check(fails, re.search(r"\n│ +跨列合并 +│\n(?:│ +│\n)+├─+┬─+┬─+┤\n│己", dump2)
+          is not None,
+          "merged span: no rule inside, ┬ junctions where the block ends")
     frame2 = capture(fixture2, rows=50, need=b"int main")
 
     plain = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[_\]][^\x07\x1b]*(\x07|\x1b\\)?",
@@ -212,6 +224,86 @@ def main():
     check(fails, re.search(r"#\d+;2;18;21;17", frame3s) is not None
           and not re.search(r"#\d+;2;9;10;12", frame3s),
           "sixel formula bitmap is composited over the title wash")
+
+    # ---- round-23: clicking a link shows a dialog; c copies the URL --------
+    url = "https://www.luogu.com.cn"
+    d100 = subprocess.run(argv + ["--dump", "--width=100", fixture2],
+                          capture_output=True).stdout.decode("utf-8", "replace")
+    d100 = d100.replace("\r\n", "\n")
+    import unicodedata
+
+    def disp_col(s, j):  # display column of character index j (CJK = 2 wide)
+        return 1 + sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1
+                       for ch in s[:j])
+
+    lr = lc = -1
+    for i, s in enumerate(d100.splitlines()):
+        j = s.find("洛谷")
+        if j >= 0:
+            lr, lc = i, disp_col(s, j)
+            break
+    if lr < 0:
+        check(fails, False, "link fixture line found in the dump")
+    else:
+        pid, fd = ptymod.fork()
+        if pid == 0:
+            env = dict(os.environ)
+            env["TERM"] = "xterm-256color"
+            os.execvpe(argv[0], argv + ["--gfx=none", fixture2], env)
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
+        acc = b""
+
+        def read_until(needle, timeout=12.0):
+            nonlocal acc
+            t0 = time.time()
+            start = len(acc)
+            while time.time() - t0 < timeout:
+                r, _, _ = select.select([fd], [], [], 0.2)
+                if r:
+                    try:
+                        chunk = os.read(fd, 1 << 20)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    acc += chunk
+                if needle in acc[start:].replace(b"\r\r\n", b"") \
+                        and time.time() - t0 > 0.4:
+                    break
+            return acc[start:].replace(b"\r\r\n", b"")
+
+        read_until(b"for help")
+        os.write(fd, ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (lc + 1, lr + 1, lc + 1, lr + 1)).encode())
+        box = read_until(b"open in browser")
+        plainb = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[_\]][^\x07\x1b]*(\x07|\x1b\\)?",
+                        "", box.decode("utf-8", "replace"))
+        check(fails, url in plainb and "copy" in plainb,
+              "clicking a link pops a dialog showing the URL")
+        os.write(fd, b"c")
+        clip = read_until(b"]52;c;")
+        b64 = base64.b64encode(url.encode()).decode()
+        check(fails, b64 in clip.decode("utf-8", "replace"),
+              "c copies the URL to the clipboard (OSC 52)")
+        # Esc closes the dialog; wine's console may swallow the bare ESC, in
+        # which case the first click closes it - so a second click must bring
+        # the dialog back either way.
+        click = ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (lc + 1, lr + 1, lc + 1, lr + 1)).encode()
+        os.write(fd, b"\x1b")
+        read_until(b"for help", 3.0)
+        os.write(fd, click)
+        again = read_until(b"open in browser", 8.0)   # wine can be slow
+        if b"open in browser" not in again:
+            os.write(fd, click)
+            again += read_until(b"open in browser", 8.0)
+        check(fails, b"open in browser" in again,
+              "Esc (or a click) closes the dialog and a click reopens it")
+        os.write(fd, b"q")
+        try:
+            os.close(fd)
+            os.kill(pid, 15)
+            os.waitpid(pid, 0)
+        except (OSError, ChildProcessError):
+            pass
 
     if fails:
         print("luogu checks failed:", ", ".join(fails))

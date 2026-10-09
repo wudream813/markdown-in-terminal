@@ -124,6 +124,9 @@ class DocView {
 
   // cell geometry helpers (used by the app for hit testing)
   int content_cols() const { return content_w_; }
+  // Screen-cell hit test for links: true when (mx, my) is inside a link run
+  // of the currently laid-out, scrolled document; `url` receives its target.
+  bool link_at(int mx, int my, std::string& url) const;
 
  private:
   struct Run {

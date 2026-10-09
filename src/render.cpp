@@ -709,11 +709,12 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
       w[widest]--;
       total--;
     }
-    auto border_line = [&](int idx) {  // a full-width border line of the box
+    auto border_line = [&](int idx, int src_row = -1) {  // full-width border
       Line l;
       l.kind = Line::Table;
       l.row = row - bl.row;
-      l.code_index = idx;  // 0 = top, 2 = bottom, 3 = rule under the header
+      l.code_index = idx;  // 0 top, 2 bottom, 3 header rule, 4 body-row rule
+      l.img = src_row;     // for 4: the source row above the rule
       l.x = indent;        // blocks nested in a list item start further right
       int x = 0;
       for (int c = 0; c < ncols; c++) { TCell tc; tc.x = x; tc.width = w[c]; x += w[c] + 1; l.cells.push_back(tc); }
@@ -854,6 +855,9 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
         row++;
       }
       if (!r.empty() && r[0].header) border_line(3);
+      else if (ri + 1 < nrows && b.table_style != "three" &&
+               b.table_style != "tuack")
+        border_line(4, (int)ri);  // grid: a rule between every pair of rows
     }
     border_line(2);
     row += opt_.paragraph_gap;
@@ -1702,6 +1706,8 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
     if (sp.is_link && sp.kind != Span::Image) {
       style.has_color = true;
       style.color = theme_.link;
+      style.is_link = true;    // hit testing needs the URL on the run
+      style.link = sp.link;
     }
     if (sp.has_color) { style.has_color = true; style.color = sp.color; }
     switch (sp.kind) {
