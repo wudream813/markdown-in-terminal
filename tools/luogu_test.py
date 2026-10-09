@@ -61,12 +61,21 @@ def main():
     # ---- cute-table{three} --------------------------------------------------
     heavy = [i for i, l in enumerate(lines) if "━" in l]
     check(fails, len(heavy) >= 2, "three-line table has heavy rules")
+    # round 24: booktabs styles breathe like the Luogu site - a blank
+    # separator line between every pair of body rows
+    check(fails, re.search(r"\n 1~2[^\n]*\n *\n 3~4", dump) is not None,
+          "three-line table keeps a blank line between the rows")
     if len(heavy) >= 2:
         seg = lines[heavy[0]:heavy[1] + 1]
         check(fails, not any("│" in l for l in seg), "three-line table has no verticals")
 
     # ---- cute-table{tuack=2} ------------------------------------------------
     check(fails, any("┃" in l for l in lines), "tuack heavy vertical after column 2")
+    # tuack separator: thin rule, broken where a merge spans it, the heavy
+    # vertical crossing it as ┿, and the merged text centred on that line
+    check(fails, re.search(r"\n│ +│2 +┃3 +│4 +│\n│ 合并 ├─+┿─+┼─+┤\n│ +│5 +┃6 +│7 +│",
+                           dump) is not None,
+          "tuack rows get a separator rule; merges break it and centre on it")
 
     # ---- cell merging --------------------------------------------------------
     box = [i for i, l in enumerate(lines) if l.startswith("┌") or l.startswith("└")]
@@ -179,6 +188,13 @@ def main():
           "tables get a horizontal rule between every row")
     check(fails, re.search(r"\n│1 +│2 +│\n├─+┼─+┤\n│3 +│4 +│", dump2) is not None,
           "plain tables get a full grid (┼ junctions between the rows)")
+    # an even (two-row) merged span centres its content on the middle
+    # separator line instead of hugging the top row
+    check(fails, re.search(r"\n│ +│\n│ +双行合并 +│\n│ +│\n├─+", dump2) is not None,
+          "even merged spans centre on the separator line")
+    # hard line breaks: two trailing spaces and a trailing backslash
+    check(fails, re.search(r"\n 硬换行甲\n 硬换行乙\n 硬换行丙\n", dump2) is not None,
+          "trailing two spaces / backslash make a hard line break")
     # ...but inside a merged span the rules stay invisible and the exit row
     # reconnects with ┬ junctions
     check(fails, re.search(r"\n│ +跨列合并 +│\n(?:│ +│\n)+├─+┬─+┬─+┤\n│己", dump2)
@@ -302,6 +318,18 @@ def main():
             again += read_until(b"open in browser", 8.0)
         check(fails, b"open in browser" in again,
               "Esc (or a click) closes the dialog and a click reopens it")
+        # a child process sharing the tty (xdg-open's fallback browser, a
+        # pager, ...) may cook it: mdt must take raw mode back by itself.
+        # (wine's console layer sits below the pty discipline, so poking the
+        # line discipline here would not reach the Windows console modes)
+        if not wine:
+            attrs = termios.tcgetattr(fd)
+            attrs[3] = attrs[3] | termios.ECHO | termios.ICANON
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+            time.sleep(1.0)
+            cur = termios.tcgetattr(fd)
+            check(fails, not (cur[3] & termios.ECHO) and not (cur[3] & termios.ICANON),
+                  "mdt re-asserts raw mode after another process cooks the tty")
         os.write(fd, b"q")
         try:
             os.close(fd)

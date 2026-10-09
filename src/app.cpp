@@ -466,6 +466,7 @@ void App::run() {
 #else
     int rc = system(cmd.c_str());
 #endif
+    if (!term.mode_intact()) term.reassert_mode();  // the browser may share the tty
     if (rc == 0) set_status("opened: " + url);
     else set_status("failed to open: " + url);
   };
@@ -510,6 +511,10 @@ void App::run() {
     return false;
   };
   while (!quit) {
+    if (!term.mode_intact()) {  // a child process cooked our tty: take it back
+      term.reassert_mode();
+      needs_frame = true;
+    }
     if (term.resized()) {
       term.handle_resize();
       needs_frame = true;

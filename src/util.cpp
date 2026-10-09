@@ -217,7 +217,16 @@ std::vector<std::string> split(const std::string& s, char sep) {
 std::vector<std::string> split_lines(const std::string& s) {
   std::vector<std::string> out; std::string cur;
   for (size_t i = 0; i < s.size(); i++) {
-    if (s[i] == '\n') { out.push_back(rtrim(cur)); cur.clear(); }
+    if (s[i] == '\n') {
+      std::string t = rtrim(cur);
+      // CommonMark hard break: two trailing spaces.  They must survive the
+      // rtrim, so a sentinel stands in for them until inline parsing.
+      if (t.size() < cur.size() && cur.size() - t.size() >= 2 &&
+          cur[cur.size() - 1] == ' ')
+        t += '\x01';
+      out.push_back(t);
+      cur.clear();
+    }
     else if (s[i] != '\r') cur += s[i];
   }
   out.push_back(cur);

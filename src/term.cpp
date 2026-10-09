@@ -347,6 +347,14 @@ void Terminal::shutdown() {
   initialized_ = false;
 }
 void Terminal::write_raw(const std::string& s) { wout(s); }
+
+bool Terminal::mode_intact() { return plat::raw_intact(); }
+
+void Terminal::reassert_mode() {
+  plat::raw_reassert();
+  // the intruder may also have reset the terminal's private modes
+  wout("\x1b[?1049h\x1b[?25l\x1b[?1002h\x1b[?1006h");
+}
 void Terminal::set_title(const std::string& t) { wout("\x1b]0;" + t + "\x07"); }
 void Terminal::set_clipboard(const std::string& s) { wout("\x1b]52;c;" + base64_encode((const uint8_t*)s.data(), s.size()) + "\x07"); }
 

@@ -38,6 +38,10 @@ bool stdout_is_tty();
 // Switches the terminal into raw mode with VT input enabled.
 bool raw_begin(std::string* err = nullptr);
 void raw_end();
+// A child process (xdg-open's fallback browser, a pager, ...) may share our
+// tty and cook it behind our back.  The event loop polls this and restores.
+bool raw_intact();
+void raw_reassert();
 
 // Registers a callback that runs when the process is killed from the outside:
 // SIGINT/SIGTERM/SIGHUP on POSIX, Ctrl-C/Ctrl-Break/console close/logoff on

@@ -255,8 +255,7 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
     int lx = x0 + l.x;  // nested tables start further right
     int span = 1 + l.cells.back().x + l.cells.back().width + 1;  // border columns
 
-    if (l.code_index == 4) {  // rule between two body rows (full grid)
-      if (three || tuack) continue;
+    if (l.code_index == 4) {  // separator between two body rows
       int ri = l.img;
       if (ri < 0 || ri + 1 >= (int)b.rows.size()) continue;
       auto hor_open = [&](int r, int c) {  // vertical separator removed here
@@ -284,20 +283,53 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
         if (up) return right ? (left ? 0x2534u : 0x2514u) : (left ? 0x2518u : 0x2575u);
         return right ? (left ? 0x252Cu : 0x250Cu) : (left ? 0x2510u : 0x2577u);
       };
-      scr.put(lx, yy, seg_open(0) ? 0x2502 : 0x251C, theme_.table_border, theme_.bg);
+      if (!three) {  // three-line booktabs keeps the separator empty
+        scr.put(lx, yy, seg_open(0) ? 0x2502 : 0x251C, theme_.table_border, theme_.bg);
+        for (size_t ci = 0; ci < l.cells.size(); ci++) {
+          const TCell& tc = l.cells[ci];
+          for (int k = 0; k < tc.width; k++)
+            scr.put(lx + 1 + tc.x + k, yy,
+                    seg_open((int)ci) ? (uint32_t)' ' : (uint32_t)0x2500,
+                    theme_.table_border, theme_.bg);
+          uint32_t jch;
+          if (tuack && heavy > 0 && (int)ci + 1 == heavy)
+            jch = (!seg_open((int)ci) && !seg_open((int)ci + 1)) ? 0x253Fu : 0x2503u;
+          else
+            jch = junc(!hor_open(ri, (int)ci), !hor_open(ri + 1, (int)ci),
+                       !seg_open((int)ci), !seg_open((int)ci + 1));
+          scr.put(lx + 1 + tc.x + tc.width, yy, jch, theme_.table_border, theme_.bg);
+        }
+        scr.put(lx + 1 + l.cells.back().x + l.cells.back().width, yy,
+                seg_open((int)l.cells.size() - 1) ? 0x2502 : 0x2524, theme_.table_border,
+                theme_.bg);
+      }
+      // centred content of an even merged span rides this separator line
       for (size_t ci = 0; ci < l.cells.size(); ci++) {
         const TCell& tc = l.cells[ci];
-        for (int k = 0; k < tc.width; k++)
-          scr.put(lx + 1 + tc.x + k, yy, seg_open((int)ci) ? (uint32_t)' ' : (uint32_t)0x2500,
-                  theme_.table_border, theme_.bg);
-        scr.put(lx + 1 + tc.x + tc.width, yy,
-                junc(!hor_open(ri, (int)ci), !hor_open(ri + 1, (int)ci), !seg_open((int)ci),
-                     !seg_open((int)ci + 1)),
-                theme_.table_border, theme_.bg);
+        if (tc.text.empty()) continue;
+        int gw = tc.width;
+        bool open_before =
+            ci > 0 && (tc.merge == 2 || l.cells[ci - 1].merge == 3 || l.cells[ci - 1].hinherit);
+        if (!open_before) {
+          size_t cj = ci + 1;
+          while (cj < l.cells.size() &&
+                 (l.cells[cj].merge == 2 || l.cells[cj - 1].merge == 3 ||
+                  l.cells[cj - 1].hinherit)) {
+            gw = l.cells[cj].x + l.cells[cj].width - tc.x;
+            cj++;
+          }
+        }
+        int tw = str_width(tc.text);
+        int pad = gw - tw;
+        int off = std::max(0, pad / 2);
+        if (pad < 0) off = 0;
+        int x = lx + 1 + tc.x;
+        RGB fg = tc.header ? theme_.table_header_fg : theme_.fg;
+        scr.put_str(x + off, yy, tc.text, fg, theme_.bg, tc.header ? A_BOLD : 0);
+        if (!tc.pieces.empty())
+          place_cell_math(&scr, x + off, gw, yy, tc, std::max(1, cell_w()),
+                          std::max(1, cell_h()), 0, theme_.bg);
       }
-      scr.put(lx + 1 + l.cells.back().x + l.cells.back().width, yy,
-              seg_open((int)l.cells.size() - 1) ? 0x2502 : 0x2524, theme_.table_border,
-              theme_.bg);
       continue;
     }
     if (l.code_index == 0 || l.code_index == 2 || l.code_index == 3) {  // border / header rule

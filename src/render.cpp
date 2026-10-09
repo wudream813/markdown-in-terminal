@@ -763,26 +763,35 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
         nrows, std::vector<std::vector<std::pair<int, int>>>());
     for (size_t ri = 0; ri < nrows; ri++)
       vmap[ri].assign(b.rows[ri].size(), std::vector<std::pair<int, int>>());
+    // sepmap[t][c]: the origin line that rides the separator under row t
+    std::vector<std::vector<std::pair<int, int>>> sepmap(
+        nrows ? nrows - 1 : 0, std::vector<std::pair<int, int>>(ncols, {-2, -2}));
     for (int c = 0; c < ncols; c++) {
       size_t ri = 0;
       while (ri < nrows) {
         if (c >= (int)b.rows[ri].size() || b.rows[ri][(size_t)c].merge == 1) { ri++; continue; }
         size_t o = ri, re = ri + 1;
         while (re < nrows && c < (int)b.rows[re].size() && b.rows[re][(size_t)c].merge == 1) re++;
-        int D = 0;
-        for (size_t t = o; t < re; t++) D += maxlines[t];
-        int dy = (D - maxlines[o]) / 2;
-        if (dy > 0) {
-          int d = 0;
+        if (re > o + 1) {
+          // display slots of the span: each row's text lines plus the
+          // separator line between every pair - that is what the reader sees,
+          // so the origin's content centres over all of them (an even span
+          // puts it on the middle separator line)
+          std::vector<std::pair<int, int>> slots;
           for (size_t t = o; t < re; t++) {
-            for (int k = 0; k < maxlines[t]; k++) {
-              int lno = d + k - dy;
-              vmap[t][(size_t)c].resize((size_t)maxlines[t], {-2, -2});
-              vmap[t][(size_t)c][(size_t)k] =
-                  (lno >= 0 && lno < maxlines[o]) ? std::make_pair((int)o, lno)
-                                                  : std::make_pair(-1, -1);
-            }
-            d += maxlines[t];
+            for (int k = 0; k < maxlines[t]; k++) slots.push_back({(int)t, k});
+            if (t + 1 < re) slots.push_back({(int)t, -1});
+          }
+          int dy = ((int)slots.size() - maxlines[o]) / 2;
+          for (size_t t = o; t < re; t++) vmap[t][(size_t)c].assign((size_t)maxlines[t], {-1, -1});
+          for (int lno = 0; lno < maxlines[o]; lno++) {
+            int idx = dy + lno;
+            if (idx < 0 || idx >= (int)slots.size()) continue;
+            if (slots[(size_t)idx].second >= 0)
+              vmap[slots[(size_t)idx].first][(size_t)c][slots[(size_t)idx].second] =
+                  std::make_pair((int)o, lno);
+            else
+              sepmap[slots[(size_t)idx].first][(size_t)c] = std::make_pair((int)o, lno);
           }
         }
         ri = re;
@@ -869,9 +878,44 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
         row++;
       }
       if (!r.empty() && r[0].header) border_line(3);
-      else if (ri + 1 < nrows && b.table_style != "three" &&
-               b.table_style != "tuack")
-        border_line(4, (int)ri);  // grid: a rule between every pair of rows
+      else if (ri + 1 < nrows) {
+        border_line(4, (int)ri);  // a separator between every pair of rows
+        Line& sl = bl.lines.back();
+        for (int c = 0; c < ncols && c < (int)sl.cells.size(); c++) {
+          auto sm = sepmap[ri][(size_t)c];
+          if (sm.first < 0) continue;
+          TCell& tc = sl.cells[(size_t)c];
+          const auto& orow = b.rows[(size_t)sm.first];
+          tc.text = sm.second < (int)all_lines[(size_t)sm.first][c].size()
+                        ? all_lines[(size_t)sm.first][(size_t)c][(size_t)sm.second]
+                        : "";
+          if (c < (int)orow.size()) {
+            tc.align = orow[(size_t)c].align;
+            tc.header = orow[(size_t)c].header;
+            int col = 0;
+            for (const Span& sp : orow[(size_t)c].spans) {
+              if (sp.kind != Span::Math) { col += str_width(sp.text); continue; }
+              std::string plain = latex_to_unicode(sp.tex, sp.display_math);
+              int pw = str_width(plain);
+              if (sm.second == 0) {
+                TCell::Piece pc;
+                pc.col = col;
+                pc.cols = std::max(2, pw);
+                pc.tex = sp.tex;
+                pc.display = sp.display_math;
+                tc.pieces.push_back(pc);
+              }
+              col += pw;
+            }
+          }
+          const auto& below = b.rows[(size_t)ri + 1];
+          tc.merge = c < (int)below.size() ? below[(size_t)c].merge : 0;
+          tc.hinherit = tc.merge == 1 && c + 1 < (int)below.size() &&
+                                below[(size_t)c + 1].merge == 1
+                            ? above_open((int)ri, c)
+                            : false;
+        }
+      }
     }
     border_line(2);
     row += opt_.paragraph_gap;

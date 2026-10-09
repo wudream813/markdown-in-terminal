@@ -28,6 +28,8 @@ namespace plat {
 static volatile sig_atomic_t g_winch = 0;
 static void on_winch(int) { g_winch = 1; }
 static struct termios* g_saved = nullptr;
+static struct termios g_raw;      // the raw settings we want in force
+static bool g_have_raw = false;
 static void (*g_panic)() = nullptr;
 
 // SIGTERM/SIGHUP/SIGINT land here when mdt is killed from the outside (or the
@@ -128,12 +130,28 @@ bool raw_begin(std::string* err) {
     if (err) *err = "tcsetattr failed";
     return false;
   }
+  g_raw = raw;
+  g_have_raw = true;
   signal(SIGWINCH, on_winch);
   signal(SIGPIPE, SIG_IGN);
   return true;
 }
 
+bool raw_intact() {
+  if (!g_have_raw) return true;
+  struct termios cur;
+  if (tcgetattr(STDIN_FILENO, &cur) != 0) return true;
+  return cur.c_lflag == g_raw.c_lflag && cur.c_iflag == g_raw.c_iflag &&
+         cur.c_oflag == g_raw.c_oflag && cur.c_cc[VMIN] == g_raw.c_cc[VMIN] &&
+         cur.c_cc[VTIME] == g_raw.c_cc[VTIME];
+}
+
+void raw_reassert() {
+  if (g_have_raw) tcsetattr(STDIN_FILENO, TCSANOW, &g_raw);
+}
+
 void raw_end() {
+  g_have_raw = false;
   if (g_saved) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, g_saved);
     delete g_saved;
@@ -250,6 +268,8 @@ static HANDLE g_in = INVALID_HANDLE_VALUE;
 static HANDLE g_out = INVALID_HANDLE_VALUE;
 static DWORD g_saved_in_mode = 0;
 static DWORD g_saved_out_mode = 0;
+static DWORD g_raw_in_mode = 0, g_raw_out_mode = 0;
+static bool g_have_raw_modes = false;
 static UINT g_saved_out_cp = 0;
 static bool g_cp_saved = false;
 static UINT g_saved_in_cp = 0;
@@ -423,10 +443,28 @@ bool raw_begin(std::string* err) {
              "or Windows Terminal / WezTerm / mintty)";
     return false;
   }
+  g_raw_in_mode = in_mode;
+  g_raw_out_mode = out_mode;
+  g_have_raw_modes = true;
   return true;
 }
 
+bool raw_intact() {
+  if (!g_have_raw_modes) return true;
+  DWORD in_mode = 0, out_mode = 0;
+  if (!GetConsoleMode(g_in, &in_mode) || !GetConsoleMode(g_out, &out_mode)) return true;
+  return in_mode == g_raw_in_mode && out_mode == g_raw_out_mode;
+}
+
+void raw_reassert() {
+  if (g_have_raw_modes) {
+    SetConsoleMode(g_in, g_raw_in_mode);
+    SetConsoleMode(g_out, g_raw_out_mode);
+  }
+}
+
 void raw_end() {
+  g_have_raw_modes = false;
   if (!g_modes_saved) return;
   SetConsoleMode(g_in, g_saved_in_mode);
   SetConsoleMode(g_out, g_saved_out_mode);

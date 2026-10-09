@@ -700,8 +700,18 @@ struct InlineParser {
         }
       }
       // -------------------------------------------------- hard line break --
+      if (c == '\\' && i + 1 < s.size() && s[i + 1] == '\n') {
+        flush();
+        Span br = base;
+        br.kind = Span::LineBreak;
+        out->push_back(br);
+        i += 2;
+        while (i < s.size() && s[i] == ' ') i++;
+        continue;
+      }
       if (c == '\n') {
-        bool hard = buf.size() >= 2 && buf[buf.size() - 1] == ' ' && buf[buf.size() - 2] == ' ';
+        bool hard = !buf.empty() && buf[buf.size() - 1] == '\x01';
+        if (hard) buf.pop_back();
         flush();
         Span br = base;
         br.kind = Span::LineBreak;
@@ -1397,7 +1407,9 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
           size_t c2 = 0;
           while (c2 < l2.size() && l2[c2] == ':') c2++;
           if (c2 >= cn && c2 == l2.size() && c2 >= 3) { li_++; break; }  // closing fence
-          inner.push_back(lines_[li_]);
+          std::string lit = lines_[li_];
+          if (!lit.empty() && lit.back() == '\x01') { lit.pop_back(); lit += "  "; }
+          inner.push_back(lit);
           li_++;
         }
         MarkdownParser sub;

@@ -164,6 +164,10 @@ class Terminal {
 
   // Direct escape output (bypasses the framebuffer).
   void write_raw(const std::string& s);
+  // A subprocess sharing the tty may have cooked it (text browser, pager):
+  // the event loop checks each tick and puts raw mode + mouse back.
+  bool mode_intact();
+  void reassert_mode();
 
   struct KeyEvent {
     enum Type { None, Char, Special, Mouse } type = None;
