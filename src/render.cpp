@@ -788,6 +788,18 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
         ri = re;
       }
     }
+    // "^" under a colspan group: what does the separator to its right do?
+    // Walk up through the rows above until a concrete "<"/">" answers.
+    auto above_open = [&](int rr, int c) {
+      while (rr >= 0) {
+        const auto& row = b.rows[(size_t)rr];
+        if (c + 1 >= (int)row.size()) return false;
+        if (row[(size_t)c + 1].merge == 2 || row[(size_t)c].merge == 3) return true;
+        if (row[(size_t)c + 1].merge == 1 && row[(size_t)c].merge == 1) { rr--; continue; }
+        return false;
+      }
+      return false;
+    };
     for (size_t ri = 0; ri < nrows; ri++) {
       auto& r = b.rows[ri];
       int ml = maxlines[ri];
@@ -805,6 +817,8 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
           tc.align = r[(size_t)c].align;
           tc.header = r[(size_t)c].header;
           tc.merge = r[(size_t)c].merge;
+          if (tc.merge == 1 && c + 1 < (int)r.size() && r[(size_t)c + 1].merge == 1)
+            tc.hinherit = above_open((int)ri - 1, c);
           // a vertically merged block draws the origin's content centred:
           // this slot may belong to another row of the span (or be empty)
           int orow = (int)ri, olno = lno;

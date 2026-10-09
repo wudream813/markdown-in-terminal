@@ -142,6 +142,9 @@ class DocView {
     Align align = Align::Left;
     bool header = false;
     int merge = 0;   // Luogu cell merging: 1 "^" up, 2 "<" left, 3 ">" right
+    // a "^" sitting under a colspan group: the vertical separator to its
+    // right stays open like in the row above ("^|^" reads like "^|<")
+    bool hinherit = false;
     int pad = 1;
     // vertical merge: this slot shows line `v_lno` of the origin row `v_row`
     // (-1 = empty slot of the span, -2 = not shifted); layout centres the

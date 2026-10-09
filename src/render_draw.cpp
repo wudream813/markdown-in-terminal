@@ -260,9 +260,14 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
       int ri = l.img;
       if (ri < 0 || ri + 1 >= (int)b.rows.size()) continue;
       auto hor_open = [&](int r, int c) {  // vertical separator removed here
-        const auto& rr = b.rows[(size_t)r];
-        return c + 1 < (int)rr.size() &&
-               (rr[(size_t)c + 1].merge == 2 || rr[(size_t)c].merge == 3);
+        while (r >= 0) {                   // "^|^" inherits from the row above
+          const auto& rr = b.rows[(size_t)r];
+          if (c + 1 >= (int)rr.size()) return false;
+          if (rr[(size_t)c + 1].merge == 2 || rr[(size_t)c].merge == 3) return true;
+          if (rr[(size_t)c + 1].merge == 1 && rr[(size_t)c].merge == 1) { r--; continue; }
+          return false;
+        }
+        return false;
       };
       auto seg_open = [&](int c) {  // merged cell continues across the rule
         const auto& nr = b.rows[(size_t)ri + 1];
@@ -332,7 +337,8 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
       RGB fg = tc.header ? theme_.table_header_fg : theme_.fg;
       RGB bg = (tc.header && !theme_.flat_bg) ? theme_.table_header_bg : theme_.bg;
       (void)fg;
-      bool open_left = tc.merge == 2 || (ci > 0 && l.cells[ci - 1].merge == 3);
+      bool open_left = tc.merge == 2 ||
+                       (ci > 0 && (l.cells[ci - 1].merge == 3 || l.cells[ci - 1].hinherit));
       uint32_t sep = three ? (uint32_t)' '
                    : (tuack && heavy > 0 && (int)ci == heavy) ? 0x2503
                                                               : 0x2502;
@@ -347,11 +353,13 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
       // horizontal merge group ("<"/">"): the content sits in the middle of
       // the whole merged rectangle, not of the origin column alone
       int gw = tc.width;
-      bool open_before = ci > 0 && (tc.merge == 2 || l.cells[ci - 1].merge == 3);
+      bool open_before =
+          ci > 0 && (tc.merge == 2 || l.cells[ci - 1].merge == 3 || l.cells[ci - 1].hinherit);
       if (!open_before) {
         size_t cj = ci + 1;
         while (cj < l.cells.size() &&
-               (l.cells[cj].merge == 2 || l.cells[cj - 1].merge == 3)) {
+               (l.cells[cj].merge == 2 || l.cells[cj - 1].merge == 3 ||
+                l.cells[cj - 1].hinherit)) {
           gw = l.cells[cj].x + l.cells[cj].width - tc.x;
           cj++;
         }

@@ -184,6 +184,11 @@ def main():
     check(fails, re.search(r"\n│ +跨列合并 +│\n(?:│ +│\n)+├─+┬─+┬─+┤\n│己", dump2)
           is not None,
           "merged span: no rule inside, ┬ junctions where the block ends")
+    # "^ | ^ | ^" under a colspan reads exactly like "^ | < | <": one big
+    # clean cell, centred content, no rule stubs (╴╵╶╷) anywhere
+    check(fails, re.search(r"\n│ +大块 +│\n(?:│ +│\n)+├─+┬─+┬─+┤\n│x", dump2)
+          is not None and not re.search(r"[╴╵╶╷]", dump2),
+          "^-only continuation rows merge into the same clean big cell")
     frame2 = capture(fixture2, rows=50, need=b"int main")
 
     plain = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[_\]][^\x07\x1b]*(\x07|\x1b\\)?",
