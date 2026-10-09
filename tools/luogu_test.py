@@ -73,7 +73,7 @@ def main():
     check(fails, any("┃" in l for l in lines), "tuack heavy vertical after column 2")
     # tuack separator: thin rule, broken where a merge spans it, the heavy
     # vertical crossing it as ┿, and the merged text centred on that line
-    check(fails, re.search(r"\n│ +│2 +┃3 +│4 +│\n│ 合并 ├─+┿─+┼─+┤\n│ +│5 +┃6 +│7 +│",
+    check(fails, re.search(r"\n│ +│2 +┃3 +│4 +│\n│ 合并 │ +┃ +│ +│\n│ +│5 +┃6 +│7 +│",
                            dump) is not None,
           "tuack rows get a separator rule; merges break it and centre on it")
 
@@ -195,6 +195,10 @@ def main():
     # hard line breaks: two trailing spaces and a trailing backslash
     check(fails, re.search(r"\n 硬换行甲\n 硬换行乙\n 硬换行丙\n", dump2) is not None,
           "trailing two spaces / backslash make a hard line break")
+    # Luogu writes "$n\le $": a trailing space inside inline maths is fine
+    # when the body is LaTeX, while prose dollars stay literal
+    check(fails, "n≤" in dump2 and "x²" in dump2 and "$5 and $6" in dump2,
+          "inline maths with a trailing space render; prose dollars stay text")
     # ...but inside a merged span the rules stay invisible and the exit row
     # reconnects with ┬ junctions
     check(fails, re.search(r"\n│ +跨列合并 +│\n(?:│ +│\n)+├─+┬─+┬─+┤\n│己", dump2)
@@ -298,8 +302,9 @@ def main():
         box = read_until(b"open in browser")
         plainb = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[_\]][^\x07\x1b]*(\x07|\x1b\\)?",
                         "", box.decode("utf-8", "replace"))
-        check(fails, url in plainb and "copy" in plainb,
-              "clicking a link pops a dialog showing the URL")
+        check(fails, url in plainb and "复制" in plainb and "浏览器打开" in plainb
+              and "关闭" in plainb,
+              "clicking a link pops a dialog with Chinese copy/open/close buttons")
         os.write(fd, b"c")
         clip = read_until(b"]52;c;")
         b64 = base64.b64encode(url.encode()).decode()
@@ -312,12 +317,44 @@ def main():
         os.write(fd, b"\x1b")
         read_until(b"for help", 3.0)
         os.write(fd, click)
-        again = read_until(b"open in browser", 8.0)   # wine can be slow
-        if b"open in browser" not in again:
+        hint = "浏览器打开".encode()
+        again = read_until(hint, 8.0)   # wine can be slow
+        if hint not in again:
             os.write(fd, click)
-            again += read_until(b"open in browser", 8.0)
-        check(fails, b"open in browser" in again,
+            again += read_until(hint, 8.0)
+        check(fails, hint in again,
               "Esc (or a click) closes the dialog and a click reopens it")
+        # the buttons are clickable: copy button -> OSC 52, close button -> gone
+        def dw(t):  # display width (CJK = 2)
+            import unicodedata
+            return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in t)
+
+        labels = ["c 复制", "o 浏览器打开", "Esc 关闭"]
+        uw = dw(url)
+        pw = min(100 - 4, max(46, uw + 6))
+        ulines = max(1, -(-uw // (pw - 4)))
+        ph = min(50 - 2, ulines + 6)
+        px, py = (100 - pw) // 2, (50 - ph) // 2
+        by = py + 3 + ulines
+        bws = [dw(t) + 2 for t in labels]
+        x = px + max(2, (pw - sum(bws) - 4) // 2)
+        bx = []
+        for w in bws:
+            bx.append(x)
+            x += w + 2
+        os.write(fd, ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (bx[0] + 2, by + 1, bx[0] + 2, by + 1)).encode())
+        clip2 = read_until(b"]52;c;")
+        check(fails, b64 in clip2.decode("utf-8", "replace"),
+              "clicking the copy button puts the URL on the clipboard")
+        os.write(fd, ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (bx[2] + 2, by + 1, bx[2] + 2, by + 1)).encode())
+        read_until(b"for help", 2.0)
+        os.write(fd, ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (lc + 1, lr + 1, lc + 1, lr + 1)).encode())
+        again2 = read_until("浏览器打开".encode(), 6.0)
+        check(fails, "浏览器打开" in again2.decode("utf-8", "replace"),
+              "the close button dismisses the dialog (a link click reopens it)")
+        os.write(fd, b"\x1b")
+        read_until(b"for help", 2.0)
+
         # a child process sharing the tty (xdg-open's fallback browser, a
         # pager, ...) may cook it: mdt must take raw mode back by itself.
         # (wine's console layer sits below the pty discipline, so poking the

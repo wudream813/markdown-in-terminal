@@ -763,7 +763,15 @@ struct InlineParser {
               tex = trim(tex);
               ok = !tex.empty();
             } else {
-              ok = !tex.empty() && !isspace((unsigned char)tex[0]) && !isspace((unsigned char)tex.back());
+              ok = !tex.empty() && !isspace((unsigned char)tex[0]);
+              if (ok && isspace((unsigned char)tex.back())) {
+                // Luogu documents write "$n\le $": accept the trailing space
+                // only when the body is unmistakably LaTeX, so prose like
+                // "it costs $5 and $6 today" still stays text
+                std::string t = rtrim(tex);
+                ok = !t.empty() && t.find_first_of("\\^_{") != std::string::npos;
+                if (ok) tex = t;
+              }
             }
             if (ok) {
               flush();

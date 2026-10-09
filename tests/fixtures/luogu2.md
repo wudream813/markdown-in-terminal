@@ -61,4 +61,6 @@ int main() {
 硬换行乙\
 硬换行丙
 
+行内 $n\le $ 与 $x^2 $ 和 $5 and $6 测试。
+
 链接 [洛谷](https://www.luogu.com.cn) 复制测试。

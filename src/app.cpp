@@ -29,6 +29,37 @@
 namespace mdt {
 
 // --------------------------------------------------------------- themes -----
+static const char* kLinkBtn[3] = {"c 复制", "o 浏览器打开", "Esc 关闭"};
+
+// Geometry of the link dialog, shared by the painter, the image clipper and
+// the mouse hit test so the buttons land exactly where they are drawn.
+struct LinkDlg {
+  int px = 0, py = 0, pw = 0, ph = 0, ulines = 1, by = 0;
+  int bx[3] = {0, 0, 0}, bw[3] = {0, 0, 0};
+};
+static LinkDlg link_dialog_geom(int vcols, int vrows, const std::string& url) {
+  LinkDlg g;
+  int uw = (int)str_width(url);
+  g.pw = std::min(vcols - 4, std::max(46, uw + 6));
+  int inner = g.pw - 4;
+  g.ulines = std::max(1, (uw + inner - 1) / inner);
+  g.ph = std::min(vrows - 2, g.ulines + 6);
+  g.px = (vcols - g.pw) / 2;
+  g.py = (vrows - g.ph) / 2;
+  g.by = g.py + 3 + g.ulines;
+  int total = 4;  // two gaps of two cells
+  for (int b = 0; b < 3; b++) {
+    g.bw[b] = (int)str_width(kLinkBtn[b]) + 2;
+    total += g.bw[b];
+  }
+  int x = g.px + std::max(2, (g.pw - total) / 2);
+  for (int b = 0; b < 3; b++) {
+    g.bx[b] = x;
+    x += g.bw[b] + 2;
+  }
+  return g;
+}
+
 static Theme theme_by_name(const std::string& name) {
   Theme t;
   std::string n = to_lower(name);
@@ -269,23 +300,18 @@ void App::render() {
     }
   }
   if (link_open && !link_url.empty()) {
-    int uw = (int)str_width(link_url);
-    int pw = std::min(vcols - 4, std::max(46, uw + 6));
-    int inner = pw - 4;
-    int ulines = std::max(1, (uw + inner - 1) / inner);
-    int ph = std::min(vrows - 2, ulines + 6);
-    int px = (vcols - pw) / 2, py = (vrows - ph) / 2;
+    LinkDlg g = link_dialog_geom(vcols, vrows, link_url);
     RGB pbg = theme.status_bg;
-    scr.fill_rect(px, py, pw, ph, pbg);
-    scr.box_rounded(px, py, pw, ph, theme.code_frame, pbg);
-    scr.put_str(px + 2, py + 1, " link ", theme.muted, pbg);
-    for (int k = 0; k < ulines; k++) {
-      size_t b = (size_t)k * inner;
-      std::string part = link_url.substr(b, inner);
-      scr.put_str(px + 2, py + 2 + k, part, theme.link, pbg);
+    scr.fill_rect(g.px, g.py, g.pw, g.ph, pbg);
+    scr.box_rounded(g.px, g.py, g.pw, g.ph, theme.code_frame, pbg);
+    scr.put_str(g.px + 2, g.py + 1, " 链接 ", theme.muted, pbg);
+    for (int k = 0; k < g.ulines; k++) {
+      size_t b = (size_t)k * (g.pw - 4);
+      scr.put_str(g.px + 2, g.py + 2 + k, link_url.substr(b, g.pw - 4), theme.link, pbg);
     }
-    scr.put_str(px + 2, py + 2 + ulines + 1,
-                "c copy (clipboard)   o open in browser   Esc close", theme.muted, pbg);
+    for (int b = 0; b < 3; b++)  // the keys double as clickable buttons
+      scr.put_str(g.bx[b], g.by, std::string(" ") + kLinkBtn[b] + " ", pbg, theme.link,
+                  A_REVERSE);
   }
   if (help_open) {
     int pw = std::min(74, vcols - 4), ph = std::min(20, vrows - 2);
@@ -302,7 +328,7 @@ void App::render() {
       "  Tab               toggle outline  Enter       jump to heading",
       "  /                 search          n / N       next / prev match",
       "  o                 open first link in the browser",
-      "  click a link      show it in a dialog; c copies, o opens",
+      "  click a link      dialog with clickable copy / open / close buttons",
       "  e                 export the document text to clipboard",
       "  r                 reload file     t           cycle theme",
       "  R                 force redraw    m           toggle maths rendering",
@@ -408,11 +434,8 @@ void App::render() {
     int pw = std::min(74, vcols - 4), ph = std::min(20, vrows - 2);
     clip_against((vcols - pw) / 2, (vrows - ph) / 2, pw, ph);
   } else if (link_open && !link_url.empty()) {
-    int uw = (int)str_width(link_url);
-    int pw = std::min(vcols - 4, std::max(46, uw + 6));
-    int ulines = std::max(1, (uw + pw - 5) / (pw - 4));
-    int ph = std::min(vrows - 2, ulines + 6);
-    clip_against((vcols - pw) / 2, (vrows - ph) / 2, pw, ph);
+    LinkDlg g = link_dialog_geom(vcols, vrows, link_url);
+    clip_against(g.px, g.py, g.pw, g.ph);
   } else if (toc_open && toc_panel_w > 0) {
     clip_against(0, 0, toc_panel_w + 1, vrows);
   }
@@ -467,8 +490,8 @@ void App::run() {
     int rc = system(cmd.c_str());
 #endif
     if (!term.mode_intact()) term.reassert_mode();  // the browser may share the tty
-    if (rc == 0) set_status("opened: " + url);
-    else set_status("failed to open: " + url);
+    if (rc == 0) set_status("已打开: " + url);
+    else set_status("打开失败: " + url);
   };
   // apply_mouse folds an event into the view and says whether anything moved.
   auto apply_mouse = [&](const Terminal::KeyEvent& e) -> bool {
@@ -480,7 +503,25 @@ void App::run() {
     }
     if (e.release) { scroll_drag = false; return false; }
     if (!e.drag) {
-      if (link_open) { link_open = false; return true; }  // click dismisses
+      if (link_open) {
+        LinkDlg g = link_dialog_geom(term.caps.cols, view_rows(), link_url);
+        if (e.my == g.by)
+          for (int b = 0; b < 3; b++)
+            if (e.mx >= g.bx[b] && e.mx < g.bx[b] + g.bw[b]) {
+              if (b == 0) {
+                term.set_clipboard(link_url);
+                set_status("已复制: " + link_url, 2.5);
+              } else if (b == 1) {
+                open_url_in_browser(link_url);
+                link_open = false;
+              } else {
+                link_open = false;
+              }
+              return true;
+            }
+        link_open = false;  // clicking outside dismisses
+        return true;
+      }
       std::string url;
       if (view.link_at(e.mx, e.my, url)) {
         link_url = url;
@@ -575,7 +616,7 @@ void App::run() {
         link_open = false;
       } else if (e.type == Terminal::KeyEvent::Char && ch == 'c') {
         term.set_clipboard(link_url);  // OSC 52: the terminal puts it on the clipboard
-        set_status("copied: " + link_url, 2.5);
+        set_status("已复制: " + link_url, 2.5);
       } else if (key == Terminal::K_ENTER ||
                  (e.type == Terminal::KeyEvent::Char && ch == 'o')) {
         open_url_in_browser(link_url);
