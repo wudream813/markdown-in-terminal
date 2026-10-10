@@ -198,6 +198,9 @@ class DocView {
   struct ImageAsset {
     std::string source;
     int cols = 0, rows = 0;
+    // cell maths: where the (possibly widened) bitmap box starts, in cells
+    // from the cell content's first column
+    int box_col = 0;
     int px_w = 0, px_h = 0;
     double baseline_px = 0;
     std::vector<uint8_t> rgba;
@@ -258,7 +261,8 @@ class DocView {
   void place_cell_math(Screen* scr, int cell_x, int cell_w, int yy, const TCell& tc, int cw,
                        int chh, int scroll_row, RGB bg);
   // Bitmap for a formula inside a table cell (see TCell::Piece).
-  std::shared_ptr<ImageAsset> cell_math_asset(const TCell::Piece& pc, int cw, int chh, RGB bg);
+  std::shared_ptr<ImageAsset> cell_math_asset(const TCell::Piece& pc, int cw, int chh,
+                                              int max_cells, RGB bg);
   // Code blocks: the frame hugs the code instead of spanning the page, and long
   // lines are wrapped rather than cut off at the frame edge.
   int code_frame_width(const Block& b) const;

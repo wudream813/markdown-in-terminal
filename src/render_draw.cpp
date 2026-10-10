@@ -283,20 +283,7 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
         if (up) return right ? (left ? 0x2534u : 0x2514u) : (left ? 0x2518u : 0x2575u);
         return right ? (left ? 0x252Cu : 0x250Cu) : (left ? 0x2510u : 0x2577u);
       };
-      if (tuack) {
-        // blank separator, but the verticals (and the heavy one) keep running
-        // through it so columns and merged spans stay readable
-        scr.put(lx, yy, (uint32_t)0x2502, theme_.table_border, theme_.bg);
-        for (size_t ci = 0; ci < l.cells.size(); ci++) {
-          const TCell& tc = l.cells[ci];
-          bool open = hor_open(ri, (int)ci) || hor_open(ri + 1, (int)ci);
-          uint32_t v = heavy > 0 && (int)ci + 1 == heavy ? 0x2503u : 0x2502u;
-          scr.put(lx + 1 + tc.x + tc.width, yy, open ? (uint32_t)' ' : v,
-                  theme_.table_border, theme_.bg);
-        }
-        scr.put(lx + 1 + l.cells.back().x + l.cells.back().width, yy, (uint32_t)0x2502,
-                theme_.table_border, theme_.bg);
-      } else if (!three) {  // three-line booktabs keeps the separator empty
+      if (!three) {  // three-line booktabs keeps the separator empty
         scr.put(lx, yy, seg_open(0) ? 0x2502 : 0x251C, theme_.table_border, theme_.bg);
         for (size_t ci = 0; ci < l.cells.size(); ci++) {
           const TCell& tc = l.cells[ci];
@@ -304,10 +291,13 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
             scr.put(lx + 1 + tc.x + k, yy,
                     seg_open((int)ci) ? (uint32_t)' ' : (uint32_t)0x2500,
                     theme_.table_border, theme_.bg);
-          scr.put(lx + 1 + tc.x + tc.width, yy,
-                  junc(!hor_open(ri, (int)ci), !hor_open(ri + 1, (int)ci),
-                       !seg_open((int)ci), !seg_open((int)ci + 1)),
-                  theme_.table_border, theme_.bg);
+          uint32_t jch;
+          if (tuack && heavy > 0 && (int)ci + 1 == heavy)
+            jch = (!seg_open((int)ci) && !seg_open((int)ci + 1)) ? 0x253Fu : 0x2503u;
+          else
+            jch = junc(!hor_open(ri, (int)ci), !hor_open(ri + 1, (int)ci),
+                       !seg_open((int)ci), !seg_open((int)ci + 1));
+          scr.put(lx + 1 + tc.x + tc.width, yy, jch, theme_.table_border, theme_.bg);
         }
         scr.put(lx + 1 + l.cells.back().x + l.cells.back().width, yy,
                 seg_open((int)l.cells.size() - 1) ? 0x2502 : 0x2524, theme_.table_border,

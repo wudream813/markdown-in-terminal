@@ -73,7 +73,7 @@ def main():
     check(fails, any("┃" in l for l in lines), "tuack heavy vertical after column 2")
     # tuack separator: thin rule, broken where a merge spans it, the heavy
     # vertical crossing it as ┿, and the merged text centred on that line
-    check(fails, re.search(r"\n│ +│2 +┃3 +│4 +│\n│ 合并 │ +┃ +│ +│\n│ +│5 +┃6 +│7 +│",
+    check(fails, re.search(r"\n│ +│2 +┃3 +│4 +│\n│ 合并 ├─+┿─+┼─+┤\n│ +│5 +┃6 +│7 +│",
                            dump) is not None,
           "tuack rows get a separator rule; merges break it and centre on it")
 

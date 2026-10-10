@@ -551,9 +551,9 @@ void DocView::relayout() {
 // already the size of the cells it is drawn into, the terminal does not scale
 // it (that is what keeps formulas sharp elsewhere too).
 std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece& pc, int cw, int chh,
-                                                             RGB bg) {
-  std::string key = fmt("CM|%d|%d|%d|%d|%06x|%s", cw, chh, pc.cols, pc.display ? 1 : 0,
-                        (bg.r << 16) | (bg.g << 8) | bg.b, pc.tex.c_str());
+                                                             int max_cells, RGB bg) {
+  std::string key = fmt("CM|%d|%d|%d|%d|%d|%06x|%s", cw, chh, pc.cols, max_cells,
+                        pc.display ? 1 : 0, (bg.r << 16) | (bg.g << 8) | bg.b, pc.tex.c_str());
   auto it = asset_map_.find(key);
   if (it != asset_map_.end()) return it->second;
   auto a = std::make_shared<ImageAsset>();
@@ -563,23 +563,56 @@ std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece
   double em = em_px();
   MathMetrics m = math_->metrics(pc.tex, false, em);
   if (!m.ok) { a->failed = true; a->err = "cannot typeset"; return a; }
-  int w = std::max(2, pc.cols) * cw;
   int h = chh;
   int cb = cell_baseline_px();
-  // scale the formula so it fits the width, the cell height, and leaves room
-  // for the baseline: the ink has to sit inside one cell with its baseline on
-  // the cell's text baseline, otherwise the bitmap cannot be placed on the
-  // grid without hanging over its neighbours
-  double scale = std::min(1.0, (double)w / std::max(1.0, m.px_w));
-  if (m.px_h * scale > h - 2) scale = (h - 2) / std::max(1.0, m.px_h);
+  // Scale for the cell height first (the size of the text around it), then
+  // give the ink as many cells as it needs at that size - centred on the
+  // transcription - so a short formula like "n\le" is not shrunk to a stamp.
+  // Only when even the whole group is too narrow does it scale down.
+  double scale = std::min(1.0, (double)(h - 2) / std::max(1.0, (double)m.px_h));
   if (m.baseline_px > 1 && m.baseline_px * scale > cb) scale = (double)cb / m.baseline_px;
-  if (m.px_h * scale > h) scale = (double)h / std::max(1.0, m.px_h);
+  if (m.px_h * scale > h) scale = (double)h / std::max(1.0, (double)m.px_h);
+  int need = (int)std::ceil((m.px_w * scale) / (double)std::max(1, cw));
+  int box = std::max(std::max(2, pc.cols), need);
+  if (box > max_cells) box = max_cells;
+  double scale_w = (double)(box * cw) / std::max(1.0, (double)m.px_w);
+  if (scale > scale_w) scale = scale_w;
+  int w = box * cw;
+  int bx = pc.col - (box - pc.cols) / 2;
+  if (bx < 0) bx = 0;
+  if (bx + box > max_cells) bx = max_cells - box;
   Image img;
   int off_x = 0, off_y = 0;
   if (!math_->raster_grid(pc.tex, false, em * scale, w, h, theme_.math_fg, img, &off_x, &off_y)) {
     a->failed = true;
     a->err = "raster failed";
     return a;
+  }
+  // centre the ink horizontally inside its (possibly widened) box
+  int ink_w = 0, ink_left = 0;
+  {
+    int minx = w, maxx = -1;
+    for (int y = 0; y < h; y++)
+      for (int x = 0; x < w; x++)
+        if (img.rgba[((size_t)y * w + x) * 4 + 3] > 0) {
+          if (x < minx) minx = x;
+          if (x > maxx) maxx = x;
+        }
+    if (maxx >= 0) {
+      ink_w = maxx - minx + 1;
+      ink_left = (int)std::lround((w - ink_w) / 2.0);
+      int dx = ink_left - minx;
+      if (dx != 0) {
+        std::vector<unsigned char> moved((size_t)w * h * 4, 0);
+        for (int y = 0; y < h; y++)
+          for (int x = 0; x < w; x++) {
+            int sx = x - dx;
+            if (sx < 0 || sx >= w) continue;
+            memcpy(&moved[((size_t)y * w + x) * 4], &img.rgba[((size_t)y * w + sx) * 4], 4);
+          }
+        img.rgba.swap(moved);
+      }
+    }
   }
   // shift the ink so that its baseline lands exactly on the cell baseline
   int shift = (int)std::lround(cb - m.baseline_px * scale) - off_y;
@@ -592,21 +625,32 @@ std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece
     }
     img.rgba.swap(moved);
   }
-  // paint the cell background behind the ink, so anything underneath is covered
-  // instead of showing through the transparent parts
-  for (size_t i = 0; i + 3 < img.rgba.size(); i += 4) {
-    double al = img.rgba[i + 3] / 255.0;
-    for (int k = 0; k < 3; k++) {
-      double fg = img.rgba[i + k];
-      double bgc = k == 0 ? bg.r : (k == 1 ? bg.g : bg.b);
-      img.rgba[i + k] = (uint8_t)std::lround(fg * al + bgc * (1 - al));
+  // Paint the cell background behind the ink and behind the transcription it
+  // replaces, so nothing shows through - but leave the rest of a widened box
+  // transparent, so the cell's own wash/padding stays untouched.
+  int tx0 = (pc.col - bx) * cw;
+  int u0 = std::min(tx0, ink_left);
+  int u1 = std::max(tx0 + pc.cols * cw, ink_left + ink_w);
+  for (int y = 0; y < h; y++)
+    for (int x = 0; x < w; x++) {
+      size_t i = ((size_t)y * w + x) * 4;
+      if (x < u0 || x >= u1) {
+        img.rgba[i] = img.rgba[i + 1] = img.rgba[i + 2] = img.rgba[i + 3] = 0;
+        continue;
+      }
+      double al = img.rgba[i + 3] / 255.0;
+      for (int k = 0; k < 3; k++) {
+        double fg = img.rgba[i + k];
+        double bgc = k == 0 ? bg.r : (k == 1 ? bg.g : bg.b);
+        img.rgba[i + k] = (uint8_t)std::lround(fg * al + bgc * (1 - al));
+      }
+      img.rgba[i + 3] = 255;
     }
-    img.rgba[i + 3] = 255;
-  }
   a->rgba = img.rgba;
   a->px_w = w;
   a->px_h = h;
-  a->cols = std::max(2, pc.cols);
+  a->cols = box;
+  a->box_col = bx;
   a->rows = 1;
   a->baseline_px = cb;  // the ink was baked onto this baseline
   if (getenv("MDT_DEBUG_CELLMATH"))
@@ -637,13 +681,13 @@ void DocView::place_cell_math(Screen* scr, int cell_x, int cell_w, int yy, const
   int inner = std::max(2, cell_w - 2);
   for (const TCell::Piece& pc : tc.pieces) {
     if (pc.col + pc.cols > inner) continue;  // does not fit the column: text only
-    auto a = cell_math_asset(pc, cw, chh, bg);
+    auto a = cell_math_asset(pc, cw, chh, cell_w, bg);
     if (a->failed || a->png.empty()) continue;
     cell_assets_.push_back(a);  // PlacedImage only holds pointers into it
     PlacedImage im;
     // cell_x is already the first column of the cell's content (the caller adds
-    // its padding and alignment), so the piece only adds its own column.
-    im.x = cell_x + pc.col;
+    // its padding and alignment); a widened box starts left of the piece.
+    im.x = cell_x + a->box_col;
     // The bitmap is one cell tall with the formula's baseline baked in at the
     // cell's own baseline (see cell_math_asset), so it is placed exactly on the
     // cell row: no sub-cell offset, nothing spilling into the row above or
@@ -661,8 +705,10 @@ void DocView::place_cell_math(Screen* scr, int cell_x, int cell_w, int yy, const
     // transcription has to go from the text layer or it shows through/around
     // the bitmap.  Without graphics the transcription is what remains.
     if (scr) {
+      // blank the transcription itself; the padding around a widened box is
+      // already empty
       for (int k = 0; k < pc.cols && pc.col + k < cell_w; k++)
-        scr->put(im.x + k, im.y, ' ', theme_.fg, bg);
+        scr->put(cell_x + pc.col + k, im.y, ' ', theme_.fg, bg);
     }
   }
 }
