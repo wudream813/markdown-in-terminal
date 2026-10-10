@@ -49,6 +49,8 @@ struct Block {
   std::string dir_name, dir_label, dir_attrs;
   bool dir_leaf = false;          // "::name" (exactly two colons, own line)
   int dir_colons = 3;             // colon count of the opening fence
+  int uid = -1;                   // unique id among directive blocks (fold state)
+  bool dir_open = false;          // {open} attribute: start expanded
   // table style from a preceding "::cute-table{...}" leaf directive
   std::string table_style;        // "", "three", "tuack"
   int table_style_arg = 0;        // tuack=N: the heavy vertical rule sits after column N
@@ -75,6 +77,7 @@ struct LinkRef {
 };
 
 struct MdDocument {
+  int uid_ctr = 0;                // hands out Block::uid while parsing
   std::vector<Block> blocks;
   bool entities_unescaped = false;  // the source looked HTML-escaped and was decoded
   int backslashes_removed = 0;      // >0 when the source looked backslash-escaped

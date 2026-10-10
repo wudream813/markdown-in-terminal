@@ -117,6 +117,7 @@ struct App {
   bool help_open = false;
   bool link_open = false;          // the clicked-link dialog
   std::string link_url;
+  int link_hover = -1;             // dialog button under the pointer
   bool search_mode = false;
   bool quit = false;
   std::string search_query;
@@ -310,8 +311,12 @@ void App::render() {
       scr.put_str(g.px + 2, g.py + 2 + k, link_url.substr(b, g.pw - 4), theme.link, pbg);
     }
     for (int b = 0; b < 3; b++)  // the keys double as clickable buttons
-      scr.put_str(g.bx[b], g.by, std::string(" ") + kLinkBtn[b] + " ", pbg, theme.link,
-                  A_REVERSE);
+      if (b == link_hover)       // hovered: lit up instead of reversed
+        scr.put_str(g.bx[b], g.by, std::string(" ") + kLinkBtn[b] + " ", theme.link, pbg,
+                    A_BOLD | A_UNDER);
+      else
+        scr.put_str(g.bx[b], g.by, std::string(" ") + kLinkBtn[b] + " ", pbg, theme.link,
+                    A_REVERSE);
   }
   if (help_open) {
     int pw = std::min(74, vcols - 4), ph = std::min(20, vrows - 2);
@@ -329,6 +334,7 @@ void App::render() {
       "  /                 search          n / N       next / prev match",
       "  o                 open first link in the browser",
       "  click a link      dialog with clickable copy / open / close buttons",
+      "  click a \u25b8 title   fold or unfold a callout box ({open} starts open)",
       "  e                 export the document text to clipboard",
       "  r                 reload file     t           cycle theme",
       "  R                 force redraw    m           toggle maths rendering",
@@ -501,6 +507,20 @@ void App::run() {
     if (e.wheel_down) {
       int s0 = view.scroll_top(); view.scroll_by(3); return view.scroll_top() != s0;
     }
+    if (e.motion && !e.drag) {  // pointer move: hover feedback on the buttons
+      int h = -1;
+      if (link_open && !link_url.empty()) {
+        LinkDlg g = link_dialog_geom(term.caps.cols, view_rows(), link_url);
+        if (e.my == g.by)
+          for (int b = 0; b < 3; b++)
+            if (e.mx >= g.bx[b] && e.mx < g.bx[b] + g.bw[b]) h = b;
+      }
+      if (h != link_hover) {
+        link_hover = h;
+        return true;
+      }
+      return false;
+    }
     if (e.release) { scroll_drag = false; return false; }
     if (!e.drag) {
       if (link_open) {
@@ -528,6 +548,7 @@ void App::run() {
         link_open = true;
         return true;
       }
+      if (view.toggle_box_at(e.mx, e.my)) return true;  // fold a callout box
     }
     if (scroll_drag || (!e.drag && scrollbar_active &&
                         e.mx >= view_cols() - 1 && e.my >= 0 && e.my < view_rows())) {
@@ -1042,6 +1063,7 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
   ro.show_line_numbers = opt.show_line_numbers;
   ro.em_px_override = opt.font_px;
   ro.text_math = true;  // a text dump cannot contain bitmaps
+  ro.fold_ui = false;   // ... and it must carry the full content of every box
   ro.lazy_metrics = false;
   ro.code_fit = opt.code_fit;
   ro.inline_images = false;  // a text dump needs no pixels (and no network)

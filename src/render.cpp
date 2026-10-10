@@ -1549,6 +1549,15 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
   bool callout = is_callout_name(b.dir_name);
   RGB c = callout ? callout_color(b.dir_name) : bar_rgb;
   bool cu = custom || callout;
+  // A titled Luogu callout is a folding box: collapsed unless {open} says so,
+  // clicking the title band toggles it (DocView::toggle_box_at).
+  bool collapsible = callout && !b.dir_label.empty() && opt_.fold_ui;
+  bool expanded = true;
+  if (collapsible) {
+    auto it = box_open_.find(b.uid);
+    if (it == box_open_.end()) it = box_open_.emplace(b.uid, b.dir_open).first;
+    expanded = it->second;
+  }
   // A callout draws its own bar in column `indent`; everything belonging to it
   // (title, content, nested containers) carries that column plus its colour.
   std::vector<int> own_bars = bars;
@@ -1558,6 +1567,14 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
     // The title is ordinary inline markup - Luogu titles regularly carry
     // formulas (:::info[$x^2$ 标题]) - so parse and wrap it like a paragraph.
     std::vector<Span> sp = inline_parser_.parse_inline(b.dir_label);
+    if (collapsible) {  // the fold-state arrow rides at the end of the title
+      Span ar;
+      ar.text = expanded ? " \u25be" : " \u25b8";
+      ar.bold = true;
+      ar.has_color = true;
+      ar.color = c;
+      sp.push_back(ar);
+    }
     Span base;
     base.bold = true;
     base.has_color = true;
@@ -1571,6 +1588,7 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
       l.bar_rgbs = own_cols;
       l.bars_custom = cu;
       l.bar_rgb = c;
+      l.toggle_uid = collapsible ? b.uid : -1;
       l.band = true;
       l.band_bg = tint;
       l.band_x0 = indent;             // from the callout's own bar column ...
@@ -1599,8 +1617,9 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
   size_t first = bl.lines.size();
   static const std::vector<Block> no_blocks;
   const std::vector<Block>& sub = b.items.empty() ? no_blocks : b.items[0];
-  for (const Block& sb : sub)
-    directive_child_layout(bl, sb, row, ind2, bars2, cols2, cu, c);
+  if (!collapsible || expanded)
+    for (const Block& sb : sub)
+      directive_child_layout(bl, sb, row, ind2, bars2, cols2, cu, c);
 
   if (shift) {
     // move each built line so its content sits centred / right-aligned inside

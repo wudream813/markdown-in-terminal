@@ -217,7 +217,7 @@ def main():
     plain = re.sub(r"(?<![0-9])(?:\d+;)+\d+m", "", plain)
     check(fails, " 1 int main() {" in plain, "luogu code block shows line numbers")
     pos = frame2.find("内内容")
-    seg = frame2[max(0, pos - 300):pos] if pos >= 0 else ""
+    seg = frame2[max(0, pos - 500):pos] if pos >= 0 else ""
     iw, isucc = seg.rfind("38;2;224;175;104"), seg.rfind("38;2;158;206;106")
     check(fails, pos >= 0 and iw != -1 and isucc != -1 and iw < isucc,
           "nested bars keep per-level colours (warning outer, success inner)")
@@ -355,6 +355,22 @@ def main():
         os.write(fd, b"\x1b")
         read_until(b"for help", 2.0)
 
+        # hover: moving onto a button redraws it lit, staying put is quiet
+        # (wine's console layer does not forward button-less motion events,
+        # just like it can swallow a bare ESC - real Windows Terminal does)
+        if not wine:
+            os.write(fd, ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (lc + 1, lr + 1, lc + 1, lr + 1)).encode())
+            read_until("浏览器打开".encode(), 4.0)
+            mov = lambda c, r: ("\x1b[<35;%d;%dM" % (c, r)).encode()
+            os.write(fd, mov(bx[0] + 2, by + 1))
+            hov = read_until(b"\x00never", 1.2)
+            os.write(fd, mov(bx[0] + 2, by + 1))
+            hov2 = read_until(b"\x00never", 0.8)
+            os.write(fd, mov(2, by + 1))
+            read_until(b"\x00never", 0.8)
+            check(fails, len(hov) > 0 and len(hov2) == 0,
+                  "dialog buttons highlight on hover")
+
         # a child process sharing the tty (xdg-open's fallback browser, a
         # pager, ...) may cook it: mdt must take raw mode back by itself.
         # (wine's console layer sits below the pty discipline, so poking the
@@ -367,6 +383,71 @@ def main():
             cur = termios.tcgetattr(fd)
             check(fails, not (cur[3] & termios.ECHO) and not (cur[3] & termios.ICANON),
                   "mdt re-asserts raw mode after another process cooks the tty")
+        os.write(fd, b"q")
+        try:
+            os.close(fd)
+            os.kill(pid, 15)
+            os.waitpid(pid, 0)
+        except (OSError, ChildProcessError):
+            pass
+
+    # ---- round 27: folding boxes: collapsed by default, {open} starts
+    # expanded, and clicking the title band toggles --------------------------
+    d100m = subprocess.run(argv + ["--dump", "--width=100", fixture],
+                           capture_output=True).stdout.decode("utf-8", "replace")
+    d100m = d100m.replace("\r\n", "\n")
+    tr = tc = -1
+    for i, s2 in enumerate(d100m.splitlines()):
+        j = s2.find("这是一个提示")
+        if j >= 0:
+            tr, tc = i, disp_col(s2, j)
+            break
+    if tr < 0:
+        check(fails, False, "fold-box title found in the dump")
+    else:
+        pid, fd = ptymod.fork()
+        if pid == 0:
+            env = dict(os.environ)
+            env["TERM"] = "xterm-256color"
+            os.execvpe(argv[0], argv + ["--gfx=none", fixture], env)
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
+        acc2 = b""
+
+        def read2(needle, timeout=12.0):
+            nonlocal acc2
+            t0 = time.time()
+            start = len(acc2)
+            while time.time() - t0 < timeout:
+                r, _, _ = select.select([fd], [], [], 0.2)
+                if r:
+                    try:
+                        chunk = os.read(fd, 1 << 20)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    acc2 += chunk
+                if needle in acc2[start:].replace(b"\r\r\n", b"") \
+                        and time.time() - t0 > 0.4:
+                    break
+            return acc2[start:].replace(b"\r\r\n", b"")
+
+        strip = lambda t: re.sub(
+            r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[_\]][^\x07\x1b]*(\x07|\x1b\\)?", "", t)
+        f0 = read2(b"for help").decode("utf-8", "replace")
+        p0 = strip(f0)
+        check(fails, "这是一个提示" in p0 and "\u25b8" in p0
+              and "我是提示内容" not in p0 and "我是展开内容。" in p0,
+              "callout boxes start collapsed; {open} starts expanded")
+        click_t = ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (tc + 1, tr + 1, tc + 1, tr + 1)).encode()
+        os.write(fd, click_t)
+        f1 = read2("我是提示内容".encode(), 8.0).decode("utf-8", "replace")
+        check(fails, "我是提示内容" in f1, "clicking the title unfolds the box")
+        os.write(fd, click_t)
+        f2 = read2(b"\x00never", 1.5).decode("utf-8", "replace")
+        p2 = strip(f2)
+        check(fails, "我是提示内容" not in p2 and "\u25b8" in p2,
+              "clicking the title again folds it back")
         os.write(fd, b"q")
         try:
             os.close(fd)

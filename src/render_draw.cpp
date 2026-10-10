@@ -71,6 +71,24 @@ bool DocView::link_at(int mx, int my, std::string& url) const {
   return false;
 }
 
+bool DocView::toggle_box_at(int mx, int my) {
+  for (const auto& bl : layout_) {
+    int base = bl.row - scroll_;
+    if (my < base || my >= base + bl.rows) continue;
+    for (const auto& line : bl.lines) {
+      if (line.toggle_uid < 0) continue;
+      if (my < base + line.row || my >= base + line.row + std::max(1, line.rows)) continue;
+      if (mx < line.band_x0 || mx > line.band_x1) continue;
+      auto it = box_open_.find(line.toggle_uid);
+      if (it == box_open_.end()) continue;
+      it->second = !it->second;
+      relayout();  // clears + rebuilds the rows and clamps the scroll offset
+      return true;
+    }
+  }
+  return false;
+}
+
 RGB DocView::draw_line_chrome(Screen& scr, int x0, int sy, const Line& line) {
   RGB lbg = theme_.bg;
   int lrows = std::max(1, line.rows);

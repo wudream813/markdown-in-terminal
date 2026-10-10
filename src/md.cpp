@@ -1389,6 +1389,7 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
         b.type = Block::Directive;
         b.dir_name = to_lower(t.substr(cn, p - cn));
         b.dir_colons = (int)cn;
+        b.uid = doc_->uid_ctr++;
         std::string tail = t.substr(p);
         if (!tail.empty() && tail[0] == '[') {
           size_t close = tail.rfind(']');
@@ -1401,6 +1402,15 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
         if (!tail.empty() && tail[0] == '{') {
           size_t close = tail.rfind('}');
           if (close != std::string::npos && close > 0) b.dir_attrs = trim(tail.substr(1, close - 1));
+        }
+        {  // {open} (possibly among comma/space separated attrs): start unfolded
+          std::string at = to_lower(b.dir_attrs);
+          for (size_t q = 0, p2 = 0; p2 <= at.size(); p2 = q + 1) {
+            q = p2;
+            while (q < at.size() && at[q] != ',' && !isspace((unsigned char)at[q])) q++;
+            if (at.substr(p2, q - p2) == "open") { b.dir_open = true; break; }
+            if (q >= at.size()) break;
+          }
         }
         li_++;
         doc_->luogu = true;

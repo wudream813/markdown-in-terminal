@@ -176,6 +176,7 @@ class Terminal {
     int mx = 0, my = 0;  // mouse cell coords
     bool wheel_up = false, wheel_down = false;
     bool drag = false;              // motion event with a button held
+    bool motion = false;            // any pointer motion (hover feedback)
     bool release = false;           // button-up (SGR final 'm')
   };
   enum Key {

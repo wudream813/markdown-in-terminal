@@ -1,16 +1,16 @@
 # _round 17_
 
-:::info[标题公式 $\sqrt{2}$ 结尾]
+:::info[标题公式 $\sqrt{2}$ 结尾]{open}
 
 内容一行。
 
 :::
 
-:::::warning[外层]
+:::::warning[外层]{open}
 
 外内容。
 
-::::success[内层 $x^2$]
+::::success[内层 $x^2$]{open}
 
 内内容。
 

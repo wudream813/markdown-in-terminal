@@ -65,6 +65,8 @@ struct RenderOptions {
   bool remote_images = true;   // fetch http(s):// pictures at all
   bool async_images = false;   // ... on a worker thread (interactive reading)
   bool text_math = false;       // force the plain-Unicode maths fallback
+  bool fold_ui = true;          // callout boxes fold (off = plain-text dump:
+                                // always show the full content, no arrows)
   bool lazy_metrics = true;     // typeset only formulas that are on screen
   int em_px_override = 0;       // 0 = derive from the cell size
   bool code_fit = false;        // code frames hug the code instead of the page
@@ -127,6 +129,9 @@ class DocView {
   // Screen-cell hit test for links: true when (mx, my) is inside a link run
   // of the currently laid-out, scrolled document; `url` receives its target.
   bool link_at(int mx, int my, std::string& url) const;
+  // Screen-cell hit test for callout title bands: folds/unfolds the box and
+  // relayouts.  True when something changed (the caller redraws).
+  bool toggle_box_at(int mx, int my);
 
  private:
   struct Run {
@@ -173,6 +178,7 @@ class DocView {
     std::vector<RGB> bar_rgbs;  // per-bar-column colours, parallel to bars;
                                 // empty falls back to bars_custom/quote colour
     bool band = false;          // callout titles get a light background band
+    int toggle_uid = -1;        // callout title: clicking the band folds/unfolds
     RGB band_bg{0, 0, 0};       // ... in a tint of the callout colour
     int band_x0 = 0, band_x1 = 0;  // band span, content columns inclusive
     int img = -1;               // kind == Image
@@ -224,6 +230,8 @@ class DocView {
   std::string path_, base_dir_;
   int cols_ = 80, view_rows_ = 24, content_w_ = 78;
   int total_rows_ = 0, scroll_ = 0;
+  // per-callout fold state, keyed by Block::uid; seeded from the {open} attr
+  std::map<int, bool> box_open_;
   bool lazy_metrics_ = true;
   bool offscreen_ = false;
   bool layout_dirty_ = false;

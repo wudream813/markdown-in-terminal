@@ -228,7 +228,7 @@ bool Terminal::init(const std::string& gfx_override) {
   wout("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H");  // alt screen
   // 1002 also reports motion while a button is held, which is what makes a
   // scrollbar drag update live; 1000 alone only reports press and release.
-  wout("\x1b[?1002h\x1b[?1006h");              // mouse: wheel + drag + SGR coords
+  wout("\x1b[?1003h\x1b[?1006h");  // mouse: wheel + any motion (hover) + SGR
   if (!g_compat) wout("\x1b[>1u");             // kitty keyboard (best effort)
 
   handle_resize();
@@ -330,7 +330,8 @@ void Terminal::query_capabilities(int timeout_ms) {
 // Byte-for-byte the same sequence shutdown() writes, but in a static buffer so
 // it can be emitted from a signal handler.
 static const char kPanicExit[] =
-    "\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?25h\x1b[0m\x1b[?1049l";
+    "\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h\x1b[0m\x1b["
+    "?1049l";
 
 void Terminal::panic_restore() {
   plat::write_out(kPanicExit, sizeof(kPanicExit) - 1);
@@ -339,7 +340,8 @@ void Terminal::panic_restore() {
 void Terminal::shutdown() {
   if (!initialized_) return;
   clear_images();
-  wout("\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?25h\x1b[0m\x1b[?1049l");
+  wout("\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h\x1b[0m"
+       "\x1b[?1049l");
   if (raw_saved_) {
     plat::raw_end();
     raw_saved_ = false;
@@ -353,7 +355,7 @@ bool Terminal::mode_intact() { return plat::raw_intact(); }
 void Terminal::reassert_mode() {
   plat::raw_reassert();
   // the intruder may also have reset the terminal's private modes
-  wout("\x1b[?1049h\x1b[?25l\x1b[?1002h\x1b[?1006h");
+  wout("\x1b[?1049h\x1b[?25l\x1b[?1003h\x1b[?1006h");
 }
 void Terminal::set_title(const std::string& t) { wout("\x1b]0;" + t + "\x07"); }
 void Terminal::set_clipboard(const std::string& s) { wout("\x1b]52;c;" + base64_encode((const uint8_t*)s.data(), s.size()) + "\x07"); }
@@ -446,7 +448,8 @@ Terminal::KeyEvent Terminal::read_event(int timeout_ms) {
             k.type = KeyEvent::Mouse; k.code = b;
             k.mx = atoi(parts[1].c_str()) - 1; k.my = atoi(parts[2].c_str()) - 1;
             if (btn == '<' && (b & 64)) { if (b & 1) k.wheel_down = true; else k.wheel_up = true; }
-            k.drag = (b & 32) != 0;
+            k.motion = (b & 32) != 0;
+            k.drag = k.motion && (b & 3) != 3;  // motion with a button held
             k.release = (final == 'm');   // button-up
             return k;
           }
