@@ -421,7 +421,9 @@ were used (`+entities`, `+escapes`, `+loose`, `+clean`).
   (Windows Terminal 1.22+, WezTerm, mintty) or the Unicode maths fallback.
 * Luogu callouts are folding boxes: collapsed by default, `{open}` on the
   directive starts them expanded, and clicking the title band toggles them
-  live (the title carries a `▸`/`▾` state arrow and a hover wash).  Plain-text
+  live (the title carries a `▸`/`▾` state arrow and a hover wash).  Jumps that
+  land inside a folded box (search, outline, `J`/`K`) open it on the way, and
+  the outline and search see text inside the boxes too.  Plain-text
   dumps always print the full content of every box.  Bilibili video embeds are
   not played — the reader is
   text and pictures only. `^`/`<`/`>` merge markers and the C++ default for

@@ -71,6 +71,19 @@ bool DocView::link_at(int mx, int my, std::string& url) const {
   return false;
 }
 
+bool DocView::open_fold_path(const std::vector<int>& uids) {
+  bool changed = false;
+  for (int uid : uids) {
+    auto it = box_open_.find(uid);
+    if (it != box_open_.end() && !it->second) {
+      it->second = true;
+      changed = true;
+    }
+  }
+  if (changed) relayout();
+  return changed;
+}
+
 int DocView::fold_title_at(int mx, int my) const {
   for (const auto& bl : layout_) {
     int base = bl.row - scroll_;

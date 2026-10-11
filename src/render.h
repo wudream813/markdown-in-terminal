@@ -132,6 +132,10 @@ class DocView {
   // Screen-cell hit test for callout title bands: folds/unfolds the box and
   // relayouts.  True when something changed (the caller redraws).
   bool toggle_box_at(int mx, int my);
+  // opens the folding boxes listed by uid, outermost first (search / outline /
+  // J,K jumps into a folded box would otherwise land on hidden rows);
+  // relayouts when anything actually opened
+  bool open_fold_path(const std::vector<int>& uids);
   // uid of the folding-box title band under (mx, my), -1 when none
   int fold_title_at(int mx, int my) const;
   bool set_hover_fold(int uid) {

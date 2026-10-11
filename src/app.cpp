@@ -101,7 +101,34 @@ struct OutlineItem {
   int block = 0;
   int level = 1;
   std::string text;
+  std::vector<int> path;  // uids of the folding boxes around it, outer first
 };
+
+struct SearchHit {
+  int block = 0;
+  std::string ctx;
+  std::vector<int> path;  // like OutlineItem::path
+};
+
+// every block of the document in reading order, with the top-level block it
+// lives in and the folding boxes around it (nested directive content used to
+// be invisible to the outline and the search)
+struct Visit {
+  int top = 0;
+  const Block* b = nullptr;
+  std::vector<int> path;
+};
+void collect_visits(const std::vector<Block>& v, int top, const std::vector<int>& path,
+                    std::vector<Visit>* out) {
+  for (size_t i = 0; i < v.size(); i++) {
+    const Block& b = v[i];
+    int my_top = top >= 0 ? top : (int)i;
+    out->push_back(Visit{my_top, &b, path});
+    std::vector<int> inner = path;
+    if (b.type == Block::Directive && !b.dir_leaf && b.uid >= 0) inner.push_back(b.uid);
+    for (const auto& nest : b.items) collect_visits(nest, my_top, inner, out);
+  }
+}
 
 struct App {
   AppOptions opt;
@@ -110,7 +137,7 @@ struct App {
   DocView view;
   Theme theme;
   std::vector<OutlineItem> outline;
-  std::vector<std::pair<int, std::string>> search_hits;  // (block, context)
+  std::vector<SearchHit> search_hits;
   std::string status_msg;
   double status_until = 0;
   bool toc_open = false;
@@ -179,13 +206,15 @@ bool App::load_file(const std::string& path, std::string* err) {
 
 void App::build_outline() {
   outline.clear();
-  for (size_t i = 0; i < view.doc().blocks.size(); i++) {
-    const Block& b = view.doc().blocks[i];
-    if (b.type != Block::Heading) continue;
+  std::vector<Visit> visits;
+  collect_visits(view.doc().blocks, -1, {}, &visits);
+  for (const Visit& v : visits) {
+    if (v.b->type != Block::Heading) continue;
     OutlineItem it;
-    it.block = (int)i;
-    it.level = b.level;
-    it.text = spans_plain_text(b.spans);
+    it.block = v.top;
+    it.level = v.b->level;
+    it.text = spans_plain_text(v.b->spans);
+    it.path = v.path;
     outline.push_back(it);
   }
   toc_sel = 0;
@@ -196,9 +225,11 @@ void App::do_search(const std::string& q) {
   if (q.empty()) return;
   std::string needle = to_lower(q);
   std::string buf;
-  for (size_t i = 0; i < view.doc().blocks.size(); i++) {
+  std::vector<Visit> visits;
+  collect_visits(view.doc().blocks, -1, {}, &visits);
+  for (const Visit& visit : visits) {
     std::string text;
-    const Block& b = view.doc().blocks[i];
+    const Block& b = *visit.b;
     switch (b.type) {
       case Block::CodeBlock: text = b.code; break;
       case Block::MathBlock: text = b.code; break;
@@ -213,14 +244,19 @@ void App::do_search(const std::string& q) {
     size_t pos = low.find(needle);
     if (pos != std::string::npos) {
       std::string ctx = text.substr(pos > 20 ? pos - 20 : 0, needle.size() + 50);
-      search_hits.emplace_back((int)i, collapse_ws(ctx));
+      SearchHit hit;
+      hit.block = visit.top;
+      hit.ctx = collapse_ws(ctx);
+      hit.path = visit.path;
+      search_hits.push_back(hit);
     }
   }
   if (search_hits.empty()) {
     set_status("no match: " + q);
   } else {
     set_status(fmt("%d match(es) for '%s'", (int)search_hits.size(), q.c_str()));
-    view.scroll_to(std::max(0, view.row_of_block(search_hits[0].first) - 2));
+    view.open_fold_path(search_hits[0].path);
+    view.scroll_to(std::max(0, view.row_of_block(search_hits[0].block) - 2));
   }
 }
 
@@ -232,14 +268,15 @@ void App::jump_to_next_hit(int dir) {
   int cur_row = view.scroll_top();
   int cur = -1;
   for (size_t i = 0; i < search_hits.size(); i++) {
-    int r = view.row_of_block(search_hits[i].first);
+    int r = view.row_of_block(search_hits[i].block);
     if (r <= cur_row + 1) cur = (int)i;
   }
   int next;
   if (dir > 0) next = (cur + 1) % (int)search_hits.size();
   else next = (cur <= 0) ? (int)search_hits.size() - 1 : cur - 1;
-  view.scroll_to(std::max(0, view.row_of_block(search_hits[(size_t)next].first) - 2));
-  set_status(fmt("match %d/%d: %s", next + 1, (int)search_hits.size(), search_hits[(size_t)next].second.c_str()), 4);
+  view.open_fold_path(search_hits[(size_t)next].path);
+  view.scroll_to(std::max(0, view.row_of_block(search_hits[(size_t)next].block) - 2));
+  set_status(fmt("match %d/%d: %s", next + 1, (int)search_hits.size(), search_hits[(size_t)next].ctx.c_str()), 4);
 }
 
 // ------------------------------------------------------------- rendering ----
@@ -567,9 +604,9 @@ void App::run() {
       int idx = toc_off + (e.my - 1);
       if (idx >= 0 && idx < (int)outline.size()) {
         toc_sel = idx;
-        int s0 = view.scroll_top();
+        view.open_fold_path(outline[(size_t)idx].path);
         view.scroll_to(std::max(0, view.row_of_block(outline[(size_t)idx].block) - 1));
-        return view.scroll_top() != s0 || true;
+        return true;
       }
     }
     return false;
@@ -682,20 +719,31 @@ void App::run() {
       case 'g': view.scroll_home(); break;
       case 'G': view.scroll_end(); break;
       case '\t': toc_open = !toc_open; break;
+      case Terminal::K_ENTER:
+        if (toc_open && !outline.empty()) {  // the help promises it since v0.1
+          view.open_fold_path(outline[(size_t)toc_sel].path);
+          view.scroll_to(
+              std::max(0, view.row_of_block(outline[(size_t)toc_sel].block) - 1));
+        }
+        break;
       case 'J': {
         int cur = view.block_at_row(view.scroll_top());
-        int best = -1;
-        for (auto& it : outline) { if (it.block > cur) { best = it.block; break; } }
-        if (best >= 0) view.scroll_to(std::max(0, view.row_of_block(best) - 1));
-        else set_status("last heading");
+        const OutlineItem* best = nullptr;
+        for (auto& it : outline) { if (it.block > cur) { best = &it; break; } }
+        if (best) {
+          view.open_fold_path(best->path);
+          view.scroll_to(std::max(0, view.row_of_block(best->block) - 1));
+        } else set_status("last heading");
         break;
       }
       case 'K': {
         int cur = view.block_at_row(view.scroll_top());
-        int best = -1;
-        for (auto& it : outline) { if (it.block < cur) best = it.block; }
-        if (best >= 0) view.scroll_to(std::max(0, view.row_of_block(best) - 1));
-        else set_status("first heading");
+        const OutlineItem* best = nullptr;
+        for (auto& it : outline) { if (it.block < cur) best = &it; }
+        if (best) {
+          view.open_fold_path(best->path);
+          view.scroll_to(std::max(0, view.row_of_block(best->block) - 1));
+        } else set_status("first heading");
         break;
       }
       case '/': search_mode = true; search_query.clear(); break;

@@ -10,6 +10,7 @@
 
 namespace mdt {
 
+
 namespace {
 
 bool is_blank(const std::string& s) { return trim(s).empty(); }

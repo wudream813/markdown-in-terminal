@@ -465,6 +465,60 @@ def main():
         except (OSError, ChildProcessError):
             pass
 
+    # ---- round 28: jumps into a folded box open it on the way ---------------
+    fixture4 = os.path.normpath(os.path.join(os.path.dirname(fixture), "luogu4.md"))
+    pid, fd = ptymod.fork()
+    if pid == 0:
+        env = dict(os.environ)
+        env["TERM"] = "xterm-256color"
+        os.execvpe(argv[0], argv + ["--gfx=none", fixture4], env)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
+    acc3 = b""
+
+    def read3(needle, timeout=10.0):
+        nonlocal acc3
+        t0 = time.time()
+        start = len(acc3)
+        while time.time() - t0 < timeout:
+            r, _, _ = select.select([fd], [], [], 0.2)
+            if r:
+                try:
+                    chunk = os.read(fd, 1 << 20)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                acc3 += chunk
+            if needle in acc3[start:].replace(b"\r\r\n", b"") \
+                    and time.time() - t0 > 0.4:
+                break
+        return acc3[start:].replace(b"\r\r\n", b"")
+
+    f4 = read3(b"for help").decode("utf-8", "replace")
+    check(fails, "hidden paragraph" not in f4 and "folded box" in f4,
+          "fold fixture starts collapsed")
+    os.write(fd, b"g")            # top, then J = next heading = the hidden one
+    read3(b"\x00never", 0.5)
+    os.write(fd, b"J")
+    j1 = read3(b"hidden paragraph", 6.0).decode("utf-8", "replace")
+    check(fails, "hidden paragraph" in j1,
+          "J into a folded box opens it on the way")
+    os.write(fd, b"/search needle\r")
+    s1 = read3(b"needle inside fold", 6.0).decode("utf-8", "replace")
+    check(fails, "search needle inside fold." in s1,
+          "search into a folded box opens it on the way")
+    os.write(fd, b"\t\r")       # outline open + Enter jumps to the selection
+    t1 = read3(b"\x00never", 1.0).decode("utf-8", "replace")
+    check(fails, "hidden heading" in t1 or "fold jump" in t1,
+          "Enter in the outline jumps to the selected heading")
+    os.write(fd, b"q")
+    try:
+        os.close(fd)
+        os.kill(pid, 15)
+        os.waitpid(pid, 0)
+    except (OSError, ChildProcessError):
+        pass
+
     if fails:
         print("luogu checks failed:", ", ".join(fails))
         return 1
