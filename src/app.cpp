@@ -695,6 +695,15 @@ void App::run() {
       case Terminal::K_PGDN: view.scroll_page(1); page = true; break;
       case Terminal::K_HOME: view.scroll_home(); break;
       case Terminal::K_END: view.scroll_end(); break;
+      case Terminal::K_TAB: toc_open = !toc_open; break;  // parser reports a
+        // Special for \t, so the char case below never sees it
+      case Terminal::K_ENTER:
+        if (toc_open && !outline.empty()) {  // the help promises it since v0.1
+          view.open_fold_path(outline[(size_t)toc_sel].path);
+          view.scroll_to(
+              std::max(0, view.row_of_block(outline[(size_t)toc_sel].block) - 1));
+        }
+        break;
       case Terminal::K_ESC:
         if (link_open) link_open = false;
         else if (help_open) help_open = false;
@@ -719,13 +728,6 @@ void App::run() {
       case 'g': view.scroll_home(); break;
       case 'G': view.scroll_end(); break;
       case '\t': toc_open = !toc_open; break;
-      case Terminal::K_ENTER:
-        if (toc_open && !outline.empty()) {  // the help promises it since v0.1
-          view.open_fold_path(outline[(size_t)toc_sel].path);
-          view.scroll_to(
-              std::max(0, view.row_of_block(outline[(size_t)toc_sel].block) - 1));
-        }
-        break;
       case 'J': {
         int cur = view.block_at_row(view.scroll_top());
         const OutlineItem* best = nullptr;

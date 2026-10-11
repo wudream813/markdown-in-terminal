@@ -497,9 +497,17 @@ def main():
     f4 = read3(b"for help").decode("utf-8", "replace")
     check(fails, "hidden paragraph" not in f4 and "folded box" in f4,
           "fold fixture starts collapsed")
-    os.write(fd, b"g")            # top, then J = next heading = the hidden one
+    # outline entry 3 = "toc target heading" inside the third folded box:
+    # clicking it (right-hand panel, row 1+idx) opens the box on the way
+    os.write(fd, b"\t")
+    read3(b"toc target heading", 4.0)
+    os.write(fd, ("\x1b[<0;99;4M\x1b[<0;99;4m").encode())
+    c1 = read3(b"toc target paragraph", 6.0).decode("utf-8", "replace")
+    check(fails, "toc target paragraph" in c1,
+          "clicking an outline entry opens the folded box around it")
+    os.write(fd, b"\t")          # close the panel again
     read3(b"\x00never", 0.5)
-    os.write(fd, b"J")
+    os.write(fd, b"gJ")           # top, then J = next heading = the hidden one
     j1 = read3(b"hidden paragraph", 6.0).decode("utf-8", "replace")
     check(fails, "hidden paragraph" in j1,
           "J into a folded box opens it on the way")
@@ -509,7 +517,7 @@ def main():
           "search into a folded box opens it on the way")
     os.write(fd, b"\t\r")       # outline open + Enter jumps to the selection
     t1 = read3(b"\x00never", 1.0).decode("utf-8", "replace")
-    check(fails, "hidden heading" in t1 or "fold jump" in t1,
+    check(fails, "toc target heading" in t1,
           "Enter in the outline jumps to the selected heading")
     os.write(fd, b"q")
     try:
