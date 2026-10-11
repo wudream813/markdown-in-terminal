@@ -30,23 +30,102 @@ void DocView::scroll_page(int dir) { scroll_to(scroll_ + dir * std::max(1, view_
 void DocView::scroll_home() { scroll_to(0); }
 void DocView::scroll_end() { scroll_to(total_rows_); }
 
-std::string DocView::plain_text() const {
-  std::string out;
-  for (auto& b : doc_.blocks) {
+namespace {
+// prefix every line of `body` with `pre` (quotes and list continuations)
+void append_indent_lines(std::string& out, const std::string& pre, const std::string& body) {
+  size_t p = 0;
+  while (p < body.size()) {
+    size_t nl = body.find('\n', p);
+    if (nl == std::string::npos) {
+      out += pre + body.substr(p) + "\n";
+      break;
+    }
+    out += pre + body.substr(p, nl - p) + "\n";
+    p = nl + 1;
+  }
+}
+void blocks_plain(const std::vector<Block>& v, std::string& out, const std::string& pre) {
+  for (const Block& b : v) {
     switch (b.type) {
-      case Block::Heading: out += std::string((size_t)std::max(1, b.level), '#') + " "; out += spans_plain_text(b.spans); out += "\n"; break;
-      case Block::Paragraph: out += spans_plain_text(b.spans); out += "\n\n"; break;
-      case Block::CodeBlock: out += "```" + b.lang + "\n" + b.code + "\n```\n\n"; break;
-      case Block::MathBlock: out += "$$\n" + b.code + "\n$$\n\n"; break;
-      case Block::Hr: out += "---\n\n"; break;
-      case Block::Directive:
-        if (!b.dir_leaf && !b.dir_label.empty()) { out += b.dir_label; out += "\n"; }
+      case Block::Heading:
+        out += pre + std::string((size_t)std::max(1, b.level), '#') + " " +
+               spans_plain_text(b.spans) + "\n\n";
         break;
-      case Block::Quote: out += "> "; break;
-      case Block::List: out += "- "; break;
-      default: break;
+      case Block::Paragraph:
+        out += pre + spans_plain_text(b.spans) + "\n\n";
+        break;
+      case Block::CodeBlock:
+        out += pre + "```" + b.lang + "\n";
+        append_indent_lines(out, pre, b.code);
+        out += pre + "```\n\n";
+        break;
+      case Block::MathBlock:
+        out += pre + "$$\n";
+        append_indent_lines(out, pre, b.code);
+        out += pre + "$$\n\n";
+        break;
+      case Block::Hr:
+        out += pre + "---\n\n";
+        break;
+      case Block::Quote: {
+        std::string inner;
+        for (const auto& nest : b.items) blocks_plain(nest, inner, "");
+        append_indent_lines(out, pre + "> ", inner);
+        out += "\n";
+        break;
+      }
+      case Block::List: {
+        int n = b.start_num;
+        for (size_t i = 0; i < b.items.size(); i++) {
+          std::string marker = b.ordered ? std::to_string(n++) + ". " : "- ";
+          if (i < b.item_is_task.size() && b.item_is_task[i])
+            marker = std::string("- [") +
+                     (i < b.item_checked.size() && b.item_checked[i] ? "x" : " ") + "] ";
+          std::string inner;
+          blocks_plain(b.items[i], inner, "");
+          size_t nl = inner.find('\n');
+          std::string first = inner.substr(0, nl);
+          std::string rest = nl == std::string::npos ? "" : inner.substr(nl + 1);
+          out += pre + marker + first + "\n";
+          if (!rest.empty())
+            append_indent_lines(out, pre + std::string(marker.size(), ' '), rest);
+          out += "\n";
+        }
+        break;
+      }
+      case Block::Table: {
+        for (const auto& r : b.rows) {
+          std::string line;
+          for (const auto& c : r) {
+            if (!line.empty()) line += " | ";
+            line += spans_plain_text(c.spans);
+          }
+          out += pre + line + "\n";
+        }
+        out += "\n";
+        break;
+      }
+      case Block::Image:
+        out += pre + (b.img_alt.empty() ? b.img_src : b.img_alt) + "\n\n";
+        break;
+      case Block::Directive:
+        if (!b.dir_leaf) {  // folded or not: the export carries everything
+          if (!b.dir_label.empty()) out += pre + b.dir_label + "\n\n";
+          for (const auto& nest : b.items) blocks_plain(nest, out, pre);
+        }
+        break;
+      default:
+        break;
     }
   }
+}
+}  // namespace
+
+// The whole document as readable text (the "e" clipboard export): quotes keep
+// their "> ", lists their markers, tables their pipes - nothing is dropped.
+std::string DocView::plain_text() const {
+  std::string out;
+  blocks_plain(doc_.blocks, out, "");
   return out;
 }
 

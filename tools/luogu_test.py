@@ -527,6 +527,52 @@ def main():
     except (OSError, ChildProcessError):
         pass
 
+    # ---- round 29: the "e" clipboard export carries every block kind -------
+    fixture5 = os.path.normpath(os.path.join(os.path.dirname(fixture), "luogu5.md"))
+    pid, fd = ptymod.fork()
+    if pid == 0:
+        env = dict(os.environ)
+        env["TERM"] = "xterm-256color"
+        os.execvpe(argv[0], argv + ["--gfx=none", fixture5], env)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
+    acc4 = b""
+
+    def read4(needle, timeout=10.0):
+        nonlocal acc4
+        t0 = time.time()
+        start = len(acc4)
+        while time.time() - t0 < timeout:
+            r, _, _ = select.select([fd], [], [], 0.2)
+            if r:
+                try:
+                    chunk = os.read(fd, 1 << 20)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                acc4 += chunk
+            if needle in acc4[start:].replace(b"\r\r\n", b"") \
+                    and time.time() - t0 > 0.4:
+                break
+        return acc4[start:].replace(b"\r\r\n", b"")
+
+    read4(b"for help")
+    os.write(fd, b"e")
+    raw = read4(b"]52;c;", 8.0)
+    m = re.search(rb"\]52;c;([A-Za-z0-9+/=]+)", raw)
+    txt = base64.b64decode(m.group(1)).decode("utf-8", "replace") if m else ""
+    need = ["引用文字", "- 列表项", "- [x] 完成", "1. 有序项", "表头甲", "甲1",
+            "框里内容。", "int main", "$$"]
+    miss = [t for t in need if t not in txt]
+    check(fails, not miss, f"e exports quotes/lists/tables/callouts/code in full {miss}")
+    os.write(fd, b"q")
+    try:
+        os.close(fd)
+        os.kill(pid, 15)
+        os.waitpid(pid, 0)
+    except (OSError, ChildProcessError):
+        pass
+
     if fails:
         print("luogu checks failed:", ", ".join(fails))
         return 1

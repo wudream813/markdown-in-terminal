@@ -286,7 +286,7 @@ Keys
 | `m` | toggle typeset ⇄ plain-Unicode maths |
 | `r` | reload the file |
 | `o` | open the first link in the browser |
-| `e` | export the document text to the clipboard (OSC 52) |
+| `e` | export the document text to the clipboard (OSC 52); quotes, lists, tables and callout content are kept in full |
 | `?` | help · `q` / `Ctrl-C` quit |
 
 ## How the maths pipeline works
