@@ -545,6 +545,15 @@ void App::run() {
       int s0 = view.scroll_top(); view.scroll_by(3); return view.scroll_top() != s0;
     }
     if (e.motion && !e.drag) {  // pointer move: hover feedback on the buttons
+      if (toc_open && toc_panel_w > 0 && e.my >= 1 &&
+          e.mx >= term.caps.cols - toc_panel_w) {  // the outline panel owns it
+        int idx = toc_off + (e.my - 1);
+        if (idx >= 0 && idx < (int)outline.size() && idx != toc_sel) {
+          toc_sel = idx;
+          return true;
+        }
+        return false;
+      }
       int h = -1;
       if (link_open && !link_url.empty()) {
         LinkDlg g = link_dialog_geom(term.caps.cols, view_rows(), link_url);

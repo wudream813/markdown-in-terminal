@@ -38,8 +38,8 @@ self-contained binary.
   tracks live (button-event motion reporting, mode 1002: every motion event
   between press and release moves the view, not only the release), and
   clicking links/headings/outline entries works as before, dialog buttons and
-  folding-box titles light up while the pointer is on them, and clicking a
-  folding-box title folds or unfolds the box.
+  folding-box titles and outline entries light up while the pointer is on
+  them, and clicking a folding-box title folds or unfolds the box.
 * **Luogu (洛谷) dialect.** On top of GFM, mdt understands the
   remark-directive syntax of the Luogu article editor: `:::info`,
   `:::success`, `:::warning` and `:::error` callouts (coloured bar, bold

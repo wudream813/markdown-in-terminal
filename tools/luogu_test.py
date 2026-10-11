@@ -467,6 +467,9 @@ def main():
 
     # ---- round 28: jumps into a folded box open it on the way ---------------
     fixture4 = os.path.normpath(os.path.join(os.path.dirname(fixture), "luogu4.md"))
+    d100m4 = subprocess.run(argv + ["--dump", "--width=100", fixture4],
+                            capture_output=True).stdout.decode("utf-8", "replace")
+    d100m4 = d100m4.replace("\r\n", "\n")
     pid, fd = ptymod.fork()
     if pid == 0:
         env = dict(os.environ)
@@ -497,6 +500,19 @@ def main():
     f4 = read3(b"for help").decode("utf-8", "replace")
     check(fails, "hidden paragraph" not in f4 and "folded box" in f4,
           "fold fixture starts collapsed")
+    # a wrapping title: the SECOND row of the band toggles too
+    lt = -1
+    for i, s2 in enumerate(d100m4.splitlines()):
+        if "这是一个非常长的折叠框标题" in s2:
+            lt = i
+            break
+    if lt < 0:
+        check(fails, False, "wrapping fold title found in the dump")
+    else:
+        os.write(fd, ("\x1b[<0;20;%dM\x1b[<0;20;%dm" % (lt + 2, lt + 2)).encode())
+        w1 = read3(b"long title box content", 6.0).decode("utf-8", "replace")
+        check(fails, "long title box content" in w1,
+              "the second row of a wrapping title toggles the box too")
     # outline entry 3 = "toc target heading" inside the third folded box:
     # clicking it (right-hand panel, row 1+idx) opens the box on the way
     os.write(fd, b"\t")
@@ -511,6 +527,10 @@ def main():
     j1 = read3(b"hidden paragraph", 6.0).decode("utf-8", "replace")
     check(fails, "hidden paragraph" in j1,
           "J into a folded box opens it on the way")
+    os.write(fd, b"r")            # hot reload keeps the fold state
+    r1 = read3(b"\x00never", 1.5).decode("utf-8", "replace")
+    check(fails, "hidden paragraph" in r1,
+          "r reload keeps the fold state")
     os.write(fd, b"/search needle\r")
     s1 = read3(b"needle inside fold", 6.0).decode("utf-8", "replace")
     check(fails, "search needle inside fold." in s1,
@@ -519,6 +539,15 @@ def main():
     t1 = read3(b"\x00never", 1.0).decode("utf-8", "replace")
     check(fails, "toc target heading" in t1,
           "Enter in the outline jumps to the selected heading")
+    if not wine:  # hover: the entry under the pointer becomes the selection
+        read3(b"\x00never", 4.5)   # let the search status expire first: its
+        # timeout redraw would otherwise look like a hover redraw
+        os.write(fd, ("\x1b[<35;99;4M").encode())   # entry idx 2 (sel is 0)
+        v1 = read3(b"\x00never", 1.2)
+        os.write(fd, ("\x1b[<35;99;4M").encode())
+        v2 = read3(b"\x00never", 0.8)
+        check(fails, len(v1) > 0 and len(v2) == 0,
+              "outline entries highlight on hover")
     os.write(fd, b"q")
     try:
         os.close(fd)
