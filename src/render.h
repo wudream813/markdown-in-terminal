@@ -191,6 +191,11 @@ class DocView {
     bool band = false;          // callout titles get a light background band
     int toggle_uid = -1;        // callout title: clicking the band folds/unfolds
     RGB band_hover{0, 0, 0};    // ... and a brighter wash while the pointer is on it
+    // fold-state arrow in a fixed gutter BEFORE the title (it never takes part
+    // in the title's line wrapping, so a LaTeX title cannot orphan it)
+    int arrow_col = -1;
+    bool arrow_open = false;
+    RGB arrow_rgb{0, 0, 0};
     RGB band_bg{0, 0, 0};       // ... in a tint of the callout colour
     int band_x0 = 0, band_x1 = 0;  // band span, content columns inclusive
     int img = -1;               // kind == Image

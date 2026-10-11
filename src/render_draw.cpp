@@ -223,6 +223,9 @@ RGB DocView::draw_line_chrome(Screen& scr, int x0, int sy, const Line& line) {
       scr.put(x0 + bcol, sy + rr, 0x2502, bc, bbg);
     }
   }
+  if (line.arrow_col >= 0 && sy < scr.height())
+    scr.put(x0 + line.arrow_col, sy, line.arrow_open ? 0x25be : 0x25b8, line.arrow_rgb,
+            lbg, A_BOLD);
   return lbg;
 }
 

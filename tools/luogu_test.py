@@ -239,6 +239,22 @@ def main():
     # ---- display maths in a callout title (third fixture) ------------------
     fixture3 = os.path.normpath(os.path.join(os.path.dirname(fixture), "luogu3.md"))
     frame3 = capture(fixture3)
+    def row_of(frame, nb, lookback=400):
+        fb = frame.encode("utf-8", "replace")
+        i = fb.find(nb)
+        while i != -1:
+            seg = fb[max(0, i - lookback):i]
+            pm = None
+            for cm in re.finditer(rb"\x1b\[(\d+);\d+H", seg):
+                pm = cm
+            if pm:
+                return int(pm.group(1)) - 1
+            i = fb.find(nb, i + 1)
+        return -1
+    ra = row_of(frame3, "\u25b8".encode())          # the arrow put
+    rb = row_of(frame3, b"48;2;45;54;43")     # first wash cell = title top row
+    check(fails, ra >= 0 and rb >= 0 and ra == rb,
+          f"LaTeX title: the arrow sits on the title row, no orphan line ({ra} vs {rb})")
     # the formula line is a Line::Image: it still owes the wash and the bar
     check(fails, "38;2;158;206;106;48;2;45;54;43" in frame3
           and "48;2;45;54;43" in frame3,
@@ -436,9 +452,9 @@ def main():
             r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[_\]][^\x07\x1b]*(\x07|\x1b\\)?", "", t)
         f0 = read2(b"for help").decode("utf-8", "replace")
         p0 = strip(f0)
-        check(fails, "这是一个提示" in p0 and "\u25b8" in p0
+        check(fails, "这是一个提示" in p0 and "\u25b8 这是一个提示" in p0
               and "我是提示内容" not in p0 and "我是展开内容。" in p0,
-              "callout boxes start collapsed; {open} starts expanded")
+              "callout boxes start collapsed; {open} starts expanded; arrow first")
         click_t = ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (tc + 1, tr + 1, tc + 1, tr + 1)).encode()
         os.write(fd, click_t)
         f1 = read2("我是提示内容".encode(), 8.0).decode("utf-8", "replace")
@@ -446,7 +462,7 @@ def main():
         os.write(fd, click_t)
         f2 = read2(b"\x00never", 1.5).decode("utf-8", "replace")
         p2 = strip(f2)
-        check(fails, "我是提示内容" not in p2 and "\u25b8" in p2,
+        check(fails, "我是提示内容" not in p2 and "\u25b8 这是一个提示" in p2,
               "clicking the title again folds it back")
         # hover wash on the title band (wine forwards no button-less motion)
         if not wine:

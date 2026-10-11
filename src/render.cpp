@@ -1571,21 +1571,19 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
     // The title is ordinary inline markup - Luogu titles regularly carry
     // formulas (:::info[$x^2$ 标题]) - so parse and wrap it like a paragraph.
     std::vector<Span> sp = inline_parser_.parse_inline(b.dir_label);
-    if (collapsible) {  // the fold-state arrow rides at the end of the title
-      Span ar;
-      ar.text = expanded ? " \u25be" : " \u25b8";
-      ar.bold = true;
-      ar.has_color = true;
-      ar.color = c;
-      sp.push_back(ar);
-    }
     Span base;
     base.bold = true;
     base.has_color = true;
     base.color = c;
     std::vector<Line> tl;
-    build_lines(sp, indent + 2, content_w_ - indent - 2, base, tl);
+    int tx = indent + 2 + (collapsible ? 2 : 0);  // gutter for the state arrow
+    build_lines(sp, tx, content_w_ - tx, base, tl);
     if (tl.empty()) tl.resize(1);
+    if (collapsible) {
+      tl[0].arrow_col = indent + 2;
+      tl[0].arrow_open = expanded;
+      tl[0].arrow_rgb = c;
+    }
     RGB tint = band_tint(c);
     RGB htint = band_hover_tint(c);
     for (Line& l : tl) {
