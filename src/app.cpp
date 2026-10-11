@@ -517,9 +517,11 @@ void App::run() {
       }
       if (h != link_hover) {
         link_hover = h;
+        view.set_hover_fold(-1);
         return true;
       }
-      return false;
+      int hf = link_open ? -1 : view.fold_title_at(e.mx, e.my);
+      return view.set_hover_fold(hf);
     }
     if (e.release) { scroll_drag = false; return false; }
     if (!e.drag) {

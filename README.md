@@ -37,7 +37,9 @@ self-contained binary.
   scrollbar in the right margin jumps through the document and dragging it
   tracks live (button-event motion reporting, mode 1002: every motion event
   between press and release moves the view, not only the release), and
-  clicking links/headings/outline entries works as before.
+  clicking links/headings/outline entries works as before, dialog buttons and
+  folding-box titles light up while the pointer is on them, and clicking a
+  folding-box title folds or unfolds the box.
 * **Luogu (洛谷) dialect.** On top of GFM, mdt understands the
   remark-directive syntax of the Luogu article editor: `:::info`,
   `:::success`, `:::warning` and `:::error` callouts (coloured bar, bold
@@ -417,8 +419,11 @@ were used (`+entities`, `+escapes`, `+loose`, `+clean`).
   10 1703+ conhost); it turns VT processing on itself, so `cmd.exe` works too.
   Kitty/iTerm2 protocols are a POSIX-terminal thing — on Windows you get sixel
   (Windows Terminal 1.22+, WezTerm, mintty) or the Unicode maths fallback.
-* Luogu callouts are always shown expanded (the `{open}` attribute is a
-  web-editor concern); Bilibili video embeds are not played — the reader is
+* Luogu callouts are folding boxes: collapsed by default, `{open}` on the
+  directive starts them expanded, and clicking the title band toggles them
+  live (the title carries a `▸`/`▾` state arrow and a hover wash).  Plain-text
+  dumps always print the full content of every box.  Bilibili video embeds are
+  not played — the reader is
   text and pictures only. `^`/`<`/`>` merge markers and the C++ default for
   bare fences only apply to documents that use directive syntax, so ordinary
   Markdown keeps its usual meaning.

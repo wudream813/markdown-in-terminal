@@ -132,6 +132,13 @@ class DocView {
   // Screen-cell hit test for callout title bands: folds/unfolds the box and
   // relayouts.  True when something changed (the caller redraws).
   bool toggle_box_at(int mx, int my);
+  // uid of the folding-box title band under (mx, my), -1 when none
+  int fold_title_at(int mx, int my) const;
+  bool set_hover_fold(int uid) {
+    if (uid == hover_fold_) return false;
+    hover_fold_ = uid;
+    return true;
+  }
 
  private:
   struct Run {
@@ -179,6 +186,7 @@ class DocView {
                                 // empty falls back to bars_custom/quote colour
     bool band = false;          // callout titles get a light background band
     int toggle_uid = -1;        // callout title: clicking the band folds/unfolds
+    RGB band_hover{0, 0, 0};    // ... and a brighter wash while the pointer is on it
     RGB band_bg{0, 0, 0};       // ... in a tint of the callout colour
     int band_x0 = 0, band_x1 = 0;  // band span, content columns inclusive
     int img = -1;               // kind == Image
@@ -232,6 +240,7 @@ class DocView {
   int total_rows_ = 0, scroll_ = 0;
   // per-callout fold state, keyed by Block::uid; seeded from the {open} attr
   std::map<int, bool> box_open_;
+  int hover_fold_ = -1;         // title band under the pointer (hover wash)
   bool lazy_metrics_ = true;
   bool offscreen_ = false;
   bool layout_dirty_ = false;

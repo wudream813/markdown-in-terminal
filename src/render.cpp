@@ -1007,6 +1007,10 @@ namespace {
 bool is_callout_name(const std::string& n) {
   return n == "info" || n == "success" || n == "warning" || n == "error";
 }
+RGB band_hover_tint(const RGB& c) {  // pointer-on-title wash: 32% of the colour
+  return RGB{(uint8_t)((c.r * 32 + 24 * 68) / 100), (uint8_t)((c.g * 32 + 26 * 68) / 100),
+             (uint8_t)((c.b * 32 + 31 * 68) / 100)};
+}
 RGB callout_color(const std::string& n) {
   if (n == "success") return RGB{158, 206, 106};
   if (n == "warning") return RGB{224, 175, 104};
@@ -1583,6 +1587,7 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
     build_lines(sp, indent + 2, content_w_ - indent - 2, base, tl);
     if (tl.empty()) tl.resize(1);
     RGB tint = band_tint(c);
+    RGB htint = band_hover_tint(c);
     for (Line& l : tl) {
       l.bars = own_bars;
       l.bar_rgbs = own_cols;
@@ -1591,6 +1596,7 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
       l.toggle_uid = collapsible ? b.uid : -1;
       l.band = true;
       l.band_bg = tint;
+      l.band_hover = htint;
       l.band_x0 = indent;             // from the callout's own bar column ...
       l.band_x1 = content_w_ - 1;     // ... to the right content edge
       l.row = row - bl.row;

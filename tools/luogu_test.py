@@ -448,6 +448,15 @@ def main():
         p2 = strip(f2)
         check(fails, "我是提示内容" not in p2 and "\u25b8" in p2,
               "clicking the title again folds it back")
+        # hover wash on the title band (wine forwards no button-less motion)
+        if not wine:
+            movf = lambda c, r: ("\x1b[<35;%d;%dM" % (c, r)).encode()
+            os.write(fd, movf(tc + 1, tr + 1))
+            h1 = read2(b"\x00never", 1.2)
+            os.write(fd, movf(tc + 1, tr + 1))
+            h2 = read2(b"\x00never", 0.8)
+            check(fails, len(h1) > 0 and len(h2) == 0,
+                  "callout titles get a hover wash")
         os.write(fd, b"q")
         try:
             os.close(fd)

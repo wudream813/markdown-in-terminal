@@ -71,6 +71,20 @@ bool DocView::link_at(int mx, int my, std::string& url) const {
   return false;
 }
 
+int DocView::fold_title_at(int mx, int my) const {
+  for (const auto& bl : layout_) {
+    int base = bl.row - scroll_;
+    if (my < base || my >= base + bl.rows) continue;
+    for (const auto& line : bl.lines) {
+      if (line.toggle_uid < 0) continue;
+      if (my < base + line.row || my >= base + line.row + std::max(1, line.rows)) continue;
+      if (mx < line.band_x0 || mx > line.band_x1) continue;
+      return line.toggle_uid;
+    }
+  }
+  return -1;
+}
+
 bool DocView::toggle_box_at(int mx, int my) {
   for (const auto& bl : layout_) {
     int base = bl.row - scroll_;
@@ -94,6 +108,8 @@ RGB DocView::draw_line_chrome(Screen& scr, int x0, int sy, const Line& line) {
   int lrows = std::max(1, line.rows);
   if (line.band) {
     lbg = line.band_bg;
+    if (line.toggle_uid >= 0 && line.toggle_uid == hover_fold_)
+      lbg = line.band_hover;  // the pointer is on a clickable title
     int bx0 = x0 + line.band_x0;
     int bx1 = std::min(x0 + line.band_x1, x0 + cols_ - 1);
     // a title carrying a tall formula reserves several rows: the wash
