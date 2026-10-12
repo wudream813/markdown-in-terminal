@@ -232,7 +232,7 @@ def main():
     check(fails, bool(tinted), "inline code sits on a very light wash")
     # a title whose formula reserves a second row keeps the wash there and the
     # bar runs through both rows (success tint of (158,206,106) = 45,54,43)
-    check(fails, re.search(r"48;2;40;53;66m[^\x1b]*√", frame2) is not None
+    check(fails, re.search(r"48;2;40;53;66m(?:[^\x1b]|\x1b\[[0-9;]*m)*√", frame2) is not None
           and frame2.count("38;2;126;197;255;48;2;40;53;66") >= 2,
           "title formula row keeps the wash and the bar continues")
 
@@ -452,7 +452,7 @@ def main():
             r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[_\]][^\x07\x1b]*(\x07|\x1b\\)?", "", t)
         f0 = read2(b"for help").decode("utf-8", "replace")
         p0 = strip(f0)
-        check(fails, "这是一个提示" in p0 and "\u25b8 这是一个提示" in p0
+        check(fails, "这是一个提示" in p0 and "\u25b8\u2502 这是一个提示" in p0
               and "我是提示内容" not in p0 and "我是展开内容。" in p0,
               "callout boxes start collapsed; {open} starts expanded; arrow first")
         click_t = ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (tc + 1, tr + 1, tc + 1, tr + 1)).encode()
@@ -462,7 +462,7 @@ def main():
         os.write(fd, click_t)
         f2 = read2(b"\x00never", 1.5).decode("utf-8", "replace")
         p2 = strip(f2)
-        check(fails, "我是提示内容" not in p2 and "\u25b8 这是一个提示" in p2,
+        check(fails, "我是提示内容" not in p2 and "\u25b8\u2502 这是一个提示" in p2,
               "clicking the title again folds it back")
         # hover wash on the title band (wine forwards no button-less motion)
         if not wine:
@@ -610,6 +610,48 @@ def main():
             "框里内容。", "int main", "$$"]
     miss = [t for t in need if t not in txt]
     check(fails, not miss, f"e exports quotes/lists/tables/callouts/code in full {miss}")
+    os.write(fd, b"q")
+    try:
+        os.close(fd)
+        os.kill(pid, 15)
+        os.waitpid(pid, 0)
+    except (OSError, ChildProcessError):
+        pass
+
+    # ---- round 30: the margin arrow costs the title no width at all --------
+    fixture6 = os.path.normpath(os.path.join(os.path.dirname(fixture), "luogu6.md"))
+    pid, fd = ptymod.fork()
+    if pid == 0:
+        env = dict(os.environ)
+        env["TERM"] = "xterm-256color"
+        os.execvpe(argv[0], argv + ["--gfx=none", fixture6], env)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
+    acc5 = b""
+
+    def read5(needle, timeout=10.0):
+        nonlocal acc5
+        t0 = time.time()
+        start = len(acc5)
+        while time.time() - t0 < timeout:
+            r, _, _ = select.select([fd], [], [], 0.2)
+            if r:
+                try:
+                    chunk = os.read(fd, 1 << 20)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                acc5 += chunk
+            if needle in acc5[start:].replace(b"\r\r\n", b"") \
+                    and time.time() - t0 > 0.4:
+                break
+        return acc5[start:].replace(b"\r\r\n", b"")
+
+    f6 = read5(b"for help").decode("utf-8", "replace")
+    ra = row_of(f6, "\u25be".encode())
+    rc = row_of(f6, b"full width title content")
+    check(fails, ra >= 0 and rc == ra + 1,
+          f"a full-width title keeps one row with the arrow in the margin ({ra},{rc})")
     os.write(fd, b"q")
     try:
         os.close(fd)

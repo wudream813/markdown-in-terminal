@@ -1576,11 +1576,10 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
     base.has_color = true;
     base.color = c;
     std::vector<Line> tl;
-    int tx = indent + 2 + (collapsible ? 2 : 0);  // gutter for the state arrow
-    build_lines(sp, tx, content_w_ - tx, base, tl);
+    build_lines(sp, indent + 2, content_w_ - indent - 2, base, tl);
     if (tl.empty()) tl.resize(1);
     if (collapsible) {
-      tl[0].arrow_col = indent + 2;
+      tl[0].arrow_col = indent - 1;  // margin cell left of the callout bar
       tl[0].arrow_open = expanded;
       tl[0].arrow_rgb = c;
     }

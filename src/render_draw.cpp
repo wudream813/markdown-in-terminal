@@ -170,7 +170,8 @@ int DocView::fold_title_at(int mx, int my) const {
     for (const auto& line : bl.lines) {
       if (line.toggle_uid < 0) continue;
       if (my < base + line.row || my >= base + line.row + std::max(1, line.rows)) continue;
-      if (mx < line.band_x0 || mx > line.band_x1) continue;
+      int lo = line.arrow_col >= 0 ? std::min(line.band_x0, line.arrow_col) : line.band_x0;
+      if (mx < lo || mx > line.band_x1) continue;
       return line.toggle_uid;
     }
   }
@@ -184,7 +185,8 @@ bool DocView::toggle_box_at(int mx, int my) {
     for (const auto& line : bl.lines) {
       if (line.toggle_uid < 0) continue;
       if (my < base + line.row || my >= base + line.row + std::max(1, line.rows)) continue;
-      if (mx < line.band_x0 || mx > line.band_x1) continue;
+      int lo = line.arrow_col >= 0 ? std::min(line.band_x0, line.arrow_col) : line.band_x0;
+      if (mx < lo || mx > line.band_x1) continue;
       auto it = box_open_.find(line.toggle_uid);
       if (it == box_open_.end()) continue;
       it->second = !it->second;
@@ -225,7 +227,7 @@ RGB DocView::draw_line_chrome(Screen& scr, int x0, int sy, const Line& line) {
   }
   if (line.arrow_col >= 0 && sy < scr.height())
     scr.put(x0 + line.arrow_col, sy, line.arrow_open ? 0x25be : 0x25b8, line.arrow_rgb,
-            lbg, A_BOLD);
+            line.band && line.arrow_col >= line.band_x0 ? lbg : theme_.bg, A_BOLD);
   return lbg;
 }
 
