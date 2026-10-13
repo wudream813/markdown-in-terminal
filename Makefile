@@ -17,6 +17,22 @@ CFLAGS   ?= -std=c11 $(OPT) -w -funsigned-char -D_GNU_SOURCE -Ivendor/quickjs \
             -DCONFIG_VERSION="\"2025-09-13\""
 LDLIBS   ?= -lm -lpthread -ldl
 
+# ------------------------------------------------------------------ static ---
+#   make STATIC=1        fully static binary (no glibc version to satisfy at
+#                        all): this is what the Linux release artefact uses.
+# Static glibc cannot load libcurl (it wants NSS/dlopen), so STATIC=1 skips the
+# libcurl probe and remote pictures go through the `curl` binary, as they
+# already do in the published build.  CURL=1 overrides that if you have a
+# complete set of static libraries.
+ifeq ($(STATIC),1)
+  LDLIBS := $(filter-out -ldl,$(LDLIBS))
+  LDLIBS += -static -static-libgcc -static-libstdc++
+  NO_CURL := 1
+endif
+ifneq ($(CURL),)
+  NO_CURL :=
+endif
+
 # ------------------------------------------------------- cross compilation ---
 # Windows (MinGW-w64):
 #   make CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
@@ -51,12 +67,14 @@ OBJ     := $(CPP_OBJ) $(C_OBJ) $(GEN_OBJ)
 # optional: link against libcurl for remote images if pkg-config knows it
 # (skipped for cross builds: a host libcurl cannot be linked into a PE binary)
 ifndef WINDOWS
+ifneq ($(NO_CURL),1)
   CURL_CFLAGS := $(shell pkg-config --cflags libcurl 2>/dev/null)
   CURL_LIBS   := $(shell pkg-config --libs libcurl 2>/dev/null)
   ifneq ($(CURL_LIBS),)
     CXXFLAGS += -DMDT_HAVE_CURL=1 $(CURL_CFLAGS)
     LDLIBS   += $(CURL_LIBS)
   endif
+endif
 endif
 
 .PHONY: all clean assets test install

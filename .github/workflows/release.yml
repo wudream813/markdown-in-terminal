@@ -53,7 +53,13 @@ jobs:
             zip -qr "mdt-$V-win64.zip" "$STAGE"
             cp build/win/mdt.exe mdt-win64.exe
           else
-            make -j"$JOBS"
+            # STATIC=1: the Linux artefact carries its own libc, so it runs on
+            # any distribution instead of only on glibc >= 2.38 (Ubuntu 24.04,
+            # Debian 13).  Remote pictures go through the `curl` binary, as
+            # they already did in the dynamically linked build.
+            make STATIC=1 -j"$JOBS"
+            ldd build/mdt 2>&1 | grep -q "not a dynamic executable" \
+              || { echo "error: the Linux build is not static"; exit 1; }
             cp build/mdt "mdt-${{ matrix.target }}"
           fi
 

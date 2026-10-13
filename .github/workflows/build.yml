@@ -19,12 +19,37 @@ jobs:
           make clean
           make -j"$(nproc)" 2>&1 | tee build.log
           ! grep -E "warning:|error:" build.log | grep -v "vendor/"
+      - name: Static build (this is what the release artefact is made of)
+        run: |
+          make STATIC=1 BUILD=build-static -j"$(nproc)"
+          ldd build-static/mdt 2>&1 | grep -q "not a dynamic executable" \
+            || { echo "error: STATIC=1 did not produce a static binary"; exit 1; }
+          build-static/mdt --version
       - name: Tests
         run: sh tests/smoke.sh
+      - name: Tests (static build)
+        run: BIN=./build-static/mdt sh tests/smoke.sh
       - uses: actions/upload-artifact@v4
         with:
           name: mdt-linux-x86_64
           path: build/mdt
+
+  sanitizers:
+    name: Linux (ASan + UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with sanitizers
+        run: |
+          make BUILD=build-asan \
+               OPT="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" -j"$(nproc)"
+      - name: Tests under ASan + UBSan
+        run: BIN=./build-asan/mdt sh tests/smoke.sh
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1
+          # the instrumented binary needs looser wall-clock budgets
+          MDT_TEST_SLOWDOWN: "4"
 
   macos:
     name: macOS (native)

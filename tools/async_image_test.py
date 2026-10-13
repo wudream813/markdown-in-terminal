@@ -9,6 +9,8 @@ keep working, and the picture is drawn as soon as it arrives.
 
     python3 tools/async_image_test.py ./build/mdt
     python3 tools/async_image_test.py build/win/mdt.exe /usr/lib/wine/wine64
+
+MDT_TEST_SLOWDOWN=4 relaxes the timing budgets for slow builds (ASan/UBSan).
 """
 import fcntl
 import http.server
@@ -31,8 +33,12 @@ RUNNER = sys.argv[2].split() if len(sys.argv) > 2 else []
 WINE = bool(RUNNER)
 ROWS, COLS, CW, CH = 24, 90, 10, 20
 DELAY = 1.2          # seconds the fake host needs per request
-FIRST_FRAME_MAX = 2.5 if WINE else 1.0
-KEY_MAX = 1.0 if WINE else 0.5
+# A sanitizer build is several times slower than a release build, so every wall
+# clock cap below can be scaled from the outside.  CI's ASan+UBSan job sets
+# MDT_TEST_SLOWDOWN=4; the default keeps the strict release-build numbers.
+SLOWDOWN = float(os.environ.get("MDT_TEST_SLOWDOWN", "1") or 1)
+FIRST_FRAME_MAX = (2.5 if WINE else 1.0) * SLOWDOWN
+KEY_MAX = (1.0 if WINE else 0.5) * SLOWDOWN
 
 
 def tiny_png(rgb=(90, 140, 200), w=16, h=16):
@@ -147,10 +153,10 @@ def read_until(deadline, note_first_frame=True):
             first_frame_at = time.time()
 
 
-read_until(start + FIRST_FRAME_MAX + 0.5)
+read_until(start + FIRST_FRAME_MAX + 0.5 * SLOWDOWN)
 first = (first_frame_at or 0) - start
 if first_frame_at is None:
-    fail.append("no first frame within %.1fs" % (FIRST_FRAME_MAX + 0.5))
+    fail.append("no first frame within %.1fs" % (FIRST_FRAME_MAX + 0.5 * SLOWDOWN))
 else:
     print("   first frame after %.2fs" % first)
     if first > FIRST_FRAME_MAX:
@@ -185,7 +191,7 @@ for label, keys in keys_to_try:
     read_until(time.time() + 0.1, note_first_frame=False)
 
 # wait for the downloads to finish and land on screen
-read_until(time.time() + 3 * DELAY + 3.0, note_first_frame=False)
+read_until(time.time() + 3 * DELAY + 3.0 * SLOWDOWN, note_first_frame=False)
 placements = len(re.findall(rb"a=p", buf))
 
 
@@ -199,7 +205,7 @@ def frame_log_bytes():
 # the log is written through stdio, so give the last frame a moment to land
 sent = frame_log_bytes()
 transmits = sent.count(b"a=t")
-deadline = time.time() + 4.0
+deadline = time.time() + 4.0 * SLOWDOWN
 while transmits < 2 and time.time() < deadline:
     read_until(time.time() + 0.25, note_first_frame=False)
     sent = frame_log_bytes()

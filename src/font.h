@@ -13,6 +13,11 @@ namespace mdt {
 
 class FontRaster {
  public:
+  FontRaster() = default;
+  FontRaster(const FontRaster&) = delete;
+  FontRaster& operator=(const FontRaster&) = delete;
+  ~FontRaster();  // frees the stbtt_fontinfo objects handed to info_/info_cjk_
+
   // Loads the first usable monospace font (or a CJK fallback for wide glyphs).
   bool init(int cell_w, int cell_h, std::string* err = nullptr);
   bool ok() const { return ok_; }

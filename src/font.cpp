@@ -13,6 +13,13 @@
 
 namespace mdt {
 
+FontRaster::~FontRaster() {
+  delete static_cast<stbtt_fontinfo*>(info_);
+  delete static_cast<stbtt_fontinfo*>(info_cjk_);
+  ttf_.clear();
+  ttf_cjk_.clear();
+}
+
 namespace {
 const char* kMonoCandidates[] = {
   "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
