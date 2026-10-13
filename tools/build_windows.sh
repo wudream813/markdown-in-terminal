@@ -8,7 +8,11 @@
 set -e
 
 cd "$(dirname "$0")/.."
-VERSION=$(sed -n 's/^VERSION  ?= //p' Makefile | head -1)
+# The version lives in ./VERSION (the Makefile and CMake both read that file;
+# scraping the Makefile instead produced a literal "$(shell cat VERSION …)"
+# as the zip name the day the Makefile stopped holding the number).
+VERSION=$(cat VERSION 2>/dev/null | head -1)
+[ -n "$VERSION" ] || { echo "error: cannot read VERSION" >&2; exit 1; }
 ARCH=${ARCH:-64}
 
 if [ "$ARCH" = "32" ]; then
