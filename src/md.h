@@ -19,6 +19,7 @@ struct Span {
   // inline styles
   bool bold = false, italic = false, strike = false, underline = false, dim = false;
   bool is_link = false;
+  bool footnote = false;   // a "[^label]" reference, drawn as a small [n]
   std::string link;
   bool has_color = false;
   RGB color{0, 0, 0};
@@ -59,6 +60,7 @@ struct Block {
   bool ordered = false;
   int start_num = 1;
   int marker_width = 2;                // width of "- " / "1. " in source
+  std::string marker;                  // bullet override (definition list: ":")
   std::vector<std::vector<Block>> items;
   std::vector<bool> item_checked;      // task lists (- [ ])
   std::vector<bool> item_is_task;
@@ -88,6 +90,13 @@ struct MdDocument {
   bool loose_markers = false;       // "#标题" / "-项目" style markers were accepted
   int front_matter_lines = 0;       // YAML front matter lines that were skipped
   int link_defs_found = 0;          // reference-style link definitions resolved
+  // Footnote definitions ("[^label]: text") and the numbers handed out to the
+  // references, in the order the references appear in the document.
+  std::map<std::string, std::string> footnote_defs;
+  std::map<std::string, int> footnote_nums;
+  std::vector<std::string> footnote_order;
+  int footnotes_defined = 0;
+  int definition_items = 0;         // definition list items ("Term" + ": def")
   // "[label]: url" definitions, keyed by the lowercased label (CommonMark
   // reference links).  They live on the document because quotes and nested
   // lists parse with a sub-parser that shares the document but not the parser.
@@ -148,6 +157,7 @@ class MarkdownParser {
   bool try_list(Block& out, int depth);
   bool try_html_block(Block& out);
   bool try_math_block(Block& out);
+  bool try_definition_list(std::vector<Block>& blocks, int depth);
   bool is_list_item(const std::string& line, size_t indent, bool* ordered, int* num, size_t* marker_len);
   std::vector<Span> inline_parse(const std::string& s, int line, bool allow_math);
 };

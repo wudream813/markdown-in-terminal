@@ -1211,6 +1211,9 @@ void DocView::layout_blocks() {
             // do not line up in every font.  Brackets are always one cell.
             marker = checked ? "[x] " : "[ ] ";
             marker_color = checked ? RGB{140, 195, 140} : theme_.muted;
+          } else if (!b.marker.empty()) {
+            // a definition list (": definition") keeps its own marker
+            marker = b.marker + " ";
           } else if (b.ordered) {
             marker = std::to_string(b.start_num + li) + ". ";
           } else {
@@ -1761,6 +1764,7 @@ void DocView::directive_child_layout(BlockLayout& bl, const Block& sb, int& row,
         bool task = k < sb.item_is_task.size() && sb.item_is_task[k];
         bool checked = k < sb.item_checked.size() && sb.item_checked[k];
         std::string marker = task ? (checked ? "[x] " : "[ ] ")
+                           : !sb.marker.empty() ? sb.marker + " "
                            : sb.ordered ? std::to_string(sb.start_num + li) + ". "
                                         : "\u2022 ";
         li++;

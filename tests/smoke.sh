@@ -228,6 +228,38 @@ grep -q "\[label\]: https://not-a-definition.example" "$TMP/refs.txt" \
   && echo "  --diag counts the definitions"
 python3 tools/refs_test.py "$BIN" || exit 1
 
+echo "== footnotes and definition lists =="
+"$BIN" --dump --width=76 tests/fixtures/footnotes.md > "$TMP/fn.txt"
+grep -q "footnotes\[1\] are numbered where it is first used\[2\]" "$TMP/fn.txt" \
+  && echo "  references are numbered where they are first used"
+grep -q "Repeating\[1\] does not renumber it" "$TMP/fn.txt" \
+  && echo "  a repeated reference keeps its number"
+grep -q "not defined\[\^missing\] stays as written" "$TMP/fn.txt" \
+  && echo "  an undefined label stays as written"
+! grep -q "1. never referenced" "$TMP/fn.txt" \
+  && echo "  a definition that is never referenced is not printed"
+grep -q "\[\^one\]: not a definition, just code" "$TMP/fn.txt" \
+  && echo "  a definition-looking line inside a fence stays code"
+grep -q "1. The first note, with the project page." "$TMP/fn.txt" \
+  && echo "  the notes are printed at the end, numbered"
+grep -q "2. The second one, whose text wraps over two source lines." "$TMP/fn.txt" \
+  && echo "  an indented continuation line belongs to the note"
+"$BIN" --diag tests/fixtures/footnotes.md | grep -q "3 footnote(s) defined, 2 referenced" \
+  && echo "  --diag counts the notes that were defined and referenced"
+
+"$BIN" --dump --width=76 tests/fixtures/definition-lists.md > "$TMP/dl.txt"
+grep -q ": A fruit, and a company." "$TMP/dl.txt" \
+  && echo "  a 'Term' + ': definition' list keeps its ':' marker"
+grep -q ": One term may have several definitions." "$TMP/dl.txt" \
+  && echo "  a term may have several definitions"
+grep -q ": The tilde marker works as well. Its text may wrap onto another line." "$TMP/dl.txt" \
+  && echo "  the '~' marker works and its text may wrap"
+grep -q "This sentence has a colon: but it is not a definition list." "$TMP/dl.txt" \
+  && echo "  a colon inside a sentence is left alone"
+grep -q ": this line is code, not a definition" "$TMP/dl.txt" \
+  && echo "  a definition inside a fence stays code"
+python3 tools/footnotes_test.py "$BIN" || exit 1
+
 echo "== command line and input file =="
 sh tests/cli.sh "$BIN" || exit 1
 
@@ -235,7 +267,7 @@ echo "== no shell in the URL paths (command injection) =="
 python3 tools/injection_test.py "$BIN" || exit 1
 
 echo "== protocols (pty) =="
-python3 tools/pty_test.py
+python3 tools/pty_test.py "$BIN"
 
 echo "== resize =="
 python3 tools/resize_test.py "$BIN"

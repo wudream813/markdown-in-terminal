@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
-"""Drives mdt inside a pty and checks the interactive behaviour + graphics output."""
+"""Drives mdt inside a pty and checks the interactive behaviour + graphics output.
+
+    python3 tools/pty_test.py [binary]      # default: ./build/mdt
+"""
 import os, pty, select, struct, fcntl, termios, time, sys, re
+
+BIN = sys.argv[1] if len(sys.argv) > 1 else "./build/mdt"
+# An instrumented (ASan/UBSan) build starts slowly, so the wait for the first
+# frame and the overall budget scale with MDT_TEST_SLOWDOWN (CI sets it to 4).
+SLOWDOWN = float(os.environ.get("MDT_TEST_SLOWDOWN", "1") or 1)
 
 def run(cmd, env_extra, keys, cols=100, rows=30):
     env = dict(os.environ)
@@ -11,9 +19,9 @@ def run(cmd, env_extra, keys, cols=100, rows=30):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     out = b""
     child_exited = False
-    deadline = time.time() + 12
+    deadline = time.time() + 12 * SLOWDOWN
     key_i = 0
-    next_key = time.time() + 1.2
+    next_key = time.time() + 1.2 * SLOWDOWN
     while time.time() < deadline:
         r, _, _ = select.select([fd], [], [], 0.1)
         if r:
@@ -31,7 +39,7 @@ def run(cmd, env_extra, keys, cols=100, rows=30):
         if key_i >= len(keys) and time.time() > next_key:
             # keep draining until the child exits (or 2s grace) so we capture the
             # restore-terminal sequence written on shutdown
-            grace = time.time() + 4.0
+            grace = time.time() + 4.0 * SLOWDOWN
             while time.time() < grace:
                 r, _, _ = select.select([fd], [], [], 0.1)
                 if r:
@@ -62,7 +70,7 @@ XTERM = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
 
 fails = []
 # 1. kitty: images must be transmitted with the kitty protocol
-cmd = ["./build/mdt", "--gfx=kitty", "--toc", "demo/demo.md"]
+cmd = [BIN, "--gfx=kitty", "--toc", "demo/demo.md"]
 keys = [b"j", b"j", b" ", b"n", b"/math\r", b"t", b"G", b"g", b"J", b"K", b"\t", b"?", b"\x1b", b"\t", b"\x1b", b"q", b"\x03"]
 out = run(cmd, KITTY, keys)
 text = out.decode("utf-8", "replace")
@@ -76,12 +84,12 @@ print("kitty run: %d bytes, %d image transmits, %d placements" %
 print("   image ids:", sorted(set(int(m) for m in re.findall(rb"i=(\d+)", out)))[:12])
 
 # 2. sixel
-out2 = run(["./build/mdt", "--gfx=sixel", "demo/demo.md"], XTERM, [b"j", b"q"])
+out2 = run([BIN, "--gfx=sixel", "demo/demo.md"], XTERM, [b"j", b"q"])
 if b"\x1bPq" not in out2: fails.append("sixel: no DCS sixel output")
 print("sixel run: %d bytes, %d sixel payloads" % (len(out2), out2.count(b"\x1bPq")))
 
 # 3. no graphics protocol: must still run and show unicode maths fallback
-out3 = run(["./build/mdt", "--gfx=none", "demo/demo.md"], XTERM, [b"j", b"q"])
+out3 = run([BIN, "--gfx=none", "demo/demo.md"], XTERM, [b"j", b"q"])
 # note: the capability probe itself is a \x1b_G sequence - ignore it
 probe = b"\x1b_Gi=31,s=1,v=1,a=q,f=24,t=d"
 rest3 = out3.replace(probe, b"")
@@ -89,7 +97,7 @@ if b"\x1bPq" in rest3 or b"\x1b_G" in rest3: fails.append("none: graphics emitte
 print("no-gfx run: %d bytes" % len(out3))
 
 # 4. iterm2
-out4 = run(["./build/mdt", "--gfx=iterm2", "demo/demo.md"], {"TERM": "xterm-256color", "TERM_PROGRAM": "iTerm.app"}, [b"j", b"q"])
+out4 = run([BIN, "--gfx=iterm2", "demo/demo.md"], {"TERM": "xterm-256color", "TERM_PROGRAM": "iTerm.app"}, [b"j", b"q"])
 if b"\x1b]1337;File=" not in out4: fails.append("iterm2: no inline image sequence")
 print("iterm2 run: %d bytes, %d inline images" % (len(out4), out4.count(b"\x1b]1337;File=")))
 

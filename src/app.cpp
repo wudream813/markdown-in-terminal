@@ -1013,6 +1013,9 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
   if (doc.front_matter_lines > 0 || doc.link_defs_found > 0)
     printf("  skipped         : %d front matter line(s), %d link reference definition(s)\n",
            doc.front_matter_lines, doc.link_defs_found);
+  if (doc.footnotes_defined > 0 || !doc.footnote_order.empty() || doc.definition_items > 0)
+    printf("  markdown        : %d footnote(s) defined, %d referenced, %d definition list item(s)\n",
+           doc.footnotes_defined, (int)doc.footnote_order.size(), doc.definition_items);
   printf("  blocks          : heading=%d paragraph=%d list=%d table=%d code=%d html=%d quote=%d\n",
          cnt[(int)Block::Heading], cnt[(int)Block::Paragraph], cnt[(int)Block::List],
          cnt[(int)Block::Table], cnt[(int)Block::CodeBlock], cnt[(int)Block::Html],

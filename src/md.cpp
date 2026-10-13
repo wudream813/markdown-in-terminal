@@ -610,6 +610,18 @@ const std::string* lookup_link_ref(const MdDocument* doc, const std::string& lab
   return it == doc->link_defs.end() ? nullptr : &it->second;
 }
 
+// A footnote reference gets its number when it is first seen, not when it is
+// defined: readers expect the numbering to follow the text, and a definition
+// that is never referenced is not printed at all.
+int footnote_number(MdDocument* doc, const std::string& label) {
+  auto it = doc->footnote_nums.find(label);
+  if (it != doc->footnote_nums.end()) return it->second;
+  int n = (int)doc->footnote_order.size() + 1;
+  doc->footnote_nums[label] = n;
+  doc->footnote_order.push_back(label);
+  return n;
+}
+
 // "# Title {#custom-id}" -> "# Title".  Attribute lists after a heading are a
 // Pandoc/Kramdown habit; mdt has no anchors to attach them to, so they are
 // dropped instead of being read out loud.
@@ -630,10 +642,10 @@ struct InlineParser {
   int line = 0;
   char stop_ch = 0;   // stop when this character is reached (link labels)
   std::vector<Span>* out;
-  const MdDocument* doc = nullptr;  // for "[label]: url" reference links
+  MdDocument* doc = nullptr;  // "[label]: url" links, "[^label]" footnotes
 
   InlineParser(const std::string& str, bool math, int ln, std::vector<Span>* o,
-               const MdDocument* d = nullptr)
+               MdDocument* d = nullptr)
       : s(str), allow_math(math), line(ln), out(o), doc(d) {}
 
   void text(const std::string& t, const Span& proto) {
@@ -848,6 +860,24 @@ struct InlineParser {
             if (!title.empty()) sp.tex = title;  // reuse tex for the title
             out->push_back(sp);
             i = parend + 1;
+            continue;
+          }
+        }
+      }
+      // ----------------------------------------------------------- footnote -
+      // "[^label]" is a reference to a footnote definition.  An undefined label
+      // stays literal text, the way CommonMark treats an undefined link label.
+      if (c == '[' && i + 1 < s.size() && s[i + 1] == '^') {
+        size_t close = s.find(']', i + 2);
+        if (close != std::string::npos && close > i + 2) {
+          std::string label = to_lower(trim(s.substr(i + 2, close - i - 2)));
+          if (doc && doc->footnote_defs.count(label)) {
+            flush();
+            Span fn = base;
+            fn.footnote = true;
+            fn.text = "[" + std::to_string(footnote_number(doc, label)) + "]";
+            out->push_back(fn);
+            i = close + 1;
             continue;
           }
         }
@@ -1802,6 +1832,9 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
       }
     }
 
+    // ---------------------------------------------------- definition list --
+    if (try_definition_list(blocks, depth)) continue;
+
     // ---------------------------------------------------------- paragraph --
     {
       std::vector<std::string> para;
@@ -1834,6 +1867,86 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
     }
   }
   return blocks;
+}
+
+// "Term" on its own line followed by ": definition" (or "~ definition") lines is
+// a definition list - Pandoc, PHP Markdown Extra and most note editors write it
+// that way.  It used to be glued into the term's paragraph ("Term : def").
+static bool is_definition_line(const std::string& line) {
+  if (indent_of(line) > 3) return false;
+  std::string t = ltrim(line);
+  if (t.size() < 2) return false;
+  if (t[0] != ':' && t[0] != '~') return false;
+  // ":::note" is a Luogu directive and "::foo" a leaf directive: only one
+  // marker character followed by a space counts here.
+  return t[1] == ' ' || t[1] == '\t';
+}
+
+bool MarkdownParser::try_definition_list(std::vector<Block>& blocks, int depth) {
+  // The term may wrap over a few lines; everything from here to the first
+  // definition line is the term.
+  std::vector<std::string> term;
+  size_t scan = li_;
+  while (scan < lines_.size() && term.size() < 4) {
+    if (is_blank(lines_[scan]) || is_definition_line(lines_[scan])) break;
+    term.push_back(trim(lines_[scan]));
+    scan++;
+  }
+  if (term.empty() || scan >= lines_.size() || !is_definition_line(lines_[scan])) return false;
+
+  Block tb;
+  tb.type = Block::Paragraph;
+  tb.src_line = (int)li_ + 1;
+  tb.spans = parse_inline(join(term, "\n"), (int)li_);
+  blocks.push_back(tb);
+  li_ = scan;
+
+  Block dl;
+  dl.type = Block::List;
+  dl.marker = ":";
+  dl.start_num = 1;
+  std::vector<std::string> def;
+  auto flush_def = [&]() {
+    if (def.empty()) return;
+    std::vector<Block> item;
+    Block pb;
+    pb.type = Block::Paragraph;
+    pb.src_line = (int)li_ + 1;
+    pb.spans = parse_inline(join(def, " "), (int)li_);
+    item.push_back(pb);
+    dl.items.push_back(item);
+    def.clear();
+  };
+  while (li_ < lines_.size()) {
+    const std::string& l = lines_[li_];
+    if (is_definition_line(l)) {
+      flush_def();
+      std::string t = trim(l);
+      def.push_back(trim(t.substr(1)));
+      li_++;
+      continue;
+    }
+    if (is_blank(l)) {
+      size_t nxt = li_ + 1;
+      while (nxt < lines_.size() && is_blank(lines_[nxt])) nxt++;
+      if (nxt < lines_.size() && (is_definition_line(lines_[nxt]) || indent_of(lines_[nxt]) >= 2)) {
+        li_ = nxt;
+        continue;
+      }
+      break;
+    }
+    if (indent_of(l) >= 2 && !def.empty()) {  // wrapped definition text
+      def.push_back(trim(l));
+      li_++;
+      continue;
+    }
+    break;
+  }
+  flush_def();
+  doc_->definition_items += (int)dl.items.size();
+  blocks.push_back(dl);
+  (void)depth;
+  return true;
 }
 
 void collect_links(const Block& b, std::vector<LinkRef>& out) {
@@ -1933,7 +2046,29 @@ void MarkdownParser::extract_definitions() {
     if (close == std::string::npos || close < 2) continue;
     if (close + 1 >= t.size() || t[close + 1] != ':') continue;
     std::string label = trim(t.substr(1, close - 1));
-    if (label.empty() || label[0] == '^') continue;  // "[^1]" is a footnote, not a link
+    if (label.empty()) continue;
+    if (label[0] == '^') {
+      // A footnote definition, not a link.  The text stays on the document and
+      // the lines are blanked; indented continuation lines belong to it.
+      std::string flabel = to_lower(trim(label.substr(1)));
+      if (flabel.empty() || flabel.find(' ') != std::string::npos) continue;
+      std::string body = trim(t.substr(close + 2));
+      L.clear();
+      size_t c = k;
+      while (c + 1 < lines_.size()) {
+        const std::string& nl = lines_[c + 1];
+        if (is_blank(nl) || indent_of(nl) < 2) break;
+        if (!body.empty()) body += " ";
+        body += trim(nl);
+        lines_[c + 1].clear();
+        c++;
+      }
+      if (doc_->footnote_defs.find(flabel) == doc_->footnote_defs.end()) {
+        doc_->footnote_defs[flabel] = body;
+        doc_->footnotes_defined++;
+      }
+      continue;
+    }
     std::string rest = trim(t.substr(close + 2));
     if (rest.empty()) continue;
     std::string dest, title;
@@ -2025,6 +2160,8 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
         (opt_.loose == MdOptions::LooseOn || looks_unspaced_markers(src))) {
       loose_markers_ = true;
       li_ = 0;
+      doc.footnote_nums.clear();   // numbers follow the final parse
+      doc.footnote_order.clear();
       doc.blocks = parse_blocks(0);
       doc.loose_markers = true;
     }
@@ -2078,6 +2215,33 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
       }
     } post{doc};
     post.walk(doc.blocks);
+  }
+
+  // ---------------------------------------------------------- footnotes --
+  // The referenced footnotes are printed as an ordered list at the end of the
+  // document, numbered in the order the references appear.  A definition that
+  // is never referenced is not shown (GitHub does the same).
+  if (!doc.footnote_order.empty()) {
+    Block hr;
+    hr.type = Block::Hr;
+    doc.blocks.push_back(hr);
+    Block list;
+    list.type = Block::List;
+    list.ordered = true;
+    list.start_num = 1;
+    for (size_t i = 0; i < doc.footnote_order.size() && i < 500; i++) {
+      auto it = doc.footnote_defs.find(doc.footnote_order[i]);
+      if (it == doc.footnote_defs.end()) continue;
+      Block para;
+      para.type = Block::Paragraph;
+      para.spans = parse_inline(it->second, (int)doc.blocks.size());
+      std::vector<Block> item;
+      item.push_back(para);
+      list.items.push_back(item);
+      // A footnote may reference another one; that call appends to
+      // footnote_order, and the loop condition is re-read every iteration.
+    }
+    doc.blocks.push_back(list);
   }
 
   // collect outline + links + title
