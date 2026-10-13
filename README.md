@@ -466,6 +466,11 @@ matter at the top of a file is skipped, and reference links
 `[ref]: https://…` definitions — a label that is not defined stays literal
 text, the way CommonMark asks.
 
+Footnotes (`[^1]` / `[^1]: the note`) are numbered where they are first *used*
+and the notes are printed as an ordered list at the end of the document, and
+`Term` + `: definition` lines render as a definition list rather than one long
+paragraph.  `mdt --diag file.md` reports how many of each it found.
+
 ## The command line is checked
 
 An option that makes no sense is reported instead of quietly ignored: a
