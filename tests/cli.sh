@@ -78,9 +78,14 @@ if [ -z "$RUN" ]; then  # a Windows exe under wine reaches the directory check t
 fi
 
 echo "== stdin still works =="
-printf '# hello\n\n$a^2+b^2=c^2$\n' | "$BIN" --dump --width=40 - >/dev/null 2>&1 || {
-  echo "   FAIL reading from stdin broke"; exit 1; }
-echo "   ok   # a document on stdin renders"
+# $RUN is the wine runner when the Windows binary is under test.  This check
+# used to call "$BIN" directly, so it tried to exec a PE file on Linux and
+# failed for a reason that had nothing to do with stdin.
+if printf '# hello\n\n$a^2+b^2=c^2$\n' | $RUN "$BIN" --dump --width=40 - >/dev/null 2>&1; then
+  echo "   ok   # a document on stdin renders"
+else
+  echo "   FAIL reading from stdin broke"; exit 1
+fi
 
 echo "== a settings file, and NO_COLOR =="
 if [ -n "$RUN" ]; then
