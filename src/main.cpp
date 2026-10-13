@@ -117,6 +117,11 @@ static void load_config(AppOptions* opts) {
     } else if (key == "math") {
       if (one_of(val, {"katex", "unicode", "off"})) opts->math = val;
       else fprintf(stderr, "mdt: %s:%zu: unknown math '%s'\n", path.c_str(), line_no, val.c_str());
+    } else if (key == "encoding") {
+      std::string v = to_lower(val);
+      if (one_of(v, {"auto", "utf-8", "utf8", "gbk", "gb18030", "big5", "cp1252", "latin1", "off"}))
+        opts->encoding = (v == "utf8") ? "utf-8" : v;
+      else fprintf(stderr, "mdt: %s:%zu: unknown encoding '%s'\n", path.c_str(), line_no, val.c_str());
     } else if (key == "panels") {
       opts->panels = truthy(val);
     } else if (key == "terminal_bg" || key == "terminal-bg") {
@@ -205,6 +210,16 @@ int main(int argc, char** argv) {
       opts.escapes = a.substr(10);
       if (!one_of(opts.escapes, {"auto", "off", "force"}))
         return usage_error("--escapes: expected auto|off|force, got '" + opts.escapes + "'");
+      continue;
+    }
+    if (a.rfind("--encoding=", 0) == 0) {
+      opts.encoding = a.substr(11);
+      for (auto& ch : opts.encoding) ch = (char)tolower((unsigned char)ch);
+      if (!one_of(opts.encoding, {"auto", "utf-8", "utf8", "gbk", "gb18030", "big5", "cp1252",
+                                  "latin1", "off"}))
+        return usage_error("--encoding: expected auto|utf-8|gbk|gb18030|big5|cp1252|latin1|off, got '" +
+                           opts.encoding + "'");
+      if (opts.encoding == "utf8") opts.encoding = "utf-8";
       continue;
     }
     if (a.rfind("--loose=", 0) == 0) {

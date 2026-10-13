@@ -1,5 +1,6 @@
 // app.cpp : the interactive reader (event loop, outline panel, search, status bar).
 #include "app.h"
+#include "encoding.h"
 
 #include <algorithm>
 #include <cmath>
@@ -94,6 +95,12 @@ static Theme theme_by_name(const std::string& name) {
   return t;
 }
 
+// Reads a file (or stdin) and converts an 8-bit source to UTF-8.  Declared here
+// because App::load_file() below reads through it as well.
+static bool read_raw(const std::string& path, std::string& raw, std::string* err);
+static bool read_source(const std::string& path, const std::string& want_encoding,
+                        std::string& out, std::string* err, DecodedText* info = nullptr);
+
 // ------------------------------------------------------------ app state -----
 namespace {
 
@@ -151,6 +158,7 @@ struct App {
   int toc_sel = 0, toc_off = 0, toc_panel_w = 0;
   std::string file;
   size_t file_index = 0;
+  DecodedText decoding;             // what read_source() did with the bytes
   bool needs_frame = true;
   bool images_dirty = true;
   bool show_scrollbar = true;
@@ -179,9 +187,9 @@ struct App {
 };
 
 bool App::load_file(const std::string& path, std::string* err) {
-  std::string text;
-  if (!read_file(path, text)) {
-    if (err) *err = "cannot read file: " + path;
+  std::string text, why;
+  if (!read_source(path, opt.encoding, text, &why, &decoding)) {
+    if (err) *err = why.empty() ? ("cannot read file: " + path) : why;
     return false;
   }
   file = path;
@@ -403,6 +411,7 @@ void App::render() {
   if (view.doc().backslashes_removed > 0) engine += " +escapes";
   if (view.doc().loose_markers) engine += " +loose";
   if (view.doc().invisible_removed > 0) engine += " +clean";
+  if (decoding.converted) engine += " +" + decoding.encoding;   // 8-bit source, converted
   if (view.doc().code_gaps_collapsed > 0 || view.doc().code_refs_decoded > 0) engine += " +code";
   std::string msg = status_msg;
   if (now_ms() > status_until) msg.clear();
@@ -818,21 +827,33 @@ static bool render_screenshot(App* app_placeholder, const AppOptions& opt, std::
 static bool render_dump(const AppOptions& opt, std::string* err);
 static bool render_diag(const AppOptions& opt, std::string* err);
 
-// Reads a file, or stdin when the path is "-".
-static bool read_source(const std::string& path, std::string& out, std::string* err) {
+// Reads a file, or stdin when the path is "-", and converts an 8-bit source
+// (GBK and friends) to UTF-8 before anything else looks at it.
+static bool read_raw(const std::string& path, std::string& raw, std::string* err) {
   if (path == "-") {
     char buf[65536];
     size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), stdin)) > 0) out.append(buf, n);
-    return !out.empty() || feof(stdin);
+    while ((n = fread(buf, 1, sizeof(buf), stdin)) > 0) raw.append(buf, n);
+    if (raw.empty() && !feof(stdin)) return false;
+    return true;
   }
   // A directory used to be "read" successfully and silently render nothing
   // (exit status 0), which reads like the file was empty rather than wrong.
   std::string why;
-  if (!read_file(path, out, &why)) {
+  if (!read_file(path, raw, &why)) {
     if (err) *err = plat::is_directory(path) ? (path + " is a directory, not a file") : why;
     return false;
   }
+  return true;
+}
+
+static bool read_source(const std::string& path, const std::string& want_encoding,
+                        std::string& out, std::string* err, DecodedText* info) {
+  std::string raw;
+  if (!read_raw(path, raw, err)) return false;
+  DecodedText dec = decode_text(raw, want_encoding);
+  out = std::move(dec.text);
+  if (info) *info = dec;
   return true;
 }
 
@@ -884,7 +905,7 @@ int run_app(const AppOptions& opts) {
     return 0;
   }
   std::string text, rerr;
-  if (!read_source(path, text, &rerr)) {
+  if (!read_source(path, opts.encoding, text, &rerr)) {
     fprintf(stderr, "mdt: %s\n", rerr.c_str());
     return 1;
   }
@@ -943,8 +964,17 @@ int run_app(const AppOptions& opts) {
     return 1;
   }
   app.toc_open = opts.toc;
-  app.set_status(fmt("%s%s  |  ? for help",
+  // fmt() is a printf wrapper: building the middle field first keeps it a
+  // const char* (handing it a std::string is undefined behaviour and printed
+  // garbage in the status bar).
+  std::string encoding_note;
+  if (app.decoding.converted)
+    encoding_note = fmt("  |  %s source converted to UTF-8", app.decoding.encoding.c_str());
+  else if (!app.decoding.note.empty())
+    encoding_note = fmt("  |  %s", app.decoding.note.c_str());
+  app.set_status(fmt("%s%s%s  |  ? for help",
                      gfx_name(app.term.caps.gfx),
+                     encoding_note.c_str(),
                      app.view.doc().entities_unescaped
                           ? "  |  decoded HTML entities"
                           : (app.view.doc().backslashes_removed > 0
@@ -961,19 +991,21 @@ int run_app(const AppOptions& opts) {
 // rendering problem can be reported without guesswork.  Works without a tty.
 static bool render_diag(const AppOptions& opt, std::string* err) {
   std::string path = opt.files.empty() ? std::string() : opt.files[0];
-  std::string text;
-  if (!path.empty() && !read_source(path, text, err)) return false;
+  std::string raw;
+  if (!path.empty() && !read_raw(path, raw, err)) return false;
+  DecodedText dec = decode_text(raw, opt.encoding);
+  std::string text = dec.text;
 
   printf("mdt diag\n");
-  printf("  file            : %s (%zu bytes)\n", path.empty() ? "-" : path.c_str(), text.size());
+  printf("  file            : %s (%zu bytes)\n", path.empty() ? "-" : path.c_str(), raw.size());
   // encoding
   std::string enc = "utf-8, no BOM";
-  std::string body = text;
+  std::string body = raw;
   if (text.size() >= 3 && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB &&
       (unsigned char)text[2] == 0xBF) { enc = "utf-8 with BOM"; body = text.substr(3); }
   else if (text.size() >= 2 && (unsigned char)text[0] == 0xFF && (unsigned char)text[1] == 0xFE)
     enc = "utf-16le (BOM) - NOT SUPPORTED, save the file as UTF-8";
-  else if (text.size() >= 2 && (unsigned char)text[0] == 0xFE && (unsigned char)text[1] == 0xFF)
+  else if (raw.size() >= 2 && (unsigned char)raw[0] == 0xFE && (unsigned char)raw[1] == 0xFF)
     enc = "utf-16be (BOM) - NOT SUPPORTED, save the file as UTF-8";
   else {
     int bad = 0;
@@ -993,6 +1025,11 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
     if (bad > 0) enc = "utf-8, no BOM, but " + std::to_string(bad) + " invalid byte(s) before offset 200000 - probably not UTF-8 (GBK/ANSI?)";
   }
   printf("  encoding        : %s\n", enc.c_str());
+  if (dec.converted)
+    printf("                    -> converted from %s to UTF-8 for rendering\n",
+           dec.encoding.c_str());
+  else if (!dec.note.empty())
+    printf("                    -> left as it is: %s\n", dec.note.c_str());
   bool crlf = body.find("\r\n") != std::string::npos;
   printf("  line endings    : %s\n", crlf ? "CRLF" : "LF");
   bool bom = enc.rfind("utf-8 with BOM", 0) == 0;
@@ -1102,7 +1139,7 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
 static bool render_dump(const AppOptions& opt, std::string* err) {
   std::string path = opt.files[0];
   std::string text;
-  if (!read_source(path, text, err)) return false;
+  if (!read_source(path, opt.encoding, text, err)) return false;
   if (path == "-") path = "<stdin>";
   int width = opt.width > 0 ? opt.width : 100;
   MdOptions mo;
@@ -1171,7 +1208,7 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   (void)placeholder;
   std::string path = opt.files[0];
   std::string text;
-  if (!read_source(path, text, err)) return false;
+  if (!read_source(path, opt.encoding, text, err)) return false;
   if (path == "-") path = "<stdin>";
   int cols = opt.width > 0 ? opt.width : 110;
   int rows = opt.height > 0 ? opt.height : 48;
@@ -1306,6 +1343,8 @@ void print_usage() {
       "  --panels                             tinted backgrounds for code/quote/table\n"
       "  --terminal-bg                        keep the terminal's own background\n"
       "  --no-scrollbar                       hide the scrollbar\n"
+      "  --encoding=auto|utf-8|gbk|big5|cp1252|off\n"
+      "                                       how to read a non-UTF-8 (ANSI) file (default: auto)\n"
       "  --entities=off|force                 repair a HTML-escaped source (default: off)\n"
       "  --escapes=auto|off|force             backslash-escaped sources (default: auto)\n"
       "  --loose=auto|off|on                  \"#标题\" and \"-项目\" without a space (default: auto)\n"

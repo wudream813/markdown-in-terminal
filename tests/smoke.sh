@@ -260,6 +260,29 @@ grep -q ": this line is code, not a definition" "$TMP/dl.txt" \
   && echo "  a definition inside a fence stays code"
 python3 tools/footnotes_test.py "$BIN" || exit 1
 
+echo "== an 8-bit (ANSI) source is read, not shown as mojibake =="
+python3 - "$TMP" <<'PY'
+import os, sys
+d = sys.argv[1]
+# a Chinese Windows editor saves as GBK (the "ANSI" code page of the system)
+open(os.path.join(d, "gbk.md"), "wb").write(
+    "# \u4e2d\u6587\u6807\u9898\n\n\u8fd9\u662f\u4e00\u6bb5\u7528 GBK "
+    "\u4fdd\u5b58\u7684\u6b63\u6587\u3002\n\n- \u5217\u8868\u9879\n".encode("gbk"))
+open(os.path.join(d, "big5.md"), "wb").write(
+    "# \u7e41\u9ad4\u4e2d\u6587\u6a19\u984c\n\n\u9019\u662f Big5 "
+    "\u7de8\u78bc\u7684\u6b63\u6587\u3002\n".encode("big5"))
+PY
+"$BIN" --dump --width=60 "$TMP/gbk.md" > "$TMP/gbk.txt"
+grep -q "中文标题" "$TMP/gbk.txt" && echo "  a GBK heading is readable"
+grep -q "这是一段用 GBK 保存的正文。" "$TMP/gbk.txt" && echo "  the GBK body text is readable"
+grep -q "• 列表项" "$TMP/gbk.txt" && echo "  the structure survives the conversion"
+"$BIN" --encoding=off --dump --width=60 "$TMP/gbk.md" > "$TMP/gbk-off.txt"
+! grep -q "中文标题" "$TMP/gbk-off.txt" && echo "  --encoding=off leaves the bytes alone"
+"$BIN" --diag "$TMP/gbk.md" | grep -q "converted from gb18030 to UTF-8" \
+  && echo "  --diag says what it converted"
+"$BIN" --encoding=big5 --dump --width=60 "$TMP/big5.md" | grep -q "繁體中文標題" \
+  && echo "  --encoding=big5 reads a Big5 file"
+
 echo "== command line and input file =="
 sh tests/cli.sh "$BIN" || exit 1
 

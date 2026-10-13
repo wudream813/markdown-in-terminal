@@ -137,6 +137,7 @@ cat notes.md | mdt --dump -     # 从标准输入读取
 
 | 参数 | 含义 |
 |:--|:--|
+| `--encoding=auto\|utf-8\|gbk\|big5\|cp1252\|off` | 非 UTF-8（ANSI）文件的读法（默认 `auto`，按 GBK/GB18030 处理） |
 | `--gfx=auto\|kitty\|iterm2\|sixel\|none` | 图形协议（默认 `auto`） |
 | `--math=katex\|unicode\|off` | 数学引擎（默认内置 `katex`） |
 | `--theme=dark\|light\|nord\|monochrome` | 配色主题 |
@@ -219,6 +220,21 @@ stderr 上报出来而不是被默默忽略，`mdt --diag` 会告诉你读的是
 
 设置 `NO_COLOR=1`（见 [no-color.org](https://no-color.org)）会切到 monochrome 主题 ——
 除非你显式指定了主题。
+
+### GBK 等非 UTF-8 文件
+
+中文 Windows 编辑器保存的 Markdown 通常是 GBK（系统「ANSI」代码页），以前每个汉字都会显示成
+乱码。现在 mdt 会发现这些字节不是合法 UTF-8，并在解析前转码 —— 标题、列表、代码块结构都保持
+完整，`--diag` 也会写明它做了什么：
+
+```
+  encoding        : utf-8, no BOM, but 23 invalid byte(s) before offset 200000 - probably not UTF-8 (GBK/ANSI?)
+                    -> converted from gb18030 to UTF-8 for rendering
+```
+
+`--encoding=` 可以覆盖自动判断：`gbk`、`gb18030`、`big5`、`cp1252`、`latin1`，
+或 `off`（保持原样）。自动判断默认按 GBK 处理，因为 GB18030 的字节空间是 Big5 的超集 ——
+Big5 文件会被「成功」转成错误的汉字，所以 Big5 文档请显式加 `--encoding=big5`。
 
 ### Markdown 细节
 

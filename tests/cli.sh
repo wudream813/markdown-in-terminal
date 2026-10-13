@@ -47,7 +47,7 @@ expect_message() {  # expect_message <substring> <what> <args...>
 
 echo "== a bad value is reported, not ignored =="
 for opt in "--theme=bogus" "--gfx=bogus" "--math=bogus" "--entities=bogus" \
-           "--escapes=bogus" "--loose=bogus"; do
+           "--escapes=bogus" "--loose=bogus" "--encoding=bogus"; do
   expect_status 2 "$opt is refused" --dump $opt $DOC
 done
 

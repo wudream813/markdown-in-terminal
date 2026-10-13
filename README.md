@@ -422,6 +422,7 @@ the final geometry is exact.
 | `--panels` | tinted backgrounds behind code blocks, quotes and table headers (off by default: the page uses one background colour) |
 | `--terminal-bg` | emit SGR 49 for the page background, so the terminal's own colour/transparency shows through |
 | `--no-scrollbar` | hide the scrollbar |
+| `--encoding=auto\|utf-8\|gbk\|gb18030\|big5\|cp1252\|latin1\|off` | how to read a file that is not UTF-8 (default `auto`: GBK/GB18030, the "ANSI" code page of a Chinese Windows) |
 | `--entities=off\|force` | repair a source that was HTML-escaped before it reached you (off by default) |
 | `--escapes=auto\|off\|force` | control the backslash-escape repair described above |
 | `--loose=auto\|off\|on` | accept `#标题` / `-项目` / `1.项目` without a space |
@@ -495,8 +496,27 @@ Three switches exist for the cases where the terminal and mdt disagree:
 | `mdt --compat file.md` | turns everything optional off - graphics, DEC 2026 synchronized output, the kitty keyboard push, the capability probe - and paints each changed row from column 0 as one run, so no cursor jump ever happens inside a row. If the display becomes correct, the terminal is mishandling one of those; `--compat` is the workaround. |
 
 The repairs on the source side can be controlled individually with
-`--entities`, `--escapes`, `--loose` and the status bar shows which of them
-were used (`+entities`, `+escapes`, `+loose`, `+clean`).
+`--entities`, `--escapes`, `--loose`, `--encoding` and the status bar shows
+which of them were used (`+entities`, `+escapes`, `+loose`, `+clean`,
+`+gb18030`).
+
+### A file that is not UTF-8
+
+A Markdown file saved by a Chinese Windows editor is usually GBK (the "ANSI"
+code page), and every Chinese character in it used to be printed as mojibake.
+mdt now notices that the bytes are not valid UTF-8 and converts the text before
+parsing - the heading, the lists and the code blocks all survive, and `--diag`
+says what it did:
+
+```
+  encoding        : utf-8, no BOM, but 23 invalid byte(s) before offset 200000 - probably not UTF-8 (GBK/ANSI?)
+                    -> converted from gb18030 to UTF-8 for rendering
+```
+
+`--encoding=` overrides the guess: `gbk`, `gb18030`, `big5`, `cp1252`, `latin1`
+or `off` (leave the bytes alone).  Automatic detection assumes GBK, because
+GB18030's byte space is a superset of Big5's - a Big5 document converts
+"successfully" into wrong characters, so pass `--encoding=big5` for those.
 
 ## Notes / limitations
 

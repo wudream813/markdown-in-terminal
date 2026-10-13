@@ -58,6 +58,7 @@ set(MDT_SRC
   src/math.cpp
   src/font.cpp
   src/util.cpp
+  src/encoding.cpp
   src/generated/assets_js.cpp
 )
 
