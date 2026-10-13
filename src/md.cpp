@@ -545,6 +545,17 @@ std::string html_to_markdown(const std::string& html) {
       else { out += " "; row_cells++; }
       continue;
     }
+    if (name == "details") {  // container: the content stays, the tag goes
+      blank();
+      continue;
+    }
+    if (name == "summary") {
+      // "<details><summary>Details</summary>body" used to collapse into
+      // "Detailsbody" because both tags were simply dropped.
+      if (closing) { out += "**"; blank(); }
+      else { soft(); out += "**"; }
+      continue;
+    }
     if (name == "br") {
       // "<br>" at the end of a line already ends it: do not add a second break
       size_t k = i;
@@ -1520,6 +1531,25 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
           continue;
         }
         break;
+      }
+      // A GitHub alert writes its type on the first line: "> [!NOTE]".  The
+      // marker means nothing in CommonMark, so it was read out as
+      // "[!NOTE]" - turn it into a bold label of its own instead.  (Luogu
+      // callouts are the :::directive form and keep their coloured bars.)
+      if (!inner.empty()) {
+        static const std::pair<const char*, const char*> kAlerts[] = {
+            {"[!NOTE]", "Note"},       {"[!TIP]", "Tip"},
+            {"[!IMPORTANT]", "Important"}, {"[!WARNING]", "Warning"},
+            {"[!CAUTION]", "Caution"}};
+        std::string first = trim(inner[0]);
+        std::string upper = to_lower(first);
+        for (const auto& al : kAlerts) {
+          if (upper == to_lower(al.first)) {
+            inner[0] = std::string("**") + al.second + "**";
+            inner.insert(inner.begin() + 1, std::string());
+            break;
+          }
+        }
       }
       b.type = Block::Quote;
       b.level = depth + 1;

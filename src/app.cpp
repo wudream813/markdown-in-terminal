@@ -1045,6 +1045,8 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
     const char* v = getenv(n);
     if (v && *v) envs += std::string(" ") + n + "=" + v;
   }
+  printf("  config          : %s\n", opt.config_path.empty() ? "(none)" : opt.config_path.c_str());
+  printf("  theme           : %s%s\n", opt.theme.c_str(), opt.no_color ? "  (NO_COLOR/--no-color)" : "");
   printf("  terminal env    :%s\n", envs.empty() ? " (none set)" : envs.c_str());
   int tc = plat::stdout_is_tty() ? 1 : 0;
   int cols = 0, rows = 0;

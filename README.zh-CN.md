@@ -195,6 +195,39 @@ term.cpp：kitty/iTerm2 用 PNG，sixel 终端用 sixel，
 尺寸信息取自 SVG 的 `viewBox` 和 `vertical-align:-2.819ex`，和浏览器用的完全一致，
 所以行内公式能和周围文字对齐，而不是浮在空中。
 
+### 配置文件与 NO_COLOR
+
+每次都敲同样的参数很烦，所以 mdt 会读一个默认值文件：
+
+```
+~/.config/mdt/config            # Linux/macOS（$XDG_CONFIG_HOME/mdt/config）
+%APPDATA%\mdt\config           # Windows
+```
+
+```ini
+# mdt 设置 —— 命令行参数总是优先于这个文件
+theme = nord
+panels = 1
+scrollbar = off
+line_numbers = on
+```
+
+支持的键：`theme`、`gfx`、`math`、`panels`、`terminal_bg`、`scrollbar`、
+`line_numbers`、`syntax`、`code_fit`（真值可写 `1 on yes true`）。写错的键或值会在
+stderr 上报出来而不是被默默忽略，`mdt --diag` 会告诉你读的是哪个文件；
+`MDT_CONFIG=/路径` 可以指定另一个文件。
+
+设置 `NO_COLOR=1`（见 [no-color.org](https://no-color.org)）会切到 monochrome 主题 ——
+除非你显式指定了主题。
+
+### Markdown 细节
+
+GitHub 的 alert 语法（`> [!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`、`[!CAUTION]`）
+渲染成带加粗标签的引用块；`<details>`/`<summary>` 会变成「标签 + 正文」两段，而不是把两者
+粘在一起；`# 标题 {#custom-id}` 里的属性会被去掉。文件开头的 YAML front matter 会被跳过；
+引用式链接（`[text][ref]`、`[text][]`、`[ref]`）会按 `[ref]: https://…` 的定义解析 ——
+未定义的标签保持原样文字，符合 CommonMark 的约定。
+
 ## 命令行参数会被检查
 
 不合理的选项会明确报错，而不是被悄悄忽略：值写错了（比如 `--theme=drak`）会以退出码 2

@@ -54,6 +54,87 @@ static bool parse_int(const std::string& s, long lo, long hi, int* out) {
   return true;
 }
 
+// ---------------------------------------------------------------- config -----
+// One settings file, so a reader does not have to type --panels --theme=nord
+// every time: "key = value" lines, "#" starts a comment, the command line
+// always wins over the file.
+//
+//   ~/.config/mdt/config          ($XDG_CONFIG_HOME/mdt/config on Linux/macOS,
+//                                  %APPDATA%\\mdt\\config on Windows)
+//
+// MDT_CONFIG=/path/to/file points at another file (used by the test suite).
+static std::string default_config_path() {
+  const char* forced = getenv("MDT_CONFIG");
+  if (forced && *forced) return forced;
+#ifdef _WIN32
+  const char* appdata = getenv("APPDATA");
+  return appdata && *appdata ? std::string(appdata) + "\\mdt\\config" : std::string();
+#else
+  const char* xdg = getenv("XDG_CONFIG_HOME");
+  if (xdg && *xdg) return std::string(xdg) + "/mdt/config";
+  const char* home = getenv("HOME");
+  return home && *home ? std::string(home) + "/.config/mdt/config" : std::string();
+#endif
+}
+
+static bool truthy(const std::string& v) {
+  return v == "1" || v == "on" || v == "yes" || v == "true" || v == "always";
+}
+
+// Applies the values that are safe to set from a file.  Anything unrecognised
+// is reported (a typo in a config file is as annoying as one on the command
+// line) but does not stop the reader.
+static void load_config(AppOptions* opts) {
+  std::string path = default_config_path();
+  if (path.empty()) return;
+  std::string text;
+  if (!read_file(path, text)) return;  // no file is the normal case
+  opts->config_path = path;
+  size_t pos = 0, line_no = 0;
+  while (pos <= text.size()) {
+    size_t nl = text.find('\n', pos);
+    std::string line = text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+    pos = nl == std::string::npos ? text.size() + 1 : nl + 1;
+    line_no++;
+    size_t hash = line.find('#');
+    if (hash != std::string::npos) line = line.substr(0, hash);
+    line = trim(line);
+    if (line.empty()) continue;
+    size_t eq = line.find('=');
+    if (eq == std::string::npos) {
+      fprintf(stderr, "mdt: %s:%zu: expected key = value, got '%s'\n", path.c_str(), line_no,
+              line.c_str());
+      continue;
+    }
+    std::string key = to_lower(trim(line.substr(0, eq)));
+    std::string val = trim(line.substr(eq + 1));
+    if (key == "theme") {
+      if (one_of(val, {"dark", "light", "nord", "monochrome"})) opts->theme = val;
+      else fprintf(stderr, "mdt: %s:%zu: unknown theme '%s'\n", path.c_str(), line_no, val.c_str());
+    } else if (key == "gfx") {
+      if (one_of(val, {"auto", "kitty", "iterm2", "sixel", "none"})) opts->gfx = val;
+      else fprintf(stderr, "mdt: %s:%zu: unknown gfx '%s'\n", path.c_str(), line_no, val.c_str());
+    } else if (key == "math") {
+      if (one_of(val, {"katex", "unicode", "off"})) opts->math = val;
+      else fprintf(stderr, "mdt: %s:%zu: unknown math '%s'\n", path.c_str(), line_no, val.c_str());
+    } else if (key == "panels") {
+      opts->panels = truthy(val);
+    } else if (key == "terminal_bg" || key == "terminal-bg") {
+      opts->terminal_bg = truthy(val);
+    } else if (key == "scrollbar") {
+      opts->scrollbar = truthy(val);
+    } else if (key == "line_numbers" || key == "line-numbers") {
+      opts->show_line_numbers = truthy(val);
+    } else if (key == "syntax") {
+      opts->syntax = truthy(val);
+    } else if (key == "code_fit" || key == "code-fit") {
+      opts->code_fit = truthy(val);
+    } else {
+      fprintf(stderr, "mdt: %s:%zu: unknown setting '%s'\n", path.c_str(), line_no, key.c_str());
+    }
+  }
+}
+
 int main(int argc, char** argv) {
 #ifndef _WIN32
   // `mdt --dump big.md | head` used to die from SIGPIPE (exit 141, which makes
@@ -68,6 +149,9 @@ int main(int argc, char** argv) {
   std::vector<std::string> av = plat::utf8_args(argc, argv);
   int ac = (int)av.size();
   AppOptions opts;
+  load_config(&opts);  // the command line below overrides anything from the file
+  bool theme_from_cli = false;
+  bool no_color_flag = false;
   std::vector<std::string> positional;
   bool no_more_flags = false;
   for (int i = 1; i < ac; i++) {
@@ -98,10 +182,16 @@ int main(int argc, char** argv) {
     if (is_theme) {
       if (!one_of(opts.theme, {"dark", "light", "nord", "monochrome"}))
         return usage_error("--theme: expected dark|light|nord|monochrome, got '" + opts.theme + "'");
+      theme_from_cli = true;
       continue;
     }
     if (a == "--toc") { opts.toc = true; continue; }
-    if (a == "--no-color") { opts.no_color = true; opts.theme = "monochrome"; continue; }
+    if (a == "--no-color") {
+      opts.no_color = true;
+      opts.theme = "monochrome";
+      no_color_flag = true;
+      continue;
+    }
     if (a == "--line-numbers") { opts.show_line_numbers = true; continue; }
     if (a == "--syntax" ) { opts.syntax = true; continue; }
     if (a == "--no-syntax") { opts.syntax = false; continue; }
@@ -168,6 +258,15 @@ int main(int argc, char** argv) {
     fprintf(stderr, "mdt: unknown option %s\n", a.c_str());
     print_usage();
     return 2;
+  }
+  // https://no-color.org: NO_COLOR (any non-empty value) asks for no colour at
+  // all.  An explicit --theme/--no-color, or a theme in the config file, is a
+  // more specific request and wins.
+  if (const char* nc = getenv("NO_COLOR")) {
+    if (*nc && !theme_from_cli && !no_color_flag && opts.theme == "dark") {
+      opts.theme = "monochrome";
+      opts.no_color = true;
+    }
   }
   opts.files = positional;
   if (opts.files.empty() && !opts.list_caps) {

@@ -82,6 +82,46 @@ printf '# hello\n\n$a^2+b^2=c^2$\n' | "$BIN" --dump --width=40 - >/dev/null 2>&1
   echo "   FAIL reading from stdin broke"; exit 1; }
 echo "   ok   # a document on stdin renders"
 
+echo "== a settings file, and NO_COLOR =="
+if [ -n "$RUN" ]; then
+  echo "   (skipped under wine: the config path would have to be a Windows path)"
+else
+  CFG_DIR=$(mktemp -d)
+  trap 'rm -rf "$CFG_DIR"' EXIT
+  printf '# mdt settings\ntheme = nord\npanels = 1\n' > "$CFG_DIR/config"
+  if MDT_CONFIG="$CFG_DIR/config" "$BIN" --diag "$DOC" 2>/dev/null \
+       | grep -q "theme           : nord"; then
+    echo "   ok   the config file sets the theme"
+  else
+    echo "   FAIL the config file was not read"; exit 1
+  fi
+  if MDT_CONFIG="$CFG_DIR/config" "$BIN" --theme=light --diag "$DOC" 2>/dev/null \
+       | grep -q "theme           : light"; then
+    echo "   ok   the command line overrides the file"
+  else
+    echo "   FAIL --theme did not override the config"; exit 1
+  fi
+  if NO_COLOR=1 "$BIN" --diag "$DOC" 2>/dev/null | grep -q "theme           : monochrome"; then
+    echo "   ok   NO_COLOR=1 asks for no colour"
+  else
+    echo "   FAIL NO_COLOR was ignored"; exit 1
+  fi
+  if NO_COLOR=1 "$BIN" --theme=nord --diag "$DOC" 2>/dev/null \
+       | grep -q "theme           : nord"; then
+    echo "   ok   an explicit --theme still wins over NO_COLOR"
+  else
+    echo "   FAIL NO_COLOR overrode an explicit theme"; exit 1
+  fi
+  printf 'bogus_setting = 1\n' > "$CFG_DIR/bad"
+  if MDT_CONFIG="$CFG_DIR/bad" "$BIN" --dump --width=40 "$DOC" 2>&1 >/dev/null \
+       | grep -q "unknown setting"; then
+    echo "   ok   a typo in the config file is reported"
+  else
+    echo "   FAIL a bad config key was swallowed"; exit 1
+  fi
+  rm -rf "$CFG_DIR"
+fi
+
 echo "== a closed stdout is quiet, not a signal death =="
 if [ -n "$RUN" ]; then
   echo "   (skipped under wine: this one needs a POSIX pipe)"

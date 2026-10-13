@@ -205,6 +205,16 @@ python3 tools/scroll_clip_test.py "$BIN" || exit 1
 echo "== Luogu directives (callouts / align / epigraph / cute-table / merges / lines=) =="
 python3 tools/luogu_test.py "$BIN" || exit 1
 
+echo "== GitHub alerts and <details> =="
+"$BIN" --dump --width=70 tests/fixtures/alerts-and-details.md > "$TMP/alerts.txt"
+grep -q "│ Note" "$TMP/alerts.txt" && echo "  > [!NOTE] becomes a label"
+! grep -q "\[!NOTE\]" "$TMP/alerts.txt" && echo "  the raw marker is gone"
+grep -q "│ Warning" "$TMP/alerts.txt" && echo "  > [!WARNING] too"
+grep -q "│ A plain quote is still a quote" "$TMP/alerts.txt" && echo "  a normal quote is untouched"
+grep -q "Click to expand" "$TMP/alerts.txt" && echo "  <details><summary> keeps its label"
+! grep -q "Click to expandThe hidden" "$TMP/alerts.txt" \
+  && echo "  ... and the summary no longer runs into the body"
+
 echo "== reference links, front matter, heading attributes =="
 "$BIN" --dump --width=76 tests/fixtures/refs.md > "$TMP/refs.txt"
 grep -q "Heading with attributes" "$TMP/refs.txt" && echo "  {#custom-id} is not printed"

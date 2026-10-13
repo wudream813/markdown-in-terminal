@@ -430,6 +430,42 @@ the final geometry is exact.
 | `--compat` | no graphics, no DEC 2026 synchronized output, no keyboard-protocol push, no capability probe - for terminals whose support for those is broken |
 | `--diag` | print what mdt sees of the file (encoding, escapes, block census, first characters) and of the terminal; works without a tty |
 
+### Settings file
+
+Typing the same flags every time gets old, so mdt reads one file of defaults:
+
+```
+~/.config/mdt/config            # Linux/macOS ($XDG_CONFIG_HOME/mdt/config)
+%APPDATA%\mdt\config           # Windows
+```
+
+```ini
+# mdt settings — the command line always wins over this file
+theme = nord
+panels = 1
+scrollbar = off
+line_numbers = on
+```
+
+Keys: `theme`, `gfx`, `math`, `panels`, `terminal_bg`, `scrollbar`,
+`line_numbers`, `syntax`, `code_fit` (true values: `1 on yes true`).  An unknown
+key or value is reported on stderr instead of being ignored, and `--diag` prints
+which file was read.  `MDT_CONFIG=/path/to/file` points at another file.
+
+`NO_COLOR=1` (see [no-color.org](https://no-color.org)) switches to the
+monochrome theme, unless a theme was asked for explicitly.
+
+### Markdown notes
+
+GitHub alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`,
+`[!CAUTION]`) render as a quote with a bold label, `<details>`/`<summary>`
+collapses into a label line plus its body instead of gluing the two together,
+and a heading like `# Title {#custom-id}` drops the attribute list.  YAML front
+matter at the top of a file is skipped, and reference links
+(`[text][ref]`, `[text][]`, `[ref]`) are resolved from their
+`[ref]: https://…` definitions — a label that is not defined stays literal
+text, the way CommonMark asks.
+
 ## The command line is checked
 
 An option that makes no sense is reported instead of quietly ignored: a

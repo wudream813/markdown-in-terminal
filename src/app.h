@@ -26,6 +26,7 @@ struct AppOptions {
   int cell_w = 0;                  // force the cell size in pixels (dump/screenshot)
   int cell_h = 0;
   std::string dump;
+  std::string config_path;         // the config file that was read, if any
   bool diag = false;               // print what mdt sees of the file and of the terminal
   bool compat = false;             // --compat: plain output for terminals that misbehave
   bool code_fit = false;           // --code-fit: code frames hug the code
