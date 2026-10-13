@@ -22,6 +22,9 @@ void console_init();
 // that touches a path the user gave us goes through here.
 FILE* open_file(const std::string& utf8_path, const char* mode);
 bool regular_file_exists(const std::string& utf8_path);
+// True when the path exists and is a directory (used to say *why* a file could
+// not be read: "X is a directory, not a file").
+bool is_directory(const std::string& utf8_path);
 
 // The command line as UTF-8 (Windows: rebuilt from GetCommandLineW()).
 std::vector<std::string> utf8_args(int argc, char** argv);

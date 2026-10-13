@@ -826,8 +826,11 @@ static bool read_source(const std::string& path, std::string& out, std::string* 
     while ((n = fread(buf, 1, sizeof(buf), stdin)) > 0) out.append(buf, n);
     return !out.empty() || feof(stdin);
   }
-  if (!read_file(path, out)) {
-    if (err) *err = "cannot read " + path;
+  // A directory used to be "read" successfully and silently render nothing
+  // (exit status 0), which reads like the file was empty rather than wrong.
+  std::string why;
+  if (!read_file(path, out, &why)) {
+    if (err) *err = plat::is_directory(path) ? (path + " is a directory, not a file") : why;
     return false;
   }
   return true;

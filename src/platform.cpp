@@ -136,6 +136,11 @@ bool regular_file_exists(const std::string& path) {
   return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 }
 
+bool is_directory(const std::string& path) {
+  struct stat st;
+  return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
 void console_init() {}  // nothing to do: the terminal is UTF-8 already
 
 std::vector<std::string> utf8_args(int argc, char** argv) {
@@ -525,6 +530,11 @@ FILE* open_file(const std::string& path, const char* mode) {
 bool regular_file_exists(const std::string& path) {
   DWORD a = GetFileAttributesW(utf8_to_wide(path).c_str());
   return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+bool is_directory(const std::string& path) {
+  DWORD a = GetFileAttributesW(utf8_to_wide(path).c_str());
+  return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
 // Do this before anything is printed: --dump, --diag and error messages go

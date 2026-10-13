@@ -330,15 +330,41 @@ std::string dir_name(const std::string& path) {
   return path.substr(0, p);
 }
 bool file_exists(const std::string& path) { return plat::regular_file_exists(path); }
-bool read_file(const std::string& path, std::string& out) {
+bool read_file(const std::string& path, std::string& out, std::string* err) {
   FILE* f = plat::open_file(path, "rb");  // Windows: the path is UTF-8
-  if (!f) return false;
-  fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
-  out.resize((size_t)std::max(0L, n));
-  size_t got = n > 0 ? fread(&out[0], 1, (size_t)n, f) : 0;
+  if (!f) {
+    if (err) *err = "cannot read " + path;
+    return false;
+  }
+  out.clear();
+  // ftell() is a size *hint*, not a size: on a directory (which fopen happily
+  // opens on Linux) it can be a huge nonsense number, and `out.resize(that)`
+  // aborted the whole reader with std::length_error.  Use the hint only when
+  // it looks like a real file size, read in blocks, and let fread's error flag
+  // decide the outcome - that is what turns "a directory" into a plain failure
+  // (EISDIR) instead of a crash.
+  fseek(f, 0, SEEK_END);
+  long hint = ftell(f);
+  rewind(f);
+  if (hint > 0 && hint <= kMaxReadBytes) out.reserve((size_t)hint);
+  char buf[65536];
+  size_t n;
+  while ((n = fread(buf, 1, sizeof buf, f)) > 0) {
+    out.append(buf, n);
+    if (out.size() > kMaxReadBytes) {  // /dev/zero, a runaway FIFO, ...
+      fclose(f);
+      out.clear();
+      if (err) *err = path + " is larger than " + std::to_string(kMaxReadBytes >> 20) + " MB";
+      return false;
+    }
+  }
+  bool ok = ferror(f) == 0;
   fclose(f);
-  out.resize(got);
-  return true;
+  if (!ok) {
+    out.clear();
+    if (err) *err = "cannot read " + path;
+  }
+  return ok;
 }
 double now_ms() {
   using namespace std::chrono;

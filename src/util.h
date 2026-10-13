@@ -55,7 +55,11 @@ RGB parse_color(const std::string& s, RGB fallback);       // "#rrggbb" / "rrggb
 std::string abs_path(const std::string& path);             // realpath-ish
 std::string dir_name(const std::string& path);
 bool file_exists(const std::string& path);
-bool read_file(const std::string& path, std::string& out);
+// Reads a whole file.  A directory, an unreadable file or anything larger
+// than kMaxReadBytes fails with `err` set (and never throws: a size read back
+// with ftell() is only a hint).
+constexpr size_t kMaxReadBytes = (size_t)512 << 20;  // 512 MB
+bool read_file(const std::string& path, std::string& out, std::string* err = nullptr);
 double now_ms();
 
 }  // namespace mdt

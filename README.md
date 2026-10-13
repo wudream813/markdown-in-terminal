@@ -430,6 +430,19 @@ the final geometry is exact.
 | `--compat` | no graphics, no DEC 2026 synchronized output, no keyboard-protocol push, no capability probe - for terminals whose support for those is broken |
 | `--diag` | print what mdt sees of the file (encoding, escapes, block census, first characters) and of the terminal; works without a tty |
 
+## The command line is checked
+
+An option that makes no sense is reported instead of quietly ignored: a
+misspelled value (`--theme=drak`) exits 2 and prints the values that would have
+worked, sizes have to be sane (`--width` 0 means "derive it", anything from 1
+to 4096 is accepted, `--width=1000000` used to ask for a million-column
+framebuffer and die), `--cell` needs a real `WxH` in pixels, and pointing mdt at
+a directory says "`X` is a directory, not a file" rather than rendering nothing
+and exiting 0.  Two files on the command line are refused instead of silently
+dropping the second one, and `mdt --dump big.md | head` exits 0 instead of being
+killed by SIGPIPE.  `sh tests/cli.sh` covers all of it (and runs inside
+`tests/smoke.sh`).
+
 ## When something looks wrong
 
 Three switches exist for the cases where the terminal and mdt disagree:
