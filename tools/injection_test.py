@@ -65,10 +65,14 @@ def write_tools(tmp):
     curl = os.path.join(bindir, "curl")
     with open(curl, "w") as f:
         f.write(log_line + 'cat "' + png + '"\n')
-    opener = os.path.join(bindir, "xdg-open")
-    with open(opener, "w") as f:
-        f.write(log_line + "exit 0\n")
-    for p in (curl, opener):
+    # The launcher is `xdg-open` on Linux and `open` on macOS (plat::open_url
+    # execs one of the two); both are stubbed, so no browser is started from
+    # the test and the arguments can be inspected.
+    launchers = [os.path.join(bindir, name) for name in ("xdg-open", "open")]
+    for path in launchers:
+        with open(path, "w") as f:
+            f.write(log_line + "exit 0\n")
+    for p in [curl] + launchers:
         os.chmod(p, 0o755)
     return bindir
 
