@@ -2,6 +2,8 @@ build/
 build-*/
 # build products
 mdt
+mdt.exe
+*.exe
 *.o
 dist/
 release/

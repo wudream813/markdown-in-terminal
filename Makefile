@@ -7,7 +7,7 @@
 CXX      ?= g++
 CC       ?= gcc
 BUILD    ?= build
-VERSION  ?= 0.3.8
+VERSION  ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0)
 
 OPT      ?= -O2
 CXXFLAGS ?= -std=c++17 $(OPT) -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare \

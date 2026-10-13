@@ -8,7 +8,10 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(MDT_VERSION "0.3.8" CACHE STRING "mdt version string")
+# The version lives in ./VERSION (the same file the Makefile reads).
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/VERSION MDT_VERSION_RAW)
+string(STRIP "${MDT_VERSION_RAW}" MDT_VERSION_DEFAULT)
+set(MDT_VERSION "${MDT_VERSION_DEFAULT}" CACHE STRING "mdt version string")
 
 option(MDT_USE_CURL "link against libcurl when available (remote images)" ON)
 option(MDT_STATIC_MINGW "link the MinGW runtime statically (no DLL dependencies)" ON)

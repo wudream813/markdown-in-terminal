@@ -1,16 +1,31 @@
 # mdt — Markdown in the terminal
 
+[![build](https://github.com/wudream813/markdown-in-terminal/actions/workflows/build.yml/badge.svg)](https://github.com/wudream813/markdown-in-terminal/actions/workflows/build.yml)
+[![release](https://img.shields.io/github/v/release/wudream813/markdown-in-terminal)](https://github.com/wudream813/markdown-in-terminal/releases/latest)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+**English** · [中文说明](README.zh-CN.md)
+
 A **C++17 terminal Markdown reader** that draws maths and images through the
 terminal *graphics protocol* (kitty / iTerm2 / sixel), with a **built-in
 KaTeX-compatible maths engine**. Everything — the TeX typesetter, the SVG
 rasteriser, image decoding, the three graphics protocols — lives inside a single
 self-contained binary.
 
+![mdt reading demo.md: typeset formulas on the text baseline, nested lists, a code frame](demo/screenshot.png)
+
 ```
   ┌─ demo.md ───────────────────────────────────────────────────────────────┐
   │  ∫_{-∞}^{∞} e^{-x²} dx = √π          # typeset by the embedded engine   │
   └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+More screenshots: [a Luogu 题解 with callouts and images](docs/luogu-render.png) ·
+[tables with merged cells](docs/table-render.png) ·
+[`pmatrix` display maths](docs/matrix-render.png) ·
+[nested blockquotes](docs/nested-quotes.png) ·
+[syntax-highlighted code](docs/code-render.png) ·
+[the same reader on Windows](demo/windows.png).
 
 ## Highlights
 
@@ -163,6 +178,33 @@ self-contained binary.
 * Terminal abilities are probed at run time: cell size in pixels (`CSI 16 t`),
   window size (`CSI 14 t`), sixel support (DA1), kitty graphics support
   (`\x1b_Gi=…,a=q`). The em/cell ratio follows the user's real font.
+
+## Install
+
+Prebuilt binaries are on the [releases page](https://github.com/wudream813/markdown-in-terminal/releases/latest) —
+one file, nothing to install besides it.
+
+| platform | file | notes |
+|:--|:--|:--|
+| Linux x86-64 | `mdt-linux-amd64` | needs glibc ≥ 2.38 (Ubuntu 24.04+, Debian 13+, Fedora 39+); on older distributions build from source |
+| macOS arm64 | `mdt-macos-arm64` | Apple silicon; the binary is not signed/notarised, so `xattr -d com.apple.quarantine mdt` once after downloading |
+| Windows x64 | `mdt-win64.exe` | or `mdt-0.3.8-win64.zip`, which also carries the demo |
+
+```sh
+# Linux — read your first file
+curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-linux-amd64
+chmod +x mdt && sudo install -m 0755 mdt /usr/local/bin/mdt
+mdt --list-caps          # what mdt detected: cell size, graphics protocol, fonts
+mdt README.md
+
+# macOS (Apple silicon)
+curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-macos-arm64
+chmod +x mdt && xattr -d com.apple.quarantine mdt 2>/dev/null
+sudo install -m 0755 mdt /usr/local/bin/mdt
+```
+
+Nothing is written to your home directory: no config file, no cache.  `mdt` does not
+touch the network unless a document actually contains a `![](https://…)` picture.
 
 ## Build
 
@@ -447,5 +489,7 @@ were used (`+entities`, `+escapes`, `+loose`, `+clean`).
   fixed size and never follows pty resizes, so `tools/resize_test.py` skips the
   resize steps there (`MDT_RESIZE_SKIP=1`) and CI only checks the geometry.
 
-MIT licensed. Vendored components keep their own licences
-(stb — public domain/MIT, QuickJS-NG — MIT, MathJax — Apache-2.0).
+MIT licensed — see [LICENSE](LICENSE).  The binary embeds other people's work
+(QuickJS-NG — MIT, MathJax — Apache-2.0, the KaTeX fonts — SIL OFL 1.1, stb —
+MIT/public domain); [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) spells out
+what is inside and [licenses/](licenses/) carries the full texts.
