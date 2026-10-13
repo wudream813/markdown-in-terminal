@@ -73,8 +73,29 @@ bool write_out(const char* data, size_t n);
 // Linux/macOS return false so the caller can use libcurl or the curl binary.
 bool http_get_system(const std::string& url, std::string& out, std::string* err);
 
-// Command that opens `url` in the user's browser.
-std::string open_url_command(const std::string& url);
+// ---------------------------------------------------------------------------
+// No shell anywhere.
+//
+// Until 0.3.7 these two places built a command line and handed it to
+// popen()/system(), so a URL that came out of a document was parsed by a
+// shell: `![](https://host/a";cmd;#)` turned a picture into a command, and so
+// did a link opened with `o`.  Both helpers below pass their arguments
+// straight to execvp()/CreateProcess(), where shell metacharacters are ordinary
+// characters of one single argument.
+// ---------------------------------------------------------------------------
+
+// Runs `argv[0]` with the argument vector `argv` and collects its stdout.
+// Returns true when the process ran; *exit_code is its status (-1 when it was
+// killed, 127 when it could not be started at all).
+bool run_capture(const std::vector<std::string>& argv, std::string& out, int* exit_code,
+                 std::string* err);
+
+// Opens `url` in the user's browser (`xdg-open`/`open` exec'd directly,
+// ShellExecuteW() on Windows).  Only the schemes a document may reasonably
+// point at are passed on - http, https, mailto, ftp, ftps, file, tel - so a
+// link cannot ask the OS to execute a local file.  Returns false when there is
+// no launcher or the scheme is not one of those.
+bool open_url(const std::string& url);
 
 // Directory holding the document's files (used to resolve relative paths).
 std::string path_separator();

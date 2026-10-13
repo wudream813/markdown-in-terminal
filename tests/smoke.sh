@@ -205,6 +205,9 @@ python3 tools/scroll_clip_test.py "$BIN" || exit 1
 echo "== Luogu directives (callouts / align / epigraph / cute-table / merges / lines=) =="
 python3 tools/luogu_test.py "$BIN" || exit 1
 
+echo "== no shell in the URL paths (command injection) =="
+python3 tools/injection_test.py "$BIN" || exit 1
+
 echo "== protocols (pty) =="
 python3 tools/pty_test.py
 

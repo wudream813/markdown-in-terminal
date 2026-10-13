@@ -4,6 +4,37 @@
 #include <cstring>
 
 // ===========================================================================
+//  shared by both platforms
+// ===========================================================================
+namespace mdt {
+namespace plat {
+namespace {
+
+// The schemes a document is allowed to hand to the OS launcher.  A Markdown
+// link is user data: `ShellExecuteW` would happily run a bare `setup.exe`
+// sitting next to the document, and a custom protocol handler is another way
+// out of the reader, so anything that is not a plain web/mail/file URL is
+// refused instead of passed on.
+bool url_scheme_allowed(const std::string& url) {
+  size_t colon = url.find(':');
+  if (colon == std::string::npos || colon == 0) return false;  // relative path
+  std::string scheme;
+  for (size_t i = 0; i < colon; i++) {
+    char c = url[i];
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    else if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'))
+      return false;
+    scheme += c;
+  }
+  return scheme == "http" || scheme == "https" || scheme == "mailto" || scheme == "ftp" ||
+         scheme == "ftps" || scheme == "file" || scheme == "tel";
+}
+
+}  // namespace
+}  // namespace plat
+}  // namespace mdt
+
+// ===========================================================================
 //  POSIX
 // ===========================================================================
 #if !defined(_WIN32)
@@ -17,6 +48,7 @@
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -219,12 +251,112 @@ bool http_get_system(const std::string& url, std::string& out, std::string* err)
   return false;
 }
 
-std::string open_url_command(const std::string& url) {
+// Neither helper builds a command line: argv goes to execvp() as it is, so a
+// `"`, `;`, `$` or backtick in a URL stays part of that one argument.
+bool run_capture(const std::vector<std::string>& argv, std::string& out, int* exit_code,
+                 std::string* err) {
+  if (exit_code) *exit_code = -1;
+  if (argv.empty()) {
+    if (err) *err = "empty command";
+    return false;
+  }
+  // Prepare everything before fork(): after fork() a multi-threaded program may
+  // only call async-signal-safe functions in the child (this runs on the image
+  // download worker thread too), so no allocation happens down there.
+  std::vector<char*> cargv;
+  cargv.reserve(argv.size() + 1);
+  for (const std::string& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
+  cargv.push_back(nullptr);
+
+  int fds[2];
+  if (pipe(fds) != 0) {
+    if (err) *err = "pipe() failed";
+    return false;
+  }
+  pid_t pid = fork();
+  if (pid < 0) {
+    close(fds[0]);
+    close(fds[1]);
+    if (err) *err = "fork() failed";
+    return false;
+  }
+  if (pid == 0) {
+    // child: stdout into the pipe, stdin/stderr to /dev/null (the program must
+    // not be able to read from the reader's terminal)
+    int devnull = open("/dev/null", O_RDWR);
+    dup2(fds[1], STDOUT_FILENO);
+    if (devnull >= 0) {
+      dup2(devnull, STDIN_FILENO);
+      dup2(devnull, STDERR_FILENO);
+    }
+    close(fds[0]);
+    if (fds[1] != STDOUT_FILENO) close(fds[1]);
+    if (devnull > STDERR_FILENO) close(devnull);
+    execvp(cargv[0], cargv.data());
+    _exit(127);  // 127 == could not be started
+  }
+  close(fds[1]);
+  char buf[65536];
+  ssize_t n;
+  while ((n = read(fds[0], buf, sizeof buf)) > 0) out.append(buf, (size_t)n);
+  close(fds[0]);
+  int st = 0;
+  while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {
+  }
+  int code = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+  if (exit_code) *exit_code = code;
+  if (code == 127) {
+    if (err) *err = "cannot run " + argv[0];
+    return false;
+  }
+  return true;
+}
+
+bool open_url(const std::string& url) {
+  if (!url_scheme_allowed(url)) return false;
 #ifdef __APPLE__
-  return "open '" + url + "' >/dev/null 2>&1 &";
+  const char* launcher = "open";
 #else
-  return "xdg-open '" + url + "' >/dev/null 2>&1 &";
+  const char* launcher = "xdg-open";
 #endif
+  char* cargv[3] = {const_cast<char*>(launcher), const_cast<char*>(url.c_str()), nullptr};
+  int ep[2];  // CLOEXEC: EOF means "the launcher is running", a write means "it failed"
+  if (pipe(ep) != 0) return false;
+  fcntl(ep[0], F_SETFD, FD_CLOEXEC);
+  fcntl(ep[1], F_SETFD, FD_CLOEXEC);
+  pid_t pid = fork();
+  if (pid < 0) {
+    close(ep[0]);
+    close(ep[1]);
+    return false;
+  }
+  if (pid == 0) {
+    setsid();  // the browser must not hold (or keep open) our terminal
+    pid_t middle = fork();
+    if (middle != 0) _exit(0);  // the middle child leaves at once, so the
+                                // browser is never our child (no zombie, no wait)
+    int devnull = open("/dev/null", O_RDWR);
+    if (devnull >= 0) {
+      dup2(devnull, STDIN_FILENO);
+      dup2(devnull, STDOUT_FILENO);
+      dup2(devnull, STDERR_FILENO);
+      if (devnull > STDERR_FILENO) close(devnull);
+    }
+    execvp(cargv[0], cargv);
+    int e = errno;
+    ssize_t ignored = write(ep[1], &e, sizeof e);
+    (void)ignored;
+    _exit(127);
+  }
+  close(ep[1]);
+  int child_errno = 0;
+  ssize_t got = read(ep[0], &child_errno, sizeof child_errno);
+  close(ep[0]);
+  int st = 0;
+  while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {
+  }
+  (void)child_errno;
+  return got == 0;
 }
 
 std::string path_separator() { return "/"; }
@@ -602,8 +734,97 @@ bool http_get_system(const std::string& url, std::string& out, std::string* err)
   return ok;
 }
 
-std::string open_url_command(const std::string& url) {
-  return "start \"\" \"" + url + "\"";
+// Quotes one argument the way the CRT's command line parser expects it again
+// (backslashes before a quote and trailing backslashes are doubled).  With this
+// the URL stays a single argument and still reaches the program byte for byte.
+static std::wstring win_quote_arg(const std::string& a) {
+  std::wstring w = utf8_to_wide(a);
+  std::wstring r(1, L'"');
+  size_t backslashes = 0;
+  for (size_t i = 0; i < w.size(); i++) {
+    if (w[i] == L'\\') {
+      backslashes++;
+      continue;
+    }
+    if (w[i] == L'"') {
+      r.append(backslashes * 2 + 1, L'\\');
+      r.push_back(L'"');
+    } else {
+      r.append(backslashes, L'\\');
+      r.push_back(w[i]);
+    }
+    backslashes = 0;
+  }
+  r.append(backslashes * 2, L'\\');
+  r.push_back(L'"');
+  return r;
+}
+
+bool run_capture(const std::vector<std::string>& argv, std::string& out, int* exit_code,
+                 std::string* err) {
+  if (exit_code) *exit_code = -1;
+  if (argv.empty()) {
+    if (err) *err = "empty command";
+    return false;
+  }
+  SECURITY_ATTRIBUTES sa;
+  sa.nLength = sizeof sa;
+  sa.lpSecurityDescriptor = nullptr;
+  sa.bInheritHandle = TRUE;
+  HANDLE rd = INVALID_HANDLE_VALUE, wr = INVALID_HANDLE_VALUE;
+  if (!CreatePipe(&rd, &wr, &sa, 0)) {
+    if (err) *err = "CreatePipe failed";
+    return false;
+  }
+  SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+  HANDLE nul = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           &sa, OPEN_EXISTING, 0, nullptr);
+  std::wstring line;
+  for (size_t i = 0; i < argv.size(); i++) {
+    if (i) line.push_back(L' ');
+    line += win_quote_arg(argv[i]);
+  }
+  std::vector<wchar_t> cmd(line.begin(), line.end());
+  cmd.push_back(L'\0');  // CreateProcessW may modify the buffer it is given
+  STARTUPINFOW si;
+  ZeroMemory(&si, sizeof si);
+  si.cb = sizeof si;
+  si.dwFlags = STARTF_USESTDHANDLES;
+  si.hStdInput = nul;
+  si.hStdOutput = wr;
+  si.hStdError = nul;
+  PROCESS_INFORMATION pi;
+  ZeroMemory(&pi, sizeof pi);
+  BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                           nullptr, &si, &pi);
+  CloseHandle(wr);
+  if (!ok) {
+    CloseHandle(rd);
+    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+    if (err) *err = "cannot run " + argv[0];
+    return false;
+  }
+  char buf[65536];
+  DWORD got = 0;
+  while (ReadFile(rd, buf, (DWORD)sizeof buf, &got, nullptr) && got > 0) out.append(buf, got);
+  CloseHandle(rd);
+  WaitForSingleObject(pi.hProcess, INFINITE);
+  DWORD code = 0;
+  GetExitCodeProcess(pi.hProcess, &code);
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+  if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+  if (exit_code) *exit_code = (int)code;
+  return true;
+}
+
+bool open_url(const std::string& url) {
+  if (!url_scheme_allowed(url)) return false;
+  std::wstring w = utf8_to_wide(url);
+  // ShellExecuteW takes the URL as an argument - `start` in a shell cannot be
+  // used for this, cmd.exe would parse `&`, `|` and `^` inside it.
+  HINSTANCE r = ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+  return (INT_PTR)r > 32;
 }
 
 std::string path_separator() { return "\\"; }

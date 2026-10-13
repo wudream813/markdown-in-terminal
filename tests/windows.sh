@@ -154,6 +154,9 @@ echo "== a slow picture host does not block the reader =="
 python3 tools/async_image_test.py "$EXE" "$WINE" 2>/dev/null || \
   python3 tools/async_image_test.py "$EXE" "$WINE" || exit 1
 
+echo "== a picture URL cannot run a cmd.exe command =="
+python3 tools/injection_test.py "$EXE" "$WINE" || exit 1
+
 echo "== mouse + scrollbar (pty) =="
 python3 tools/mouse_test.py "$EXE" "$WINE" || exit 1
 

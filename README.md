@@ -413,6 +413,17 @@ were used (`+entities`, `+escapes`, `+loose`, `+clean`).
   shows.
 * Reference-style links `[text][ref]` are parsed but the definitions are not
   resolved yet; `_italic_`/`**bold**` inside words follow the CommonMark rules.
+* Nothing a document contains is ever given to a shell.  A picture URL
+  (`![](https://…)`, fetched with the `curl` binary when no libcurl is linked
+  in) and a link opened with `o` reach `execvp()` / `CreateProcess()` /
+  `ShellExecuteW()` as single arguments, so a `"`, `;`, `$` or backtick in a
+  URL stays part of that URL.  (Until 0.3.7 both places built a command line
+  and ran it with `popen()`/`system()`: `![](https://host/i.png";cmd;#)` ran
+  `cmd` just by opening the file - see `tools/injection_test.py`, which guards
+  this.)  A link is also only passed on when its scheme is one of `http`,
+  `https`, `mailto`, `ftp`, `ftps`, `file`, `tel`; a markdown link to a local
+  path is refused instead of being handed to the OS launcher, which would have
+  opened (or on Windows, executed) whatever it pointed at.
 * HTML blocks are converted to the Markdown they stand for; unknown tags are
   dropped while their text is kept.
 * On Windows the reader needs a VT-capable terminal (Windows Terminal, Windows

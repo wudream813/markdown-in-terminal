@@ -8,7 +8,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(MDT_VERSION "0.1.0" CACHE STRING "mdt version string")
+set(MDT_VERSION "0.3.8" CACHE STRING "mdt version string")
 
 option(MDT_USE_CURL "link against libcurl when available (remote images)" ON)
 option(MDT_STATIC_MINGW "link the MinGW runtime statically (no DLL dependencies)" ON)

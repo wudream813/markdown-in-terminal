@@ -12,13 +12,6 @@
 #include <memory>
 #include <mutex>
 #include <set>
-#ifdef _WIN32
-#include <process.h>
-#define popen _popen
-#define pclose _pclose
-#else
-#include <sys/wait.h>
-#endif
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_NO_HDR
@@ -67,29 +60,44 @@ bool is_svg(const std::string& p) {
   return ends_with(l, ".svg") || l.find("<svg") != std::string::npos;
 }
 
+// The `curl` binary, for the builds that have no libcurl (the published Linux
+// binary is one of them) and for MDT_FORCE_CURL_BIN=1.
+//
+// The URL is one element of an argument vector and reaches execvp()/
+// CreateProcess() untouched - there is no shell in this path.  Until 0.3.7 the
+// command line was built as a string and run with popen(), so `"`, `;`, `$` or
+// a backtick in a picture URL was interpreted by the shell and a document could
+// run commands just by being opened.
+static bool curl_binary_get(const std::string& url, std::string& out, std::string* err) {
+  if (getenv("MDT_NO_CURL")) {
+    if (err) *err = "remote images are disabled (MDT_NO_CURL)";
+    return false;
+  }
+  const std::vector<std::string> argv = {"curl", "-sfL",  "--max-time", "20",
+                                         "--max-filesize", "26214400", url};
+  std::string data, why;
+  int rc = -1;
+  if (plat::run_capture(argv, data, &rc, &why) && rc == 0 && !data.empty()) {
+    out.swap(data);
+    return true;
+  }
+  if (err) *err = rc >= 0 ? ("curl exit " + std::to_string(rc)) : (why.empty() ? "curl failed" : why);
+  return false;
+}
+
 bool http_get(const std::string& url, std::string& out, std::string* err) {
 #if MDT_HAVE_CURL
+  // MDT_FORCE_CURL_BIN=1 skips libcurl: the test suite uses it to exercise the
+  // path the published Linux binary takes (it is built without libcurl), and a
+  // user whose proxy libcurl cannot reach can use it as a workaround.
+  if (getenv("MDT_FORCE_CURL_BIN")) return curl_binary_get(url, out, err);
   extern bool curl_http_get(const std::string& url, std::string& out, std::string* err);
   return curl_http_get(url, out, err);
 #else
   // Windows: the system stack (WinINet), so no curl.exe and no shell.
   if (plat::http_get_system(url, out, err)) return true;
-  if (getenv("MDT_NO_CURL")) return false;  // (no shell here: report instead)
-  // Elsewhere: fall back to the curl binary when present.
-  if (!getenv("MDT_NO_CURL")) {
-    std::string cmd = "curl -sfL --max-time 20 --max-filesize 26214400 \"" + url + "\" 2>/dev/null";
-    FILE* f = popen(cmd.c_str(), "r");
-    if (f) {
-      char buf[65536];
-      size_t n;
-      while ((n = fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
-      int rc = pclose(f);
-      if (rc == 0 && !out.empty()) return true;
-      if (err) *err = "curl exit " + std::to_string(rc);
-      return false;
-    }
-  }
-  if (err) *err = "remote images need libcurl or the curl binary";
+  if (curl_binary_get(url, out, err)) return true;
+  if (err && err->empty()) *err = "remote images need libcurl or the curl binary";
   return false;
 #endif
 }

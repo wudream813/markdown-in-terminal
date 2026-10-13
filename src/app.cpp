@@ -524,17 +524,13 @@ void App::run() {
   // One mouse event per redraw is too coarse for a drag (the terminal reports
   // motion faster than we should paint) and too fine to waste frames on:
   auto open_url_in_browser = [&](const std::string& url) {
-    std::string cmd = plat::open_url_command(url);
-#ifdef _WIN32
-    // `start` is a cmd builtin: run it through the shell.
-    std::string full = "cmd /c " + cmd;
-    int rc = system(full.c_str());
-#else
-    int rc = system(cmd.c_str());
-#endif
+    // plat::open_url execs the launcher directly (ShellExecuteW on Windows):
+    // the URL is never given to a shell, so nothing in a document can turn a
+    // link into a command.  Closed links are refused by the scheme check.
+    bool ok = plat::open_url(url);
     if (!term.mode_intact()) term.reassert_mode();  // the browser may share the tty
-    if (rc == 0) set_status("已打开: " + url);
-    else set_status("打开失败: " + url);
+    if (ok) set_status("已打开: " + url);
+    else set_status("打开失败 (链接未打开): " + url);
   };
   // apply_mouse folds an event into the view and says whether anything moved.
   auto apply_mouse = [&](const Terminal::KeyEvent& e) -> bool {
