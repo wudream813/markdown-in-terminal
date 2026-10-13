@@ -1010,6 +1010,9 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
   }
   printf("  source decoded  : entities=%s backslash escapes=%d invisible chars=%d\n",
          doc.entities_unescaped ? "yes" : "no", doc.backslashes_removed, doc.invisible_removed);
+  if (doc.front_matter_lines > 0 || doc.link_defs_found > 0)
+    printf("  skipped         : %d front matter line(s), %d link reference definition(s)\n",
+           doc.front_matter_lines, doc.link_defs_found);
   printf("  blocks          : heading=%d paragraph=%d list=%d table=%d code=%d html=%d quote=%d\n",
          cnt[(int)Block::Heading], cnt[(int)Block::Paragraph], cnt[(int)Block::List],
          cnt[(int)Block::Table], cnt[(int)Block::CodeBlock], cnt[(int)Block::Html],

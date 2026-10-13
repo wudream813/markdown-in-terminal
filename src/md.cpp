@@ -590,6 +590,27 @@ std::string spans_plain_text(const std::vector<Span>& spans) {
 // ======================================================= inline parser ======
 namespace {
 
+// Looks a reference label up in the document's definitions ("[label]: url").
+// Returns null when the label is not defined, in which case CommonMark keeps
+// the brackets as ordinary text.
+const std::string* lookup_link_ref(const MdDocument* doc, const std::string& label) {
+  if (!doc) return nullptr;
+  auto it = doc->link_defs.find(to_lower(trim(label)));
+  return it == doc->link_defs.end() ? nullptr : &it->second;
+}
+
+// "# Title {#custom-id}" -> "# Title".  Attribute lists after a heading are a
+// Pandoc/Kramdown habit; mdt has no anchors to attach them to, so they are
+// dropped instead of being read out loud.
+void strip_heading_attrs(std::string& text) {
+  if (text.size() < 4 || text.back() != '}') return;
+  size_t brace = text.rfind('{');
+  if (brace == std::string::npos || brace == 0) return;
+  if (text.find('#', brace) == std::string::npos) return;
+  if (text.find('}', brace) != text.size() - 1) return;
+  text = trim(text.substr(0, brace));
+}
+
 struct InlineParser {
   const std::string& s;
   size_t i = 0;
@@ -598,9 +619,11 @@ struct InlineParser {
   int line = 0;
   char stop_ch = 0;   // stop when this character is reached (link labels)
   std::vector<Span>* out;
+  const MdDocument* doc = nullptr;  // for "[label]: url" reference links
 
-  InlineParser(const std::string& str, bool math, int ln, std::vector<Span>* o)
-      : s(str), allow_math(math), line(ln), out(o) {}
+  InlineParser(const std::string& str, bool math, int ln, std::vector<Span>* o,
+               const MdDocument* d = nullptr)
+      : s(str), allow_math(math), line(ln), out(o), doc(d) {}
 
   void text(const std::string& t, const Span& proto) {
     if (t.empty()) return;
@@ -865,23 +888,50 @@ struct InlineParser {
               continue;
             }
           }
-          // reference link [text][ref]
+          // reference link [text][ref] / [text][] - the URL comes from the
+          // "[ref]: url" definitions collected before parsing.
           if (b + 1 < s.size() && s[b + 1] == '[') {
             size_t e2 = s.find(']', b + 2);
             if (e2 != std::string::npos) {
               std::string label = s.substr(i + 1, b - i - 1);
               std::string ref = s.substr(b + 2, e2 - b - 2);
               if (ref.empty()) ref = label;
+              const std::string* url = lookup_link_ref(doc, ref);
+              if (url) {
+                flush();
+                Span lk = base;
+                lk.is_link = true;
+                lk.underline = true;
+                lk.link = *url;
+                size_t label_start2 = i + 1;
+                i = label_start2;
+                parse_region(b, lk, depth);
+                i = e2 + 1;
+                if (i <= label_start2) i = label_start2 + 1;
+                continue;
+              }
+              // Undefined label: CommonMark keeps the brackets as text (it used
+              // to become a link whose URL was the label itself).
+              buf += s.substr(i, e2 - i + 1);
+              i = e2 + 1;
+              continue;
+            }
+          }
+          // shortcut reference [label]
+          {
+            std::string label = s.substr(i + 1, b - i - 1);
+            const std::string* url = lookup_link_ref(doc, label);
+            if (url) {
               flush();
               Span lk = base;
               lk.is_link = true;
               lk.underline = true;
-              lk.link = to_lower(ref);  // resolved by the renderer via definitions
-              size_t label_start2 = i + 1;
-              i = label_start2;
+              lk.link = *url;
+              size_t label_start3 = i + 1;
+              i = label_start3;
               parse_region(b, lk, depth);
-              i = e2 + 1;
-              if (i <= label_start2) i = label_start2 + 1;
+              i = b + 1;
+              if (i <= label_start3) i = label_start3 + 1;
               continue;
             }
           }
@@ -1033,7 +1083,7 @@ struct InlineParser {
 
 std::vector<Span> MarkdownParser::parse_inline(const std::string& text, int line_no) {
   std::vector<Span> out;
-  InlineParser p(text, opt_.math, line_no, &out);
+  InlineParser p(text, opt_.math, line_no, &out, doc_);
   p.run();
   // strip a trailing soft space
   if (!out.empty() && out.back().kind == Span::Text) {
@@ -1341,6 +1391,7 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
       if (lv > 0) {
         b.type = Block::Heading;
         b.level = lv;
+        strip_heading_attrs(text);  // "# Title {#id}" (Pandoc/Kramdown habit)
         b.spans = parse_inline(text, (int)li_);
         li_++;
         blocks.push_back(b);
@@ -1357,7 +1408,11 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
       if ((all_eq || all_dash) && nxt.size() >= 1) {
         b.type = Block::Heading;
         b.level = all_eq ? 1 : 2;
-        b.spans = parse_inline(trim(line), (int)li_);
+        {
+          std::string htext = trim(line);
+          strip_heading_attrs(htext);
+          b.spans = parse_inline(htext, (int)li_);
+        }
         li_ += 2;
         blocks.push_back(b);
         continue;
@@ -1778,6 +1833,101 @@ void collect_links(const Block& b, std::vector<LinkRef>& out) {
     for (auto& ib : item) collect_links(ib, out);
 }
 
+void MarkdownParser::extract_definitions() {
+  // ------------------------------------------------------------ front matter --
+  // Only the shape a generator writes counts: "---" on the first line, at least
+  // one "key: value" line, and the closing "---" (or "...") before the first
+  // blank line, within 60 lines.  A document that merely starts with a rule is
+  // left alone.
+  if (lines_.size() > 3 && trim(lines_[0]) == "---") {
+    size_t j = 1;
+    bool looks_like_yaml = false;
+    for (; j < lines_.size() && j < 60; j++) {
+      std::string t = trim(lines_[j]);
+      if (t == "---" || t == "...") break;
+      if (t.empty()) { j = 0; break; }  // blank line: not front matter
+      size_t colon = t.find(':');
+      if (!looks_like_yaml && colon != std::string::npos && colon > 0 && colon < 40) {
+        // a key: value line (and a key that is a plain word, "http://" is not)
+        bool key_ok = true;
+        for (size_t k = 0; k < colon; k++) {
+          char c = t[k];
+          if (!(isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.' || c == ' ')) {
+            key_ok = false;
+            break;
+          }
+        }
+        looks_like_yaml = key_ok;
+      }
+    }
+    if (j < lines_.size() && j > 1 && (trim(lines_[j]) == "---" || trim(lines_[j]) == "...")) {
+      for (size_t k = 0; k <= j; k++) {
+        if (!trim(lines_[k]).empty() || k == 0) {
+          lines_[k].clear();
+          doc_->front_matter_lines++;
+        }
+      }
+    }
+  }
+
+  // ------------------------------------------------- link reference definitions --
+  // "   [label]: https://example.com "title"" defines a label for
+  // "[text][label]", "[label][]" and "[label]".  The line is not part of the
+  // rendered document, so it is blanked - before this the definition was simply
+  // printed as prose and the links it belonged to pointed at the label text.
+  bool in_fence = false;
+  char fence_ch = 0;
+  size_t fence_len = 0;
+  for (size_t k = 0; k < lines_.size(); k++) {
+    std::string& L = lines_[k];
+    std::string t = ltrim(L);
+    size_t ind = L.size() - t.size();
+    if (ind <= 3 && t.size() >= 3 && (t[0] == '`' || t[0] == '~')) {
+      char ch = t[0];
+      size_t n = 0;
+      while (n < t.size() && t[n] == ch) n++;
+      if (n >= 3) {
+        if (!in_fence) {
+          in_fence = true;
+          fence_ch = ch;
+          fence_len = n;
+        } else if (ch == fence_ch && n >= fence_len) {
+          in_fence = false;
+        }
+        continue;
+      }
+    }
+    if (in_fence || ind > 3) continue;
+    if (t.size() < 4 || t[0] != '[') continue;
+    size_t close = t.find(']');
+    if (close == std::string::npos || close < 2) continue;
+    if (close + 1 >= t.size() || t[close + 1] != ':') continue;
+    std::string label = trim(t.substr(1, close - 1));
+    if (label.empty() || label[0] == '^') continue;  // "[^1]" is a footnote, not a link
+    std::string rest = trim(t.substr(close + 2));
+    if (rest.empty()) continue;
+    std::string dest, title;
+    if (rest[0] == '<') {
+      size_t gt = rest.find('>');
+      if (gt == std::string::npos) continue;
+      dest = rest.substr(1, gt - 1);
+      title = trim(rest.substr(gt + 1));
+    } else {
+      size_t sp = rest.find_first_of(" \t");
+      dest = sp == std::string::npos ? rest : rest.substr(0, sp);
+      title = sp == std::string::npos ? "" : trim(rest.substr(sp));
+    }
+    if (dest.empty()) continue;
+    dest = decode_entities(dest);
+    auto it = doc_->link_defs.find(to_lower(label));
+    if (it == doc_->link_defs.end()) {  // the first definition wins (CommonMark)
+      doc_->link_defs[to_lower(label)] = dest;
+      doc_->link_defs_found++;
+    }
+    L.clear();
+  }
+}
+
 MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) {
   opt_ = opt;
   (void)0;
@@ -1832,6 +1982,7 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
   lines_ = split_lines(norm);
   lines_.push_back("");  // sentinel
   li_ = 0;
+  extract_definitions();  // front matter + "[label]: url" definitions
   doc.blocks = parse_blocks(0);
   // A document whose markers are written without the CommonMark space ("#标题",
   // "-项目") parses as flat prose.  When nothing was recognised as a heading

@@ -1,6 +1,7 @@
 // md.h : Markdown (CommonMark subset + GFM tables/strikethrough/task lists)
 //        including $...$/$$...$$ maths spans.
 #pragma once
+#include <map>
 #include <string>
 #include <vector>
 
@@ -85,6 +86,12 @@ struct MdDocument {
   int code_gaps_collapsed = 0;      // code blocks with every line double-spaced
   int code_refs_decoded = 0;        // code blocks whose HTML references were decoded
   bool loose_markers = false;       // "#标题" / "-项目" style markers were accepted
+  int front_matter_lines = 0;       // YAML front matter lines that were skipped
+  int link_defs_found = 0;          // reference-style link definitions resolved
+  // "[label]: url" definitions, keyed by the lowercased label (CommonMark
+  // reference links).  They live on the document because quotes and nested
+  // lists parse with a sub-parser that shares the document but not the parser.
+  std::map<std::string, std::string> link_defs;
   bool luogu = false;               // remark-directive syntax seen: a Luogu document
   std::string title;               // first h1 if present
   std::vector<LinkRef> links;      // all links in document order
@@ -128,6 +135,10 @@ class MarkdownParser {
   std::vector<std::string> lines_;
   size_t li_ = 0;  // current line index
 
+  // Removes YAML front matter and collects "[label]: url" link reference
+  // definitions out of the line vector before the block parser runs; the
+  // definition line is blanked (not deleted) so line numbers stay stable.
+  void extract_definitions();
   std::vector<Block> parse_blocks(int depth);
   bool try_fence(Block& out);
   bool try_table(Block& out);

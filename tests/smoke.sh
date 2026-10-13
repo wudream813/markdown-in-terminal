@@ -205,6 +205,19 @@ python3 tools/scroll_clip_test.py "$BIN" || exit 1
 echo "== Luogu directives (callouts / align / epigraph / cute-table / merges / lines=) =="
 python3 tools/luogu_test.py "$BIN" || exit 1
 
+echo "== reference links, front matter, heading attributes =="
+"$BIN" --dump --width=76 tests/fixtures/refs.md > "$TMP/refs.txt"
+grep -q "Heading with attributes" "$TMP/refs.txt" && echo "  {#custom-id} is not printed"
+! grep -q "front matter title" "$TMP/refs.txt" && echo "  YAML front matter is skipped"
+! grep -q "https://example.com/docs" "$TMP/refs.txt" && echo "  the definition line is not printed"
+grep -q "\[nope\] and \[text\]\[missing\] stay as text" "$TMP/refs.txt" \
+  && echo "  undefined references stay literal"
+grep -q "\[label\]: https://not-a-definition.example" "$TMP/refs.txt" \
+  && echo "  a definition inside a fence stays code"
+"$BIN" --diag tests/fixtures/refs.md | grep -q "3 link reference definition" \
+  && echo "  --diag counts the definitions"
+python3 tools/refs_test.py "$BIN" || exit 1
+
 echo "== command line and input file =="
 sh tests/cli.sh "$BIN" || exit 1
 
