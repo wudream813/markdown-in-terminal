@@ -1,5 +1,7 @@
 #include "util.h"
 
+#include <sys/resource.h>
+
 #include "platform.h"
 
 #include <algorithm>
@@ -369,6 +371,16 @@ bool read_file(const std::string& path, std::string& out, std::string* err) {
 double now_ms() {
   using namespace std::chrono;
   return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
+}
+
+double peak_rss_mb() {
+  struct rusage ru;
+  if (getrusage(RUSAGE_SELF, &ru) != 0) return 0;
+#ifdef __APPLE__
+  return ru.ru_maxrss / (1024.0 * 1024.0);  // macOS reports bytes
+#else
+  return ru.ru_maxrss / 1024.0;             // Linux/BSD report KiB
+#endif
 }
 
 }  // namespace mdt

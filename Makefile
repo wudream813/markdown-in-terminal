@@ -107,6 +107,11 @@ $(GEN_SRC): assets/js/mathjax-tex-svg.js tools/build_assets.py
 	python3 tools/build_assets.py
 
 # developer tools (svg / maths raster checks)
+# (the sources without main.cpp: the tool brings its own)
+mem-report: $(BIN)
+	$(CXX) $(CXXFLAGS) -o $(BUILD)/mem-report tools/mem_report.cpp \
+	  $(filter-out $(BUILD)/src/main.o,$(OBJ)) $(OPT) $(LDLIBS)
+
 test: $(BIN)
 	$(CXX) $(CXXFLAGS) -w -o $(BUILD)/test_svg tools/test_svg.cpp src/svg.cpp src/image.cpp src/util.cpp $(OPT) -lm
 	$(CXX) $(CXXFLAGS) -o $(BUILD)/test_math tools/test_math.cpp $(OBJ) $(OPT) $(LDLIBS)

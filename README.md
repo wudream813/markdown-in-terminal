@@ -472,6 +472,24 @@ and the notes are printed as an ordered list at the end of the document, and
 `Term` + `: definition` lines render as a definition list rather than one long
 paragraph.  `mdt --diag file.md` reports how many of each it found.
 
+## Big documents
+
+A 4 MB Markdown file used to need 500 MB of RAM: the reader kept the parse tree,
+one `Line` per screen row for the whole document, and a screen as tall as the
+document (`Screen` keeps two cell buffers, so that alone was 190 MB).  `--dump`
+now lays the document out in slices and prints each one as it goes, which is
+where most of it went.  `mdt --diag file.md` prints what a document costs:
+
+```
+  block struct    : 568 bytes (span 120, line 256, run 168, table cell 96)
+  layout          : 80110 rows, 65110 lines, 57212 runs, 0 table cells
+  memory          : 83.5 MB peak RSS for the whole document
+```
+
+`make mem-report && ./build/mem-report big.md` prints the same numbers with the
+breakdown per phase (parse, layout, run text) for whoever is working on it, and
+`tests/smoke.sh` fails if a 3 MB document goes over its budget.
+
 ## The command line is checked
 
 An option that makes no sense is reported instead of quietly ignored: a

@@ -1133,7 +1133,30 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
   printf("  ... the real detection happens at start-up, in the terminal:\n");
   printf("      'mdt --list-caps' prints it.  'mdt --compat file.md' turns the\n");
   printf("      protocol probes and graphics off if a terminal misbehaves.\n");
-  return true;
+    // What the document costs.  Laid out the way the reader lays it out (a few
+  // hundred milliseconds on a multi-megabyte file), because "it uses a lot of
+  // memory" is only actionable with numbers next to it.
+  {
+    size_t b_sz = 0, s_sz = 0, l_sz = 0, r_sz = 0, c_sz = 0;
+    DocView::struct_sizes(&b_sz, &s_sz, &l_sz, &r_sz, &c_sz);
+    printf("  block struct    : %zu bytes (span %zu, line %zu, run %zu, table cell %zu)\n", b_sz,
+           s_sz, l_sz, r_sz, c_sz);
+    DocView probe;
+    RenderOptions pro;
+    pro.text_math = true;
+    pro.inline_images = false;
+    pro.fold_ui = false;
+    probe.set_options(pro);
+    probe.set_width(opt.width > 0 ? opt.width : 100);
+    probe.set_document(std::move(doc), path, dir_name(abs_path(path)));
+    probe.relayout();
+    DocView::LayoutStats st = probe.layout_stats();
+    printf("  layout          : %d rows, %zu lines, %zu runs, %zu table cells\n", st.rows, st.lines,
+           st.runs, st.cells);
+    printf("  memory          : %.1f MB peak RSS for the whole document\n", peak_rss_mb());
+  }
+
+return true;
 }
 
 static bool render_dump(const AppOptions& opt, std::string* err) {
@@ -1177,19 +1200,30 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
   view.set_document(std::move(doc), path, dir_name(abs_path(path)));
   int rows = view.total_rows();
   view.set_view_rows(rows);
+  // A screen holds two cell buffers (current + previous frame), so one giant
+  // screen the height of the whole document cost 2 * 12 bytes * width * rows:
+  // 190 MB for a 4 MB file.  Draw it in viewport-sized slices instead and read
+  // each slice out - the cells for a row do not depend on the rows around them.
+  const int kSlice = 512;
   Screen scr;
-  scr.init(width, rows, view.theme().fg, view.theme().bg);
-  view.draw(scr, 0, 0, width, rows, 0);
+  scr.init(width, std::min(rows, kSlice) > 0 ? std::min(rows, kSlice) : 1, view.theme().fg,
+           view.theme().bg);
   std::string out;
-  for (int y = 0; y < rows; y++) {
-    std::string line;
-    for (int x = 0; x < width; x++) {
-      const Cell& c = scr.at(x, y);
-      if (c.cp == 0) continue;
-      line += utf8_encode(c.cp);
+  for (int y0 = 0; y0 < rows; y0 += kSlice) {
+    int h = std::min(kSlice, rows - y0);
+    scr.resize(width, h);
+    scr.clear();
+    view.draw(scr, 0, 0, width, h, y0);
+    for (int y = 0; y < h; y++) {
+      std::string line;
+      for (int x = 0; x < width; x++) {
+        const Cell& c = scr.at(x, y);
+        if (c.cp == 0) continue;
+        line += utf8_encode(c.cp);
+      }
+      line = rtrim(line);
+      out += line + "\n";
     }
-    line = rtrim(line);
-    out += line + "\n";
   }
   if (opt.dump == "-" || opt.dump.empty()) {
     printf("%s", out.c_str());

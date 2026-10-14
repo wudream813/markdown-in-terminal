@@ -154,6 +154,29 @@ int DocView::cell_baseline_px() const {
 int DocView::cell_w() const { return term_ ? term_->caps.px_cell_w() : 8; }
 int DocView::cell_h() const { return term_ ? term_->caps.px_cell_h() : 16; }
 
+DocView::LayoutStats DocView::layout_stats() const {
+  LayoutStats st;
+  st.rows = total_rows_;
+  st.blocks = (int)layout_.size();
+  for (const auto& bl : layout_) {
+    st.lines += bl.lines.size();
+    for (const auto& l : bl.lines) {
+      st.runs += l.runs.size();
+      st.cells += l.cells.size();
+      for (const auto& run : l.runs) st.run_bytes += run.text.capacity();
+    }
+  }
+  return st;
+}
+
+void DocView::struct_sizes(size_t* block, size_t* span, size_t* line, size_t* run, size_t* cell) {
+  if (block) *block = sizeof(Block);
+  if (span) *span = sizeof(Span);
+  if (line) *line = sizeof(Line);
+  if (run) *run = sizeof(Run);
+  if (cell) *cell = sizeof(TCell);
+}
+
 void DocView::set_document(MdDocument doc, const std::string& path, const std::string& base_dir) {
   doc_ = std::move(doc);
   path_ = path;

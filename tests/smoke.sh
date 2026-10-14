@@ -283,6 +283,9 @@ grep -q "• 列表项" "$TMP/gbk.txt" && echo "  the structure survives the con
 "$BIN" --encoding=big5 --dump --width=60 "$TMP/big5.md" | grep -q "繁體中文標題" \
   && echo "  --encoding=big5 reads a Big5 file"
 
+echo "== a big document stays inside its memory budget =="
+python3 tools/memory_test.py "$BIN" || exit 1
+
 echo "== command line and input file =="
 sh tests/cli.sh "$BIN" || exit 1
 

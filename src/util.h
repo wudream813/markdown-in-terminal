@@ -61,5 +61,7 @@ bool file_exists(const std::string& path);
 constexpr size_t kMaxReadBytes = (size_t)512 << 20;  // 512 MB
 bool read_file(const std::string& path, std::string& out, std::string* err = nullptr);
 double now_ms();
+// Peak resident set size of this process, in MB (for --diag and the dev tools).
+double peak_rss_mb();
 
 }  // namespace mdt

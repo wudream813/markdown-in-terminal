@@ -248,6 +248,21 @@ GitHub 的 alert 语法（`> [!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`
 `术语` 后面跟 `: 定义` 的行会渲染成定义列表，而不是被并成一大段。`mdt --diag 文件.md`
 会报告各识别出多少条。
 
+## 大文档
+
+4 MB 的 Markdown 以前要占 500 MB 内存：解析树、整篇文档「每个屏幕行一个 Line」的排版结果，
+外加一张和文档一样高的屏幕（`Screen` 内部有前后两帧的单元格缓冲，光这一项就是 190 MB）。
+现在 `--dump` 按屏切片排版并边排边输出，这部分开销基本消失。`mdt --diag 文件.md` 会给出数字：
+
+```
+  block struct    : 568 bytes (span 120, line 256, run 168, table cell 96)
+  layout          : 80110 rows, 65110 lines, 57212 runs, 0 table cells
+  memory          : 83.5 MB peak RSS for the whole document
+```
+
+`make mem-report && ./build/mem-report 大文件.md` 会按阶段（解析、排版、run 文本）打印同样的
+数字，方便继续优化；`tests/smoke.sh` 里有一条断言：3 MB 文档的内存峰值不得超出预算。
+
 ## 命令行参数会被检查
 
 不合理的选项会明确报错，而不是被悄悄忽略：值写错了（比如 `--theme=drak`）会以退出码 2

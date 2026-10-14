@@ -99,6 +99,17 @@ class DocView {
 
   int total_rows() const { return total_rows_; }
   int block_count() const { return (int)doc_.blocks.size(); }
+
+  // Introspection for --diag and tools/mem_report.cpp: what the laid-out
+  // document costs.  A reader that refuses to say how much memory it wants is
+  // hard to argue with.
+  struct LayoutStats {
+    int rows = 0;
+    int blocks = 0;
+    size_t lines = 0, runs = 0, cells = 0, run_bytes = 0;
+  };
+  LayoutStats layout_stats() const;
+  static void struct_sizes(size_t* block, size_t* span, size_t* line, size_t* run, size_t* cell);
   int block_at_row(int row) const;
   int row_of_block(int block) const;
   const Block& block(int i) const { return doc_.blocks[(size_t)i]; }
