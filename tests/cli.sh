@@ -128,6 +128,17 @@ else
 fi
 
 echo "== the interface language (--lang, MDT_LANG, the config file, LANG) =="
+run_in_env() {  # run_in_env "VAR=VAL ..." <args...>; sets $status and $out
+  envs=$1; shift
+  # LC_ALL beats LANG (as documented), and the CI machines set LC_ALL, so clear
+  # it here: this is testing what LANG alone does.
+  if [ -n "$RUN" ]; then
+    out=$(env -u LC_ALL -u LC_MESSAGES $envs $RUN "$BIN" "$@" 2>&1) && status=0 || status=$?
+  else
+    out=$(env -u LC_ALL -u LC_MESSAGES $envs "$BIN" "$@" 2>&1) && status=0 || status=$?
+  fi
+}
+
 expect_message "用法: mdt" "--lang=zh speaks Chinese" --lang=zh --help
 expect_message "usage: mdt" "--lang=en speaks English" --lang=en --help
 expect_status 2 "--lang=fr is refused" --lang=fr --help
@@ -135,28 +146,38 @@ expect_message "auto, en, zh" "the refusal lists what --lang takes" --lang=fr --
 expect_message "需要 dark" "an option error is translated" --lang=zh --theme=bogus --dump $DOC
 expect_message "无法读取" "a file error is translated" --lang=zh --dump no-such-file-here.md
 expect_status 1 "a translated error keeps the exit status" --lang=zh --dump no-such-file-here.md
-# a locale from the environment, and --lang beating it
-if LANG=zh_CN.UTF-8 "$BIN" --help | grep -q "用法: mdt"; then
-  echo "   ok   LANG=zh_CN.UTF-8 is enough on its own"
-else
-  echo "   FAIL LANG=zh_CN.UTF-8 did not select Chinese"; exit 1
-fi
-if LANG=zh_CN.UTF-8 "$BIN" --lang=en --help | grep -q "用法"; then
-  echo "   FAIL --lang=en did not override LANG=zh_CN.UTF-8"; exit 1
-else
-  echo "   ok   --lang=en overrides LANG=zh_CN.UTF-8"
-fi
-if MDT_LANG=zh "$BIN" --help | grep -q "用法: mdt"; then
-  echo "   ok   MDT_LANG=zh works too"
-else
-  echo "   FAIL MDT_LANG=zh was ignored"; exit 1
-fi
-# an unknown MDT_LANG is a warning, not a fatal error (LANG is not ours to judge)
-if MDT_LANG=klingon "$BIN" --help 2>&1 | grep -q "not a language mdt speaks"; then
-  echo "   ok   an unknown MDT_LANG is reported"
-else
-  echo "   FAIL MDT_LANG=klingon was swallowed"; exit 1
-fi
+
+in_env() {  # in_env <wanted-substring or -> <what> <env...> -- <args...>
+  want=$1; what=$2; shift 2
+  envs=""
+  while [ "$1" != "--" ]; do envs="$envs $1"; shift; done
+  shift
+  run_in_env "$envs" "$@"
+  case "$out" in
+    *"$want"*) echo "   ok   $what" ;;
+    *) echo "   FAIL $what: output was: $out"; exit 1 ;;
+  esac
+}
+not_in_env() {
+  want=$1; what=$2; shift 2
+  envs=""
+  while [ "$1" != "--" ]; do envs="$envs $1"; shift; done
+  shift
+  run_in_env "$envs" "$@"
+  case "$out" in
+    *"$want"*) echo "   FAIL $what: output was: $out"; exit 1 ;;
+    *) echo "   ok   $what" ;;
+  esac
+}
+
+in_env "用法: mdt" "LANG=zh_CN.UTF-8 is enough on its own" LANG=zh_CN.UTF-8 -- --help
+not_in_env "用法" "--lang=en overrides LANG=zh_CN.UTF-8" LANG=zh_CN.UTF-8 -- --lang=en --help
+in_env "用法: mdt" "MDT_LANG=zh works too" MDT_LANG=zh -- --help
+in_env "not a language mdt speaks" "an unknown MDT_LANG is reported, not fatal" MDT_LANG=klingon -- --help
+in_env "language        : zh" "--diag says which setting chose the language" MDT_LANG=zh -- --diag $DOC
+# LC_ALL is the stronger standard variable: it wins over LANG
+not_in_env "用法" "LC_ALL wins over LANG" "LC_ALL=en_US.UTF-8" "LANG=zh_CN.UTF-8" -- --help
+
 if [ -n "$RUN" ]; then
   echo "   (skipped under wine: the config path would have to be a Windows path)"
 else
@@ -180,7 +201,7 @@ else
     echo "   FAIL lang = klingon was swallowed"; exit 1
   fi
   printf 'theme = bogus\n' > "$LANG_DIR/bad2"
-  if MDT_LANG=zh MDT_CONFIG="$LANG_DIR/bad2" "$BIN" --dump --width=40 "$DOC" 2>&1 >/dev/null \
+  if MDT_CONFIG="$LANG_DIR/bad2" MDT_LANG=zh "$BIN" --dump --width=40 "$DOC" 2>&1 >/dev/null \
        | grep -q "不认识的主题"; then
     echo "   ok   a config complaint comes out in the chosen language"
   else

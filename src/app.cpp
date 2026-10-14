@@ -918,7 +918,7 @@ int run_app(const AppOptions& opts) {
     return 0;
   }
   if (opts.files.empty()) {
-    fprintf(stderr, tr("mdt: no input file\n\n", "mdt: 没有输入文件\n\n"));
+    fputs(tr("mdt: no input file\n\n", "mdt: 没有输入文件\n\n"), stderr);
     print_usage();
     return 2;
   }
