@@ -77,7 +77,10 @@ sixel）绘制公式和图片，内置**兼容 KaTeX 语法的数学排版引擎
 | Windows x64 | `mdt-win64.exe` | 或者 `mdt-<版本>-win64.zip`（里面还带 demo） |
 
 ```sh
-# Linux
+# Linux 与 macOS（Apple 芯片）一行装好，不需要包管理器：
+curl -fsSL https://raw.githubusercontent.com/wudream813/markdown-in-terminal/main/install.sh | sh
+
+# 等价的手动做法：
 curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-linux-amd64
 chmod +x mdt && sudo install -m 0755 mdt /usr/local/bin/mdt
 mdt --list-caps          # 看看探测到的单元格尺寸、图形协议、字体

@@ -191,7 +191,10 @@ one file, nothing to install besides it.
 | Windows x64 | `mdt-win64.exe` | or the `mdt-<version>-win64.zip`, which also carries the demo |
 
 ```sh
-# Linux — read your first file
+# Linux and macOS (Apple silicon) — one line, no package manager:
+curl -fsSL https://raw.githubusercontent.com/wudream813/markdown-in-terminal/main/install.sh | sh
+
+# ... which is the same as doing it by hand:
 curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-linux-amd64
 chmod +x mdt && sudo install -m 0755 mdt /usr/local/bin/mdt
 mdt --list-caps          # what mdt detected: cell size, graphics protocol, fonts

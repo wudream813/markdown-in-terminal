@@ -5,7 +5,11 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
-## [Unreleased]
+## [0.3.9] — 2026-10-14
+
+Everything below this line was in `Unreleased` before the release; 0.3.9 is the
+first release that contains the P1/P2 batch from the audit (security fixes went
+out earlier, in 0.3.8).
 
 ### Fixed
 
@@ -44,6 +48,10 @@ predate this file, so they are summarised from what their commits did.
 * `tools/mem_report.cpp` (`make mem-report`) prints the memory breakdown per
   phase, and `tools/memory_test.py` fails the suite if a 3 MB document goes over
   its memory budget.
+* `install.sh`: one line downloads the release binary for this OS and
+  architecture, checks that it runs, and puts it in your PATH's directory.
+* `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md`, a man page
+  (`docs/mdt.1`) and shell completions for bash, zsh and fish.
 
 ### Changed
 
@@ -153,7 +161,8 @@ strikethrough, four themes, an outline panel, search, a scrollbar, mouse input,
 Windows support (Win32 console layer, MinGW-w64 cross build, wine tests) and a
 release workflow.
 
-[Unreleased]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.8...HEAD
+[Unreleased]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.5...v0.3.6
