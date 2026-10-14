@@ -51,6 +51,7 @@ class Pty:
         if self.pid == 0:
             env = dict(os.environ)
             env["TERM"] = "xterm-256color"
+            env["MDT_LANG"] = "en"   # English UI: the assertions here are English
             if env_extra:
                 env.update(env_extra)
             os.execvpe(argv[0], argv, env)

@@ -70,6 +70,7 @@ def main():
     if pid == 0:
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
+        env["MDT_LANG"] = "en"   # English UI: the assertions here are English
         os.execvpe(argv[0], argv, env)
     set_size(fd, 24, 80)
 

@@ -18,10 +18,14 @@ case "$BIN" in /*) ;; *) BIN="$(pwd)/$BIN" ;; esac
 DOC=demo/demo.md
 
 run() {  # run <args...>; sets $status and $out
+  # MDT_LANG=en: the assertions below are English strings, and they must not
+  # depend on the machine's LANG (a contributor on a Chinese system would
+  # otherwise see this file fail for no reason).  The language checks further
+  # down set the variable themselves; an explicit --lang always wins.
   if [ -n "$RUN" ]; then
-    out=$($RUN "$BIN" "$@" 2>&1) && status=0 || status=$?
+    out=$(MDT_LANG=en $RUN "$BIN" "$@" 2>&1) && status=0 || status=$?
   else
-    out=$("$BIN" "$@" 2>&1) && status=0 || status=$?
+    out=$(MDT_LANG=en "$BIN" "$@" 2>&1) && status=0 || status=$?
   fi
 }
 
@@ -118,7 +122,7 @@ else
     echo "   FAIL NO_COLOR overrode an explicit theme"; exit 1
   fi
   printf 'bogus_setting = 1\n' > "$CFG_DIR/bad"
-  if MDT_CONFIG="$CFG_DIR/bad" "$BIN" --dump --width=40 "$DOC" 2>&1 >/dev/null \
+  if MDT_CONFIG="$CFG_DIR/bad" MDT_LANG=en "$BIN" --dump --width=40 "$DOC" 2>&1 >/dev/null \
        | grep -q "unknown setting"; then
     echo "   ok   a typo in the config file is reported"
   else
@@ -194,9 +198,13 @@ else
     echo "   ok   --lang beats the config file"
   fi
   printf 'lang = klingon\n' > "$LANG_DIR/bad"
+  # No MDT_LANG here on purpose: setting it would make the language explicit,
+  # and an explicit choice makes the file's own `lang =` line ignored (which is
+  # the documented order, and tested above).  The warning therefore comes out in
+  # whatever language the machine selected, so accept either.
   if MDT_CONFIG="$LANG_DIR/bad" "$BIN" --dump --width=40 "$DOC" 2>&1 >/dev/null \
-       | grep -q "unknown lang"; then
-    echo "   ok   a language mdt does not speak is reported, in English"
+       | grep -Eq "unknown lang|不认识的 lang"; then
+    echo "   ok   a language mdt does not speak is reported"
   else
     echo "   FAIL lang = klingon was swallowed"; exit 1
   fi

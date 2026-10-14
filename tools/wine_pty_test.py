@@ -22,6 +22,7 @@ def run(exe, wine, keys, cols=100, rows=24, timeout=25.0):
     env = dict(os.environ)
     env.setdefault("WINEDEBUG", "-all")
     env["TERM"] = "xterm-256color"
+    env["MDT_LANG"] = "en"   # English UI: the assertions here are English
     pid, fd = pty.fork()
     if pid == 0:
         os.execvpe(wine, [wine, exe, "--gfx=none", "demo/demo.md"], env)

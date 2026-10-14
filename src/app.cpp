@@ -451,7 +451,8 @@ void App::render() {
     scr.put_str(1, sy, substr_cells(text, 0, vcols - 2), RGB{255, 220, 150}, sbg, A_BOLD);
   } else {
     text = fmt(" %s   %d%%  %s   [%s]  %s", left.c_str(), pct,
-               src_line ? fmt("line %d", src_line).c_str() : "", gfx_name(term.caps.gfx),
+               src_line ? fmt(tr("line %d", "第 %d 行"), src_line).c_str() : "",
+               gfx_name(term.caps.gfx),
                engine.c_str());
     if (!msg.empty()) text += "   " + msg;
     scr.put_str(0, sy, substr_cells(text, 0, vcols), sfg, sbg);
@@ -1276,7 +1277,8 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
     if (!f) { *err = std::string(tr("cannot write ", "无法写入 ")) + opt.dump; return false; }
     fwrite(out.data(), 1, out.size(), f);
     fclose(f);
-    printf("wrote %s (%d rows x %d cols)\n", opt.dump.c_str(), rows, width);
+    printf(tr("wrote %s (%d rows x %d cols)\n", "已写入 %s（%d 行 x %d 列）\n"), opt.dump.c_str(),
+           rows, width);
   }
   return true;
 }
@@ -1397,7 +1399,8 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   if (!f) { *err = std::string(tr("cannot write ", "无法写入 ")) + out; return false; }
   fwrite(png.data(), 1, png.size(), f);
   fclose(f);
-  printf("wrote %s (%dx%d px, font %s)\n", out.c_str(), img.w, img.h, fr.path().c_str());
+  printf(tr("wrote %s (%dx%d px, font %s)\n", "已写入 %s（%dx%d 像素，字体 %s）\n"), out.c_str(),
+         img.w, img.h, fr.path().c_str());
   return true;
 }
 

@@ -404,12 +404,14 @@ int main(int argc, char** argv) {
   // The reader shows one document; taking the first of several and dropping the
   // rest without a word was worse than saying so.
   if (opts.files.size() > 1)
-    return usage_error("mdt reads one file at a time, got " + std::to_string(opts.files.size()) +
-                       " (" + opts.files[0] + ", " + opts.files[1] + ", ...)");
+    return usage_error(fmt(tr("mdt reads one file at a time, got %d (%s, %s, ...)",
+                              "mdt 一次只读一个文件，但给了 %d 个（%s、%s、……）"),
+                           (int)opts.files.size(), opts.files[0].c_str(), opts.files[1].c_str()));
   // Only one non-interactive output at a time, or the caller cannot tell which
   // one happened.
   int outputs = (opts.diag ? 1 : 0) + (opts.dump.empty() ? 0 : 1) + (opts.screenshot.empty() ? 0 : 1);
   if (outputs > 1)
-    return usage_error("--diag, --dump and --screenshot are alternatives; pick one");
+    return usage_error(tr("--diag, --dump and --screenshot are alternatives; pick one",
+                          "--diag、--dump 和 --screenshot 是三种互斥的输出，只能选一个"));
   return run_app(opts);
 }

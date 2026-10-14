@@ -26,6 +26,8 @@ def run(argv, keys, cols=80, rows=24, settle=2.0, after=1.6, total=None):
     if pid == 0:
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
+        env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                                 # inherit a Chinese LANG from the machine
         os.execvpe(argv[0], argv, env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     out = b""
@@ -80,6 +82,8 @@ def run_steps(argv, steps, cols=80, rows=24, settle=2.0):
     if pid == 0:
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
+        env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                                 # inherit a Chinese LANG from the machine
         os.execvpe(argv[0], argv, env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     out = b""

@@ -102,6 +102,8 @@ def main():
     if pid == 0:
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
+        env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                                 # inherit a Chinese LANG from the machine
         os.execvpe(argv[0], argv + ["--gfx=none", fixture], env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 60, 100, 0, 0))
     out = b""
@@ -147,6 +149,8 @@ def main():
         if pid == 0:
             env = dict(os.environ)
             env["TERM"] = "xterm-256color"
+            env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                                     # inherit a Chinese LANG from the machine
             os.execvpe(argv[0], argv + [gfx, path], env)
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, 100, 0, 0))
         buf = b""
@@ -290,6 +294,8 @@ def main():
         if pid == 0:
             env = dict(os.environ)
             env["TERM"] = "xterm-256color"
+            env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                                     # inherit a Chinese LANG from the machine
             os.execvpe(argv[0], argv + ["--gfx=none", "--lang=en", fixture2], env)
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
         acc = b""
@@ -427,6 +433,8 @@ def main():
         if pid == 0:
             env = dict(os.environ)
             env["TERM"] = "xterm-256color"
+            env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                                     # inherit a Chinese LANG from the machine
             os.execvpe(argv[0], argv + ["--gfx=none", fixture], env)
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
         acc2 = b""
@@ -492,6 +500,8 @@ def main():
     if pid == 0:
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
+        env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                                 # inherit a Chinese LANG from the machine
         os.execvpe(argv[0], argv + ["--gfx=none", fixture4], env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
     acc3 = b""
@@ -580,6 +590,8 @@ def main():
     if pid == 0:
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
+        env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                                 # inherit a Chinese LANG from the machine
         os.execvpe(argv[0], argv + ["--gfx=none", fixture5], env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
     acc4 = b""
@@ -626,6 +638,8 @@ def main():
     if pid == 0:
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
+        env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                                 # inherit a Chinese LANG from the machine
         os.execvpe(argv[0], argv + ["--gfx=none", fixture6], env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
     acc5 = b""

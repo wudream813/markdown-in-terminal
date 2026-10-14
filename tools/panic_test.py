@@ -33,6 +33,7 @@ REQUIRED = [
 
 def run(argv, env_extra, timeout=20.0):
     env = dict(os.environ)
+    env.setdefault("MDT_LANG", "en")  # English UI: the assertions here are English
     env.update(env_extra)
     pid, fd = pty.fork()
     if pid == 0:

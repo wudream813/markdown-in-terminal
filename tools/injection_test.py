@@ -80,6 +80,8 @@ def write_tools(tmp):
 def run_interactive(binary, doc, keys, bindir, env_extra, cols=90, rows=24):
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
+    env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                             # inherit a Chinese LANG from the machine
     env["PATH"] = bindir + os.pathsep + env.get("PATH", "")
     env.update(env_extra)
     pid, fd = pty.fork()

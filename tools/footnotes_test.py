@@ -30,6 +30,8 @@ def run(argv, keys=(), cols=90, rows=40, settle=12.0, after=2.0):
     if pid == 0:
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
+        env["MDT_LANG"] = "en"   # the assertions below are English; do not
+                                 # inherit a Chinese LANG from the machine
         os.execvpe(argv[0], argv, env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     out = b""

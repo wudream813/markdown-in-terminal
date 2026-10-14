@@ -372,7 +372,7 @@ bool read_file(const std::string& path, std::string& out, std::string* err) {
   fclose(f);
   if (!ok) {
     out.clear();
-    if (err) *err = "cannot read " + path;
+    if (err) *err = std::string(tr("cannot read ", "无法读取 ")) + path;
   }
   return ok;
 }

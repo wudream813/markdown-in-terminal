@@ -12,6 +12,7 @@ SLOWDOWN = float(os.environ.get("MDT_TEST_SLOWDOWN", "1") or 1)
 
 def run(cmd, env_extra, keys, cols=100, rows=30):
     env = dict(os.environ)
+    env.setdefault("MDT_LANG", "en")  # English by default; --lang= overrides it
     env.update(env_extra)
     pid, fd = pty.fork()
     if pid == 0:

@@ -1,4 +1,5 @@
 #include "encoding.h"
+#include "i18n.h"
 
 #include <cstring>
 #include <vector>
@@ -158,12 +159,15 @@ DecodedText decode_text(const std::string& raw, const std::string& want) {
   }
   if (raw.size() >= 2 && (((unsigned char)raw[0] == 0xFF && (unsigned char)raw[1] == 0xFE) ||
                           ((unsigned char)raw[0] == 0xFE && (unsigned char)raw[1] == 0xFF))) {
-    r.note = "utf-16: not supported, save the file as UTF-8";
+    r.note = tr("utf-16: not supported, save the file as UTF-8",
+                "utf-16：不支持，请把文件另存为 UTF-8");
     return r;
   }
   bool valid = utf8_ok(raw, nullptr);
   if (want == "utf-8") {
-    if (!valid) r.note = "not valid utf-8 (use --encoding=gbk, big5 or cp1252)";
+    if (!valid)
+      r.note = tr("not valid utf-8 (use --encoding=gbk, big5 or cp1252)",
+                  "不是合法的 UTF-8（可用 --encoding=gbk、big5 或 cp1252）");
     return r;
   }
   if (valid) return r;   // nothing to do: it already is UTF-8
@@ -188,7 +192,8 @@ DecodedText decode_text(const std::string& raw, const std::string& want) {
     r.converted = true;
     return r;
   }
-  r.note = "not valid utf-8 and no conversion worked (try --encoding=gbk, big5 or cp1252)";
+  r.note = tr("not valid utf-8 and no conversion worked (try --encoding=gbk, big5 or cp1252)",
+              "不是合法的 UTF-8，且自动转码没有成功（试试 --encoding=gbk、big5 或 cp1252）");
   return r;
 }
 
