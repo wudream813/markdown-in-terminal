@@ -428,26 +428,32 @@ completions from the same tag.
             print(f"  could not read {repo}: HTTP {status} {body.get('message')}")
             continue
 
-        with tempfile.TemporaryDirectory() as tmp:
-            url = f"https://x-access-token:{token}@github.com/{repo}.git"
-            subprocess.run(["git", "clone", "-q", url, tmp], check=True)
-            for name, text in files.items():
-                dest = pathlib.Path(tmp) / name
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                old = dest.read_text() if dest.exists() else None
-                if old == text:
-                    print(f"  unchanged    {repo}/{name}")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                url = f"https://x-access-token:{token}@github.com/{repo}.git"
+                subprocess.run(["git", "clone", "-q", url, tmp], check=True)
+                for name, text in files.items():
+                    dest = pathlib.Path(tmp) / name
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    old = dest.read_text() if dest.exists() else None
+                    if old == text:
+                        print(f"  unchanged    {repo}/{name}")
+                        continue
+                    dest.write_text(text)
+                    subprocess.run(["git", "-C", tmp, "add", name], check=True)
+                if subprocess.run(["git", "-C", tmp, "diff", "--cached", "--quiet"]).returncode == 0:
                     continue
-                dest.write_text(text)
-                subprocess.run(["git", "-C", tmp, "add", name], check=True)
-            if subprocess.run(["git", "-C", tmp, "diff", "--cached", "--quiet"]).returncode == 0:
-                continue
-            subprocess.run(["git", "-C", tmp, "-c", "user.name=wudream813",
-                            "-c", "user.email=wudream813@users.noreply.github.com",
-                            "commit", "-q", "-m", f"mdt {version}"], check=True)
-            subprocess.run(["git", "-C", tmp, "push", "-q", "origin", "HEAD"], check=True)
-            print(f"  pushed       {repo}: mdt {version}")
-            shutil.rmtree(tmp, ignore_errors=True)
+                subprocess.run(["git", "-C", tmp, "-c", "user.name=wudream813",
+                                "-c", "user.email=wudream813@users.noreply.github.com",
+                                "commit", "-q", "-m", f"mdt {version}"], check=True)
+                subprocess.run(["git", "-C", tmp, "push", "-q", "origin", "HEAD"], check=True)
+                print(f"  pushed       {repo}: mdt {version}")
+        except subprocess.CalledProcessError as exc:
+            # A fine-grained token only reaches the repositories it was scoped
+            # to, and "create a repository" is not the same permission as
+            # "write into it".
+            print(f"  FAILED       {repo}: {exc}")
+            print(f"               the token needs Contents: Read and write on {repo}")
 
 
 def main() -> int:
