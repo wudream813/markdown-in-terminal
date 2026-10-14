@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: wudream813.MarkdownInTerminal
+PackageVersion: 0.3.9
+PackageLocale: en-US
+Publisher: wudream813
+PublisherUrl: https://github.com/wudream813/wudream813
+PackageName: mdt
+PackageUrl: https://github.com/wudream813/markdown-in-terminal
+License: MIT
+LicenseUrl: https://github.com/wudream813/markdown-in-terminal/blob/main/LICENSE
+ShortDescription: "mdt reads a Markdown file in the terminal and draws what a terminal pager normally cannot: formulas typeset by an embedded KaTeX-compatible engine, images through the kitty/iTerm2/sixel graphics protocols, tables, alerts, footnotes.  One self-contained C++17 binary, no runtime dependencies."
+Moniker: mdt
+Tags:
+- markdown
+- terminal
+- cli
+- viewer
+- tui
+- math
+- latex
+ReleaseNotesUrl: https://github.com/wudream813/markdown-in-terminal/releases/tag/v0.3.9
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

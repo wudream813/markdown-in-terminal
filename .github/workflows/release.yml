@@ -33,6 +33,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check the workflow files (YAML + shell syntax)
+        run: python3 tools/workflow_lint.py
+
       - name: Install MinGW-w64 cross compiler
         if: matrix.mingw
         run: |
@@ -69,6 +72,10 @@ jobs:
             cp build/mdt "mdt-${{ matrix.target }}"
           fi
 
+      - name: Tests
+        if: ${{ !matrix.mingw }}
+        run: sh tests/smoke.sh
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -83,6 +90,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -90,6 +99,14 @@ jobs:
 
       - name: Make binaries executable
         run: chmod +x dist/mdt-linux-amd64 dist/mdt-macos-arm64 2>/dev/null || true
+
+      - name: Add install.sh, the licence, and SHA256SUMS
+        run: |
+          cp install.sh LICENSE dist/
+          cd dist
+          sha256sum mdt-linux-amd64 mdt-macos-arm64 mdt-win64.exe mdt-*.zip \
+                    install.sh LICENSE > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

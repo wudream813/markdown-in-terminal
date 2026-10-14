@@ -5,6 +5,26 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [Unreleased]
+
+### Added
+
+* `packaging/` — the manifests that make mdt installable from somewhere other
+  than a release page: Scoop, Homebrew, winget and AUR, plus `gen.py` (downloads
+  the artefacts of a tag, hashes them, rewrites every manifest) and `verify.py`
+  (downloads every url in the manifests and compares the sha256, so a manifest
+  that points at a file the tag does not have fails before it is published).
+* `tools/workflow_lint.py`, run as the first step of both workflows: it parses
+  the workflow YAML, substitutes `${{ … }}` and `sh -n`s every `run:` block, and
+  checks that every `make <target>` a step calls exists in the Makefile.
+* Releases now ship `install.sh`, `LICENSE` and a `SHA256SUMS` alongside the
+  binaries.
+
+### Changed
+
+* The release workflow runs `tests/smoke.sh` on the commit it is about to tag
+  (Linux and macOS legs) instead of publishing a build that was never tested.
+
 ## [0.3.9] — 2026-10-14
 
 Everything below this line was in `Unreleased` before the release; 0.3.9 is the

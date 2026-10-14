@@ -1,0 +1,42 @@
+# Maintainer: wudream813 <wudream813@users.noreply.github.com>
+# Prebuilt -bin package: the release binary is statically linked, so there is
+# nothing to compile and nothing to link against at run time.
+pkgname=mdt-bin
+pkgver=0.3.9
+pkgrel=1
+pkgdesc='Terminal Markdown reader: typeset maths, images, syntax highlighting'
+arch=('x86_64')
+url='https://github.com/wudream813/markdown-in-terminal'
+license=('MIT')
+depends=()
+optdepends=(
+    'curl: fetch images that are linked from a document'
+    'xdg-utils: open links in your browser'
+)
+provides=('mdt')
+conflicts=('mdt' 'mdt-git')
+options=('!strip' '!debug')
+_gh="https://github.com/wudream813/markdown-in-terminal"
+_raw="https://raw.githubusercontent.com/wudream813/markdown-in-terminal"
+
+source=("mdt-linux-amd64::$_gh/releases/download/v$pkgver/mdt-linux-amd64"
+        "mdt.1::$_raw/v$pkgver/docs/mdt.1"
+        "mdt.bash::$_raw/v$pkgver/completions/mdt.bash"
+        "_mdt::$_raw/v$pkgver/completions/_mdt"
+        "mdt.fish::$_raw/v$pkgver/completions/mdt.fish"
+        "LICENSE::$_raw/v$pkgver/LICENSE")
+sha256sums=('376a4f0f87d9a976cd9b75128c90db4c15935b0396f06fff2103a2a5fc226806'
+            '73582ea60fc89aebf79f9eb7850f3b38e0d7da83015522ae3512e0dd69754446'
+            '8e957355edf33c95a3b669d7918205b69413048b320f0ded178b8f27f3380fe6'
+            '07639f05a5fc36072bcad6684fdade2877886050d36fcd0bff3e4e6a358cbaf4'
+            'a8501db39feff0a9deb755d6ca0098c435348a3574d98fbf6487c1360ccd630f'
+            '76d1905ca480632ecdabe422dda091af529d8cfc3b6512665482614483a2c826')
+
+package() {
+  install -Dm755 "$srcdir/mdt-linux-amd64" "$pkgdir/usr/bin/mdt"
+  install -Dm644 "$srcdir/mdt.1"   "$pkgdir/usr/share/man/man1/mdt.1"
+  install -Dm644 "$srcdir/mdt.bash" "$pkgdir/usr/share/bash-completion/completions/mdt"
+  install -Dm644 "$srcdir/_mdt"     "$pkgdir/usr/share/zsh/site-functions/_mdt"
+  install -Dm644 "$srcdir/mdt.fish" "$pkgdir/usr/share/fish/vendor_completions.d/mdt.fish"
+  install -Dm644 "$srcdir/LICENSE"  "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
