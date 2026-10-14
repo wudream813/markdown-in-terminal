@@ -47,7 +47,8 @@ ifneq ($(findstring mingw,$(CXX)),)
   CXXFLAGS += $(WIN_DEFS)
   CFLAGS   += $(WIN_DEFS)
   # static libgcc/libstdc++/winpthread so the .exe has no MinGW DLL deps
-  LDLIBS   := -lm -lws2_32 -lwininet -static -static-libgcc -static-libstdc++
+  # -lpsapi: process_memory_counters, used by --diag's memory line
+  LDLIBS   := -lm -lws2_32 -lwininet -lpsapi -static -static-libgcc -static-libstdc++
 endif
 
 # macOS does not export iconv from libc; it lives in its own library.  (Windows

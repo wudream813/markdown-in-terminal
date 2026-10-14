@@ -100,7 +100,7 @@ endif()
 if(MINGW)
   # ws2_32 is needed by QuickJS' quickjs-libc; the runtime is linked statically
   # so the produced .exe has no libgcc/libstdc++/winpthread DLL dependencies.
-  target_link_libraries(mdt PRIVATE ws2_32)
+  target_link_libraries(mdt PRIVATE ws2_32 psapi)
   if(MDT_STATIC_MINGW)
     target_link_options(mdt PRIVATE -static -static-libgcc -static-libstdc++)
   endif()

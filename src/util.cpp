@@ -1,6 +1,11 @@
 #include "util.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#include <psapi.h>   // GetProcessMemoryInfo (peak working set)
+#else
 #include <sys/resource.h>
+#endif
 
 #include "platform.h"
 
@@ -374,12 +379,20 @@ double now_ms() {
 }
 
 double peak_rss_mb() {
+#if defined(_WIN32)
+  PROCESS_MEMORY_COUNTERS pmc;
+  // MinGW links this from libpsapi (see the Makefile's Windows branch).
+  if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+    return pmc.PeakWorkingSetSize / (1024.0 * 1024.0);
+  return 0;
+#else
   struct rusage ru;
   if (getrusage(RUSAGE_SELF, &ru) != 0) return 0;
 #ifdef __APPLE__
   return ru.ru_maxrss / (1024.0 * 1024.0);  // macOS reports bytes
 #else
   return ru.ru_maxrss / 1024.0;             // Linux/BSD report KiB
+#endif
 #endif
 }
 

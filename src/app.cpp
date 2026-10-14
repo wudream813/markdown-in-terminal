@@ -1153,7 +1153,11 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
     DocView::LayoutStats st = probe.layout_stats();
     printf("  layout          : %d rows, %zu lines, %zu runs, %zu table cells\n", st.rows, st.lines,
            st.runs, st.cells);
-    printf("  memory          : %.1f MB peak RSS for the whole document\n", peak_rss_mb());
+    double rss = peak_rss_mb();
+    if (rss > 0)
+      printf("  memory          : %.1f MB peak RSS for the whole document\n", rss);
+    else
+      printf("  memory          : (this platform does not report the peak)\n");
   }
 
 return true;
