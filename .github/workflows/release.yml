@@ -52,7 +52,7 @@ jobs:
             cp demo/demo.md demo/logo.png "$STAGE/demo/"
             zip -qr "mdt-$V-win64.zip" "$STAGE"
             cp build/win/mdt.exe mdt-win64.exe
-          else
+          elif [ "${{ matrix.target }}" = "linux-amd64" ]; then
             # STATIC=1: the Linux artefact carries its own libc, so it runs on
             # any distribution instead of only on glibc >= 2.38 (Ubuntu 24.04,
             # Debian 13).  Remote pictures go through the `curl` binary, as
@@ -61,6 +61,13 @@ jobs:
             ldd build/mdt 2>&1 | grep -q "not a dynamic executable" \
               || { echo "error: the Linux build is not static"; exit 1; }
             cp build/mdt "mdt-${{ matrix.target }}"
+          else
+            # macOS: -static is not a thing for the Apple linker, and the
+            # system libraries are the ones the OS ships, so the ordinary
+            # dynamic build is the right artefact here.
+            make -j"$JOBS"
+            cp build/mdt "mdt-${{ matrix.target }}"
+          fi
           fi
 
       - name: Upload artifacts
