@@ -348,14 +348,17 @@ def publish(version: str, check: bool) -> None:
     import tempfile
 
     token = os.environ.get("GITHUB_TOKEN")
-    if not token:
+    if not token and not check:
+        # --check only reads, and the two repositories are public, so it works
+        # without a token at all.
         sys.exit("publish: set GITHUB_TOKEN (a token that can push to the two repos)")
 
     def api(method: str, path: str, payload: dict | None = None) -> tuple[int, dict]:
         url = f"https://api.github.com{path}"
         data = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(url, data=data, method=method)
-        req.add_header("Authorization", f"Bearer {token}")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
         req.add_header("Accept", "application/vnd.github+json")
         if data:
             req.add_header("Content-Type", "application/json")
