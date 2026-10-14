@@ -84,6 +84,18 @@ if(NOT MSVC)
 endif()
 target_link_libraries(mdt PRIVATE qjs)
 
+# --------------------------------------------------------------- iconv ------
+# src/encoding.cpp uses iconv unless the platform has its own converter (Windows
+# uses MultiByteToWideChar).  On macOS iconv is a separate library, which the
+# linker does not find on its own - the release build failed there until it was
+# linked in.
+if(NOT MINGW)
+  find_package(Iconv)
+  if(Iconv_FOUND AND NOT Iconv_IS_BUILT_IN)
+    target_link_libraries(mdt PRIVATE Iconv::Iconv)
+  endif()
+endif()
+
 # ------------------------------------------------------------- Windows ------
 if(MINGW)
   # ws2_32 is needed by QuickJS' quickjs-libc; the runtime is linked statically

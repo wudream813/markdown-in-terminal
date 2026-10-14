@@ -49,6 +49,12 @@ ifneq ($(findstring mingw,$(CXX)),)
   LDLIBS   := -lm -lws2_32 -lwininet -static -static-libgcc -static-libstdc++
 endif
 
+# macOS does not export iconv from libc; it lives in its own library.  (Windows
+# and Linux need nothing here: MinGW has MultiByteToWideChar, glibc has iconv.)
+ifneq ($(findstring Darwin,$(shell uname -s)),)
+  LDLIBS += -liconv
+endif
+
 BIN      := $(BUILD)/mdt$(if $(WINDOWS),.exe,)
 
 CPP_SRC := src/main.cpp src/app.cpp src/render.cpp src/render_draw.cpp src/md.cpp \
