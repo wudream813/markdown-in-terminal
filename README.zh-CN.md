@@ -92,6 +92,21 @@ chmod +x mdt && xattr -d com.apple.quarantine mdt 2>/dev/null
 sudo install -m 0755 mdt /usr/local/bin/mdt
 ```
 
+也可以交给包管理器（升级时 `mdt --version` 会告诉你新版号）：
+
+```sh
+# macOS（Apple 芯片）与 Linux x86-64
+brew tap wudream813/mdt && brew install mdt
+```
+
+```powershell
+# Windows
+scoop bucket add wudream813 https://github.com/wudream813/scoop-bucket
+scoop install wudream813/mdt
+```
+
+每个 release 除二进制外还附 `install.sh`、`LICENSE` 和 `SHA256SUMS`，下载后不必只信页面本身。
+
 在源码目录里 `make install` 还会装 man 手册和补全脚本：
 
 ```sh

@@ -206,6 +206,23 @@ chmod +x mdt && xattr -d com.apple.quarantine mdt 2>/dev/null
 sudo install -m 0755 mdt /usr/local/bin/mdt
 ```
 
+Or let a package manager do it, and let `mdt --version` tell you when to
+upgrade:
+
+```sh
+# macOS (Apple silicon) and Linux x86-64
+brew tap wudream813/mdt && brew install mdt
+```
+
+```powershell
+# Windows
+scoop bucket add wudream813 https://github.com/wudream813/scoop-bucket
+scoop install wudream813/mdt
+```
+
+Every release also carries `install.sh`, `LICENSE` and a `SHA256SUMS` next to the
+binaries, so a download can be checked without trusting the page it came from.
+
 `make install` (from a checkout) also installs the man page and the shell
 completions:
 
