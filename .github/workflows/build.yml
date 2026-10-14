@@ -19,6 +19,9 @@ jobs:
           make clean
           make -j"$(nproc)" 2>&1 | tee build.log
           ! grep -E "warning:|error:" build.log | grep -v "vendor/"
+      - name: Check the workflow files (YAML + shell syntax)
+        run: python3 tools/workflow_lint.py
+
       - name: Static build (this is what the release artefact is made of)
         run: |
           make STATIC=1 BUILD=build-static -j"$(nproc)"
