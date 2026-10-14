@@ -62,6 +62,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # the checks run on every platform: this one's python3 has no PyYAML, and
+      # that is exactly how the release workflow failed on macOS
+      - name: Check the workflow files
+        run: python3 tools/workflow_lint.py
       - name: Build
         run: make -j"$(sysctl -n hw.ncpu)"
       - name: Tests
@@ -76,6 +80,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check the workflow files
+        run: python3 tools/workflow_lint.py
       - name: Install MinGW-w64 and wine
         run: |
           sudo apt-get update
