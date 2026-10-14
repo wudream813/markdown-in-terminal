@@ -1,0 +1,180 @@
+.TH MDT 1 "2026-10-14" "mdt 0.3.8" "User Commands"
+.SH NAME
+mdt \- read Markdown in the terminal, with images, tables and maths
+.SH SYNOPSIS
+.B mdt
+[\fIoptions\fR] \fIfile.md\fR
+.br
+.B mdt
+[\fIoptions\fR] \fB\-\fR            (read the document from stdin)
+.SH DESCRIPTION
+.B mdt
+renders a Markdown document for the terminal.  It draws pictures and typeset
+formulas with the kitty graphics protocol, iTerm2 inline images or sixel,
+whichever the terminal supports, and falls back to text (a Unicode
+transcription of each formula) when there is no graphics protocol at all.
+The maths engine is built in \- MathJax's TeX to SVG converter running inside
+QuickJS \- so no LaTeX installation is needed.
+.PP
+The keymap follows \fBless\fR(1):
+.BR j ", " k ", " Down ", " Up
+scroll, Space and
+.B b
+page, 
+.B g
+and
+.B G
+jump to the top and the bottom,
+.B J
+and
+.B K
+move between headings,
+.B Tab
+opens the outline,
+.B /
+searches and
+.BR n ", " N
+walk the hits,
+.B t
+cycles the theme,
+.B m
+toggles maths,
+.B e
+copies the document as text,
+.B r
+reloads the file,
+.B o
+opens the first link (a click on a link opens a dialog that can copy or open
+it),
+.B ?
+shows the help panel and
+.B q
+quits.
+.SH OPTIONS
+.SS Graphics
+.TP
+.B \-\-gfx=auto|kitty|iterm2|sixel|none
+Graphics protocol.  The default probes the terminal at start\-up.
+.TP
+.B \-\-math=katex|unicode|off
+Typeset formulas as bitmaps (default), transcription only, or not at all.
+.TP
+.B \-\-font\-px=N
+Override the derived formula font size.
+.TP
+.B \-\-line\-numbers
+Line numbers inside code blocks.
+.TP
+.B \-\-no\-syntax, \-\-syntax
+Turn code highlighting off or on.
+.SS Appearance
+.TP
+.B \-\-theme=dark|light|nord|monochrome
+Colour theme (default: dark).
+.TP
+.B \-\-no\-color
+Monochrome output; equivalent to setting \fBNO_COLOR\fR in the environment.
+.TP
+.B \-\-toc
+Open the outline panel on start.
+.TP
+.B \-\-panels
+Tinted backgrounds behind code blocks, quotes and table headers.
+.TP
+.B \-\-terminal\-bg
+Keep the terminal's own background colour.
+.TP
+.B \-\-no\-scrollbar
+Hide the scrollbar.
+.SS Source handling
+.TP
+.B \-\-encoding=auto|utf\-8|gbk|gb18030|big5|cp1252|latin1|off
+How to read a file that is not UTF\-8.  The default,
+.BR auto ,
+converts a file whose bytes are not valid UTF\-8 from GB18030 (the "ANSI" code
+page of a Chinese Windows).  GB18030's byte space is a superset of Big5's, so a
+Big5 document has to be named explicitly; \fBoff\fR leaves the bytes alone.
+.TP
+.B \-\-entities=off|force
+Repair a source that was HTML\-escaped before it reached you (off by default).
+.TP
+.B \-\-escapes=auto|off|force
+Undo Markdown backslash escapes a generator left in the text.
+.TP
+.B \-\-loose=auto|off|on
+Accept "#heading", "\- item" and "1.item" written without the space CommonMark
+requires.
+.TP
+.B \-\-diag
+Print what mdt sees of the file (encoding, the repairs that were applied, the
+block census, the first characters as code points, the memory the document
+costs) and of the terminal.  Works without a tty, so the output can be pasted
+into a bug report.
+.TP
+.B \-\-compat
+Turn off everything optional \- graphics, DEC 2026 synchronized output, the
+keyboard\-protocol push, the capability probe \- for terminals that mishandle
+them.
+.SS Non\-interactive
+.TP
+.B \-\-dump[=file]
+Print the document as plain text (no graphics) and exit.
+.TP
+.B \-\-screenshot=out.png
+Render the screen to a PNG with the built\-in font rasteriser and exit.
+.TP
+.B \-\-width=N, \-\-height=N
+Size for \fB\-\-dump\fR and \fB\-\-screenshot\fR.
+.TP
+.B \-\-cell=WxH
+Cell size in pixels for \fB\-\-dump\fR and \fB\-\-screenshot\fR (default 9x19).
+.TP
+.B \-\-code\-fit
+Code frames hug the code instead of spanning the page.
+.TP
+.B \-\-list\-caps
+Print the detected terminal capabilities and exit.
+.TP
+.B \-h, \-\-help, \-v, \-\-version
+.SH FILES
+.TP
+.I ~/.config/mdt/config
+Defaults, one "key = value" per line: \fBtheme\fR, \fBgfx\fR, \fBmath\fR,
+\fBencoding\fR, \fBpanels\fR, \fBterminal_bg\fR, \fBscrollbar\fR,
+\fBline_numbers\fR, \fBsyntax\fR, \fBcode_fit\fR.  The command line overrides
+the file.  On Windows the file is \fI%APPDATA%\\mdt\\config\fR; the environment
+variable \fBMDT_CONFIG\fR points somewhere else.
+.SH ENVIRONMENT
+.TP
+.B NO_COLOR
+When set (to anything), the monochrome theme is used \- unless a theme is given
+on the command line or in the settings file, which is the more specific request.
+.TP
+.B MDT_CONFIG
+Path of the settings file.
+.TP
+.B MDT_FRAME_LOG
+Write every frame to this file exactly as it was sent, escape sequences spelled
+out, to tell "mdt drew it wrong" apart from "the terminal lost it".
+.TP
+.B MDT_FORCE_CURL_BIN
+Use this program instead of \fBcurl\fR to fetch a remote picture.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+The input file could not be read (missing file, a directory, unreadable, larger
+than 512 MB, ...).
+.TP
+.B 2
+The command line was wrong; the message names the values that would have
+worked.
+.SH SEE ALSO
+.BR less (1),
+.BR bat (1),
+.BR glow (1)
+.PP
+The project page, screenshots and the issue tracker:
+.IR https://github.com/wudream813/markdown-in-terminal .

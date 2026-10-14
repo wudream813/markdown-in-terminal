@@ -186,9 +186,9 @@ one file, nothing to install besides it.
 
 | platform | file | notes |
 |:--|:--|:--|
-| Linux x86-64 | `mdt-linux-amd64` | needs glibc ≥ 2.38 (Ubuntu 24.04+, Debian 13+, Fedora 39+); on older distributions build from source |
+| Linux x86-64 | `mdt-linux-amd64` | statically linked since 0.3.9 — runs on any distribution, no glibc version to satisfy |
 | macOS arm64 | `mdt-macos-arm64` | Apple silicon; the binary is not signed/notarised, so `xattr -d com.apple.quarantine mdt` once after downloading |
-| Windows x64 | `mdt-win64.exe` | or `mdt-0.3.8-win64.zip`, which also carries the demo |
+| Windows x64 | `mdt-win64.exe` | or the `mdt-<version>-win64.zip`, which also carries the demo |
 
 ```sh
 # Linux — read your first file
@@ -201,6 +201,14 @@ mdt README.md
 curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-macos-arm64
 chmod +x mdt && xattr -d com.apple.quarantine mdt 2>/dev/null
 sudo install -m 0755 mdt /usr/local/bin/mdt
+```
+
+`make install` (from a checkout) also installs the man page and the shell
+completions:
+
+```sh
+make && sudo make install      # PREFIX=/usr/local by default
+man mdt                        # the same options, in troff
 ```
 
 Nothing is written to your home directory: no config file, no cache.  `mdt` does not
@@ -580,6 +588,15 @@ GB18030's byte space is a superset of Big5's - a Big5 document converts
   (conhost and Windows Terminal update it on resize). Wine's console reports a
   fixed size and never follows pty resizes, so `tools/resize_test.py` skips the
   resize steps there (`MDT_RESIZE_SKIP=1`) and CI only checks the geometry.
+
+## More documentation
+
+| File | What it has |
+|:--|:--|
+| [CHANGELOG.md](CHANGELOG.md) | what changed in each version (0.3.8 is a security fix worth reading) |
+| [SECURITY.md](SECURITY.md) | how to report a vulnerability, and what mdt does with a document |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | building, testing, and how the commit messages are written |
+| [docs/mdt.1](docs/mdt.1) | the man page (`make install` puts it in man1) |
 
 MIT licensed — see [LICENSE](LICENSE).  The binary embeds other people's work
 (QuickJS-NG — MIT, MathJax — Apache-2.0, the KaTeX fonts — SIL OFL 1.1, stb —

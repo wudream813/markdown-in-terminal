@@ -48,8 +48,11 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
-          # the instrumented binary needs looser wall-clock budgets
+          # the instrumented binary needs looser wall-clock budgets, and its
+          # own RSS is several times the real thing (769 MB for a 3 MB document
+          # here), so the memory budget is set explicitly instead of scaled
           MDT_TEST_SLOWDOWN: "4"
+          MDT_MEM_BUDGET_MB: "2000"
 
   macos:
     name: macOS (native)

@@ -6,6 +6,7 @@
 
 CXX      ?= g++
 CC       ?= gcc
+PREFIX   ?= /usr/local
 BUILD    ?= build
 VERSION  ?= $(shell cat VERSION 2>/dev/null || echo 0.0.0)
 
@@ -118,6 +119,20 @@ test: $(BIN)
 
 install: $(BIN)
 	install -D -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/bin/$(notdir $(BIN))
+	install -D -m 0644 docs/mdt.1 $(DESTDIR)$(PREFIX)/share/man/man1/mdt.1
+	install -D -m 0644 completions/mdt.bash \
+	  $(DESTDIR)$(PREFIX)/share/bash-completion/completions/mdt
+	install -D -m 0644 completions/_mdt \
+	  $(DESTDIR)$(PREFIX)/share/zsh/site-functions/_mdt
+	install -D -m 0644 completions/mdt.fish \
+	  $(DESTDIR)$(PREFIX)/share/fish/vendor_completions.d/mdt.fish
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/$(notdir $(BIN))
+	rm -f $(DESTDIR)$(PREFIX)/share/man/man1/mdt.1
+	rm -f $(DESTDIR)$(PREFIX)/share/bash-completion/completions/mdt
+	rm -f $(DESTDIR)$(PREFIX)/share/zsh/site-functions/_mdt
+	rm -f $(DESTDIR)$(PREFIX)/share/fish/vendor_completions.d/mdt.fish
 
 clean:
 	rm -rf build dist

@@ -72,9 +72,9 @@ sixel）绘制公式和图片，内置**兼容 KaTeX 语法的数学排版引擎
 
 | 平台 | 文件 | 说明 |
 |:--|:--|:--|
-| Linux x86-64 | `mdt-linux-amd64` | 需要 glibc ≥ 2.38（Ubuntu 24.04+、Debian 13+、Fedora 39+）；更老的发行版请从源码构建 |
+| Linux x86-64 | `mdt-linux-amd64` | 0.3.9 起为静态链接 —— 任何发行版都能直接跑，不再挑 glibc 版本 |
 | macOS Apple 芯片 | `mdt-macos-arm64` | 未签名未公证，下载后执行一次 `xattr -d com.apple.quarantine mdt` |
-| Windows x64 | `mdt-win64.exe` | 或者 `mdt-0.3.8-win64.zip`（里面还带 demo） |
+| Windows x64 | `mdt-win64.exe` | 或者 `mdt-<版本>-win64.zip`（里面还带 demo） |
 
 ```sh
 # Linux
@@ -87,6 +87,13 @@ mdt 文档.md
 curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-macos-arm64
 chmod +x mdt && xattr -d com.apple.quarantine mdt 2>/dev/null
 sudo install -m 0755 mdt /usr/local/bin/mdt
+```
+
+在源码目录里 `make install` 还会装 man 手册和补全脚本：
+
+```sh
+make && sudo make install      # 默认 PREFIX=/usr/local
+man mdt                        # 同样的选项，trofi 格式
 ```
 
 mdt 不往用户目录写任何东西（没有配置文件、没有缓存）；除非文档里真的有
@@ -286,8 +293,10 @@ GitHub 的 alert 语法（`> [!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`
 * 行间公式居中并以位图绘制；过宽的公式会缩放到内容宽度以内。
 * sixel 图片只能对齐单元格（sixel 光标无法按亚单元格移动）；kitty 和 iTerm2 可以按像素放置，
   因此能精确落在文字基线上。
-* 引用式链接 `[text][ref]` 的**定义目前还没有解析**（正文会显示，但点开用的是
-  `[ref]` 里的文字），`_斜体_`/`**加粗**` 在单词内部按 CommonMark 规则处理。
+* 引用式链接的定义从 0.3.9 起会解析（`[text][ref]`、`[text][]`、`[ref]`），未定义的标签
+  保持原样文字；`_斜体_`/`**加粗**` 在单词内部按 CommonMark 规则处理。
+* 脚注用 `[^标签]` 引用、`[^标签]: 内容` 定义；定义列表用 `术语` + `: 定义` 两行写法。
+  两者都按 GitHub / Pandoc 的习惯处理，文末的注释列表会自动编号。
 * HTML 块会转换成对应的 Markdown，未知标签会丢弃但保留其中的文字。
 * Windows 上需要支持 VT 的终端（Windows Terminal、Windows 10 1703+ 的 conhost），
   阅读器会自己打开 VT 处理，所以 `cmd.exe` 也能用。kitty/iTerm2 协议是 POSIX 终端的事 ——
@@ -295,6 +304,15 @@ GitHub 的 alert 语法（`> [!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`
 * 洛谷的提示框默认折叠，指令上写 `{open}` 则默认展开；Bilibili 视频嵌入不会播放
   （这是个纯文本 + 图片的阅读器）。
 * 窗口缩放：POSIX 用 SIGWINCH，Windows 轮询 `GetConsoleScreenBufferInfo`。
+
+## 更多文档
+
+| 文件 | 内容 |
+|:--|:--|
+| [CHANGELOG.md](CHANGELOG.md) | 每个版本改了什么（0.3.8 是一次安全修复，务必看） |
+| [SECURITY.md](SECURITY.md) | 漏洞怎么报，以及 mdt 拿到文档后都做了什么 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 构建、测试、提交信息的约定 |
+| [docs/mdt.1](docs/mdt.1) | man 手册（`make install` 会装到 man1） |
 
 ## 许可
 

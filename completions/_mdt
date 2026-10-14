@@ -1,0 +1,38 @@
+#compdef mdt
+# zsh completion for mdt(1).  Installed as $fpath/_mdt by `make install`.
+_mdt() {
+  local -a opts
+  opts=(
+    '--gfx=[terminal graphics protocol]:protocol:(auto kitty iterm2 sixel none)'
+    '--math=[maths engine]:engine:(katex unicode off)'
+    '--font-px=[override the derived maths font size]:pixels:'
+    '--theme=[colour theme]:theme:(dark light nord monochrome)'
+    '--encoding=[how to read a non-UTF-8 file]:encoding:(auto utf-8 gbk gb18030 big5 cp1252 latin1 off)'
+    '--entities=[repair an HTML-escaped source]:mode:(off force)'
+    '--escapes=[backslash-escaped sources]:mode:(auto off force)'
+    '--loose=[markers written without a space]:mode:(auto off on)'
+    '--toc[open the outline panel on start]'
+    '--panels[tinted backgrounds for code/quote/table]'
+    '--terminal-bg[keep the terminal background]'
+    '--no-scrollbar[hide the scrollbar]'
+    '--line-numbers[line numbers inside code blocks]'
+    '--syntax[code highlighting on]'
+    '--no-syntax[code highlighting off]'
+    '--no-color[monochrome output]'
+    '--diag[print what mdt sees of the file and the terminal]'
+    '--compat[no graphics/sync/probes - troubleshooting]'
+    '--code-fit[code frames hug the code]'
+    '--dump=[print a text rendering]:file:_files'
+    '--screenshot=[render the screen to a PNG]:file:_files -g "*.png"'
+    '--width=[width for --dump/--screenshot]:columns:'
+    '--height=[height for --dump/--screenshot]:rows:'
+    '--cell=[cell size in pixels]:size:'
+    '--list-caps[print detected terminal capabilities]'
+    '(-h --help)'{-h,--help}'[show the help]'
+    '(-v --version)'{-v,--version}'[show the version]'
+    '*:markdown file:_files -g "*.md"'
+  )
+  _arguments -s $opts
+}
+
+_mdt "$@"
