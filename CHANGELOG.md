@@ -5,7 +5,10 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
-## [Unreleased]
+## [0.3.11] — 2026-10-14
+
+The interface now speaks Chinese as well as English, and the test suite no
+longer cares what `LANG` the machine running it has.
 
 ### Added
 
@@ -22,6 +25,10 @@ predate this file, so they are summarised from what their commits did.
   not ours to complain about.
 
 ### Changed
+
+* The test suite pins `MDT_LANG=en` for the checks that assert English strings
+  (and accepts either language where the message follows the machine), so
+  `make test` gives the same result on a Chinese machine as on an English one.
 
 * The link dialog's buttons and the outline panel title used to be hard-coded
   Chinese in an otherwise English interface ("c 复制" / "o 浏览器打开" /
@@ -210,6 +217,7 @@ Windows support (Win32 console layer, MinGW-w64 cross build, wine tests) and a
 release workflow.
 
 [Unreleased]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.9...HEAD
+[0.3.11]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.7...v0.3.8
