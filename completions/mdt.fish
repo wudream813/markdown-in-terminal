@@ -6,6 +6,7 @@ complete -c mdt -l math        -d 'maths engine' -x -a 'katex unicode off'
 complete -c mdt -l font-px     -d 'override the derived maths font size' -x
 complete -c mdt -l theme       -d 'colour theme' -x -a 'dark light nord monochrome'
 complete -c mdt -l encoding    -d 'how to read a non-UTF-8 file' -x -a 'auto utf-8 gbk gb18030 big5 cp1252 latin1 off'
+complete -c mdt -l lang        -d 'interface language' -x -a 'auto en zh'
 complete -c mdt -l entities    -d 'repair an HTML-escaped source' -x -a 'off force'
 complete -c mdt -l escapes     -d 'backslash-escaped sources' -x -a 'auto off force'
 complete -c mdt -l loose       -d 'markers written without a space' -x -a 'auto off on'

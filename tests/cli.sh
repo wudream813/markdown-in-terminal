@@ -127,6 +127,68 @@ else
   rm -rf "$CFG_DIR"
 fi
 
+echo "== the interface language (--lang, MDT_LANG, the config file, LANG) =="
+expect_message "用法: mdt" "--lang=zh speaks Chinese" --lang=zh --help
+expect_message "usage: mdt" "--lang=en speaks English" --lang=en --help
+expect_status 2 "--lang=fr is refused" --lang=fr --help
+expect_message "auto, en, zh" "the refusal lists what --lang takes" --lang=fr --help
+expect_message "需要 dark" "an option error is translated" --lang=zh --theme=bogus --dump $DOC
+expect_message "无法读取" "a file error is translated" --lang=zh --dump no-such-file-here.md
+expect_status 1 "a translated error keeps the exit status" --lang=zh --dump no-such-file-here.md
+# a locale from the environment, and --lang beating it
+if LANG=zh_CN.UTF-8 "$BIN" --help | grep -q "用法: mdt"; then
+  echo "   ok   LANG=zh_CN.UTF-8 is enough on its own"
+else
+  echo "   FAIL LANG=zh_CN.UTF-8 did not select Chinese"; exit 1
+fi
+if LANG=zh_CN.UTF-8 "$BIN" --lang=en --help | grep -q "用法"; then
+  echo "   FAIL --lang=en did not override LANG=zh_CN.UTF-8"; exit 1
+else
+  echo "   ok   --lang=en overrides LANG=zh_CN.UTF-8"
+fi
+if MDT_LANG=zh "$BIN" --help | grep -q "用法: mdt"; then
+  echo "   ok   MDT_LANG=zh works too"
+else
+  echo "   FAIL MDT_LANG=zh was ignored"; exit 1
+fi
+# an unknown MDT_LANG is a warning, not a fatal error (LANG is not ours to judge)
+if MDT_LANG=klingon "$BIN" --help 2>&1 | grep -q "not a language mdt speaks"; then
+  echo "   ok   an unknown MDT_LANG is reported"
+else
+  echo "   FAIL MDT_LANG=klingon was swallowed"; exit 1
+fi
+if [ -n "$RUN" ]; then
+  echo "   (skipped under wine: the config path would have to be a Windows path)"
+else
+  LANG_DIR=$(mktemp -d)
+  printf 'lang = zh\n' > "$LANG_DIR/config"
+  if MDT_CONFIG="$LANG_DIR/config" "$BIN" --help | grep -q "用法: mdt"; then
+    echo "   ok   the config file can set the language"
+  else
+    echo "   FAIL lang = zh in the config file was ignored"; exit 1
+  fi
+  if MDT_CONFIG="$LANG_DIR/config" "$BIN" --lang=en --help | grep -q "用法"; then
+    echo "   FAIL the config file overrode an explicit --lang"; exit 1
+  else
+    echo "   ok   --lang beats the config file"
+  fi
+  printf 'lang = klingon\n' > "$LANG_DIR/bad"
+  if MDT_CONFIG="$LANG_DIR/bad" "$BIN" --dump --width=40 "$DOC" 2>&1 >/dev/null \
+       | grep -q "unknown lang"; then
+    echo "   ok   a language mdt does not speak is reported, in English"
+  else
+    echo "   FAIL lang = klingon was swallowed"; exit 1
+  fi
+  printf 'theme = bogus\n' > "$LANG_DIR/bad2"
+  if MDT_LANG=zh MDT_CONFIG="$LANG_DIR/bad2" "$BIN" --dump --width=40 "$DOC" 2>&1 >/dev/null \
+       | grep -q "不认识的主题"; then
+    echo "   ok   a config complaint comes out in the chosen language"
+  else
+    echo "   FAIL the config warning was not translated"; exit 1
+  fi
+  rm -rf "$LANG_DIR"
+fi
+
 echo "== a closed stdout is quiet, not a signal death =="
 if [ -n "$RUN" ]; then
   echo "   (skipped under wine: this one needs a POSIX pipe)"

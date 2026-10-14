@@ -18,6 +18,7 @@ struct AppOptions {
   std::string escapes = "auto";    // auto | off | force - backslash-escaped sources
   std::string loose = "auto";      // auto | off | on - "#标题" / "-项目" without a space
   std::string encoding = "auto";   // auto | utf-8 | gbk | big5 | cp1252 | latin1 | off
+  std::string lang = "auto";       // auto | en | zh - the interface language
   bool panels = false;             // draw tinted backgrounds behind code/quote/table
   bool terminal_bg = false;        // leave the background to the terminal
   bool scrollbar = true;           // show a scrollbar when the document is taller

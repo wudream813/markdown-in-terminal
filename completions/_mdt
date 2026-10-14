@@ -8,6 +8,7 @@ _mdt() {
     '--font-px=[override the derived maths font size]:pixels:'
     '--theme=[colour theme]:theme:(dark light nord monochrome)'
     '--encoding=[how to read a non-UTF-8 file]:encoding:(auto utf-8 gbk gb18030 big5 cp1252 latin1 off)'
+    '--lang=[interface language]:language:(auto en zh)'
     '--entities=[repair an HTML-escaped source]:mode:(off force)'
     '--escapes=[backslash-escaped sources]:mode:(auto off force)'
     '--loose=[markers written without a space]:mode:(auto off on)'

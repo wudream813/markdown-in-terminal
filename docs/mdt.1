@@ -105,10 +105,19 @@ Undo Markdown backslash escapes a generator left in the text.
 Accept "#heading", "\- item" and "1.item" written without the space CommonMark
 requires.
 .TP
+.B \-\-lang=auto|en|zh
+Interface language (default: auto).  With \fBzh\fR the help text, the errors, the
+settings file's complaints and the status bar are in Chinese.  The order is
+\fB\-\-lang\fR, then \fBMDT_LANG\fR, then \fBlang = zh\fR in the settings file,
+then \fBLC_ALL\fR/\fBLC_MESSAGES\fR/\fBLANG\fR.  A language mdt does not speak is
+an error rather than a quiet fallback.  \fBzh_TW\fR and \fBzh_HK\fR get the same
+(simplified) text.
+.TP
 .B \-\-diag
 Print what mdt sees of the file (encoding, the repairs that were applied, the
 block census, the first characters as code points, the memory the document
-costs) and of the terminal.  Works without a tty, so the output can be pasted
+costs) the interface language it chose and which setting chose it, and of the
+terminal.  Works without a tty, so the output can be pasted
 into a bug report.
 .TP
 .B \-\-compat

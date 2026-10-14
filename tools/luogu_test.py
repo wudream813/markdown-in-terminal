@@ -290,7 +290,7 @@ def main():
         if pid == 0:
             env = dict(os.environ)
             env["TERM"] = "xterm-256color"
-            os.execvpe(argv[0], argv + ["--gfx=none", fixture2], env)
+            os.execvpe(argv[0], argv + ["--gfx=none", "--lang=en", fixture2], env)
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 100, 0, 0))
         acc = b""
 
@@ -315,12 +315,14 @@ def main():
 
         read_until(b"for help")
         os.write(fd, ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (lc + 1, lr + 1, lc + 1, lr + 1)).encode())
-        box = read_until(b"open in browser")
+        box = read_until(b"Link")   # the dialog's title
         plainb = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[_\]][^\x07\x1b]*(\x07|\x1b\\)?",
                         "", box.decode("utf-8", "replace"))
-        check(fails, url in plainb and "复制" in plainb and "浏览器打开" in plainb
-              and "关闭" in plainb,
-              "clicking a link pops a dialog with Chinese copy/open/close buttons")
+        # the labels follow the interface language, so pin it (the default is
+        # whatever LANG says) and assert the English set
+        check(fails, url in plainb and "copy" in plainb and "open" in plainb
+              and "close" in plainb,
+              "clicking a link pops a dialog with copy/open/close buttons")
         os.write(fd, b"c")
         clip = read_until(b"]52;c;")
         b64 = base64.b64encode(url.encode()).decode()
@@ -333,7 +335,7 @@ def main():
         os.write(fd, b"\x1b")
         read_until(b"for help", 3.0)
         os.write(fd, click)
-        hint = "浏览器打开".encode()
+        hint = b"Esc close"
         again = read_until(hint, 8.0)   # wine can be slow
         if hint not in again:
             os.write(fd, click)
@@ -345,7 +347,7 @@ def main():
             import unicodedata
             return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in t)
 
-        labels = ["c 复制", "o 浏览器打开", "Esc 关闭"]
+        labels = ["c copy", "o open", "Esc close"]
         uw = dw(url)
         pw = min(100 - 4, max(46, uw + 6))
         ulines = max(1, -(-uw // (pw - 4)))
@@ -365,8 +367,8 @@ def main():
         os.write(fd, ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (bx[2] + 2, by + 1, bx[2] + 2, by + 1)).encode())
         read_until(b"for help", 2.0)
         os.write(fd, ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (lc + 1, lr + 1, lc + 1, lr + 1)).encode())
-        again2 = read_until("浏览器打开".encode(), 6.0)
-        check(fails, "浏览器打开" in again2.decode("utf-8", "replace"),
+        again2 = read_until("Esc close".encode(), 6.0)
+        check(fails, "Esc close" in again2.decode("utf-8", "replace"),
               "the close button dismisses the dialog (a link click reopens it)")
         os.write(fd, b"\x1b")
         read_until(b"for help", 2.0)
@@ -376,7 +378,7 @@ def main():
         # just like it can swallow a bare ESC - real Windows Terminal does)
         if not wine:
             os.write(fd, ("\x1b[<0;%d;%dM\x1b[<0;%d;%dm" % (lc + 1, lr + 1, lc + 1, lr + 1)).encode())
-            read_until("浏览器打开".encode(), 4.0)
+            read_until("Esc close".encode(), 4.0)
             mov = lambda c, r: ("\x1b[<35;%d;%dM" % (c, r)).encode()
             os.write(fd, mov(bx[0] + 2, by + 1))
             hov = read_until(b"\x00never", 1.2)

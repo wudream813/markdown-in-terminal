@@ -101,6 +101,26 @@ out4 = run([BIN, "--gfx=iterm2", "demo/demo.md"], {"TERM": "xterm-256color", "TE
 if b"\x1b]1337;File=" not in out4: fails.append("iterm2: no inline image sequence")
 print("iterm2 run: %d bytes, %d inline images" % (len(out4), out4.count(b"\x1b]1337;File=")))
 
+# 5. the interface in Chinese: --lang=zh has to reach the status bar, the search
+#    feedback and the help overlay, not just --help
+out5 = run([BIN, "--lang=zh", "demo/demo.md"], XTERM, [b"/math\r", b"n", b"t", b"?", b"\x1b", b"q"])
+text5 = out5.decode("utf-8", "replace")
+for want, what in [("查看帮助", "the status bar"),
+                   ("匹配", "the search result"),
+                   ("主题", "the theme switch"),
+                   ("终端里的 Markdown", "the help overlay")]:
+    if want not in text5:
+        fails.append("zh: %s is not translated (no %r in the pty output)" % (what, want))
+print("zh run: %d bytes, %d translated strings found"
+      % (len(out5), sum(1 for w in ("查看帮助", "匹配", "主题", "终端里的 Markdown") if w in text5)))
+
+# 6. ... and English stays English
+out6 = run([BIN, "--lang=en", "demo/demo.md"], XTERM, [b"/math\r", b"?", b"\x1b", b"q"])
+text6 = out6.decode("utf-8", "replace")
+if "for help" not in text6 or "mdt - markdown in the terminal" not in text6:
+    fails.append("en: --lang=en did not keep the interface English")
+print("en run: %d bytes" % len(out6))
+
 if fails:
     print("\nFAIL:")
     for f in fails: print("  -", f)

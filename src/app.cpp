@@ -1,6 +1,7 @@
 // app.cpp : the interactive reader (event loop, outline panel, search, status bar).
 #include "app.h"
 #include "encoding.h"
+#include "i18n.h"
 
 #include <algorithm>
 #include <cmath>
@@ -30,7 +31,12 @@
 namespace mdt {
 
 // --------------------------------------------------------------- themes -----
-static const char* kLinkBtn[3] = {"c 复制", "o 浏览器打开", "Esc 关闭"};
+// The three buttons of the link dialog: same keys in both languages, different
+// words - and the dialog is measured around them, so they have to be swapped
+// before anything is drawn.
+static const char* const kLinkBtnEn[3] = {"c copy", "o open", "Esc close"};
+static const char* const kLinkBtnZh[3] = {"c 复制", "o 浏览器打开", "Esc 关闭"};
+static const char* const* link_buttons() { return language() == Lang::Zh ? kLinkBtnZh : kLinkBtnEn; }
 
 // Geometry of the link dialog, shared by the painter, the image clipper and
 // the mouse hit test so the buttons land exactly where they are drawn.
@@ -50,7 +56,7 @@ static LinkDlg link_dialog_geom(int vcols, int vrows, const std::string& url) {
   g.by = g.py + 3 + g.ulines;
   int total = 4;  // two gaps of two cells
   for (int b = 0; b < 3; b++) {
-    g.bw[b] = (int)str_width(kLinkBtn[b]) + 2;
+    g.bw[b] = (int)str_width(link_buttons()[b]) + 2;
     total += g.bw[b];
   }
   int x = g.px + std::max(2, (g.pw - total) / 2);
@@ -189,7 +195,7 @@ struct App {
 bool App::load_file(const std::string& path, std::string* err) {
   std::string text, why;
   if (!read_source(path, opt.encoding, text, &why, &decoding)) {
-    if (err) *err = why.empty() ? ("cannot read file: " + path) : why;
+    if (err) *err = why.empty() ? (std::string(tr("cannot read file: ", "无法读取文件：")) + path) : why;
     return false;
   }
   file = path;
@@ -260,9 +266,10 @@ void App::do_search(const std::string& q) {
     }
   }
   if (search_hits.empty()) {
-    set_status("no match: " + q);
+    set_status(tr("no match: ", "没有匹配：") + q);
   } else {
-    set_status(fmt("%d match(es) for '%s'", (int)search_hits.size(), q.c_str()));
+    set_status(fmt(tr("%d match(es) for '%s'", "找到 %d 处匹配：'%s'"), (int)search_hits.size(),
+                   q.c_str()));
     view.open_fold_path(search_hits[0].path);
     view.scroll_to(std::max(0, view.row_of_block(search_hits[0].block) - 2));
   }
@@ -270,7 +277,7 @@ void App::do_search(const std::string& q) {
 
 void App::jump_to_next_hit(int dir) {
   if (search_hits.empty()) {
-    set_status("no active search");
+    set_status(tr("no active search", "没有正在进行的搜索"));
     return;
   }
   int cur_row = view.scroll_top();
@@ -284,7 +291,8 @@ void App::jump_to_next_hit(int dir) {
   else next = (cur <= 0) ? (int)search_hits.size() - 1 : cur - 1;
   view.open_fold_path(search_hits[(size_t)next].path);
   view.scroll_to(std::max(0, view.row_of_block(search_hits[(size_t)next].block) - 2));
-  set_status(fmt("match %d/%d: %s", next + 1, (int)search_hits.size(), search_hits[(size_t)next].ctx.c_str()), 4);
+  set_status(fmt(tr("match %d/%d: %s", "第 %d/%d 处：%s"), next + 1, (int)search_hits.size(),
+                 search_hits[(size_t)next].ctx.c_str()), 4);
 }
 
 // ------------------------------------------------------------- rendering ----
@@ -329,7 +337,7 @@ void App::render() {
     int px = vcols - pw;
     RGB pbg = theme.status_bg;
     scr.fill_rect(px, 0, pw, vrows, pbg);
-    scr.put_str(px + 2, 0, "OUTLINE", theme.heading[1], pbg, A_BOLD);
+    scr.put_str(px + 2, 0, tr("OUTLINE", "大纲"), theme.heading[1], pbg, A_BOLD);
     int visible = vrows - 2;
     if (toc_sel < toc_off) toc_off = toc_sel;
     if (toc_sel >= toc_off + visible) toc_off = toc_sel - visible + 1;
@@ -350,17 +358,17 @@ void App::render() {
     RGB pbg = theme.status_bg;
     scr.fill_rect(g.px, g.py, g.pw, g.ph, pbg);
     scr.box_rounded(g.px, g.py, g.pw, g.ph, theme.code_frame, pbg);
-    scr.put_str(g.px + 2, g.py + 1, " 链接 ", theme.muted, pbg);
+    scr.put_str(g.px + 2, g.py + 1, tr(" Link ", " 链接 "), theme.muted, pbg);
     for (int k = 0; k < g.ulines; k++) {
       size_t b = (size_t)k * (g.pw - 4);
       scr.put_str(g.px + 2, g.py + 2 + k, link_url.substr(b, g.pw - 4), theme.link, pbg);
     }
     for (int b = 0; b < 3; b++)  // the keys double as clickable buttons
       if (b == link_hover)       // hovered: lit up instead of reversed
-        scr.put_str(g.bx[b], g.by, std::string(" ") + kLinkBtn[b] + " ", theme.link, pbg,
+        scr.put_str(g.bx[b], g.by, std::string(" ") + link_buttons()[b] + " ", theme.link, pbg,
                     A_BOLD | A_UNDER);
       else
-        scr.put_str(g.bx[b], g.by, std::string(" ") + kLinkBtn[b] + " ", pbg, theme.link,
+        scr.put_str(g.bx[b], g.by, std::string(" ") + link_buttons()[b] + " ", pbg, theme.link,
                     A_REVERSE);
   }
   if (help_open) {
@@ -369,28 +377,50 @@ void App::render() {
     RGB pbg = theme.status_bg;
     scr.fill_rect(px, py, pw, ph, pbg);
     scr.box_rounded(px, py, pw, ph, theme.code_frame, pbg);
-    const char* lines[] = {
-      "mdt - markdown in the terminal",
-      "",
-      "  j / k, arrows     scroll one line",
-      "  d / u             half page       space / b   page",
-      "  g / G             top / bottom    J / K       next / prev heading",
-      "  Tab               toggle outline  Enter       jump to heading",
-      "  /                 search          n / N       next / prev match",
-      "  o                 open first link in the browser",
-      "  click a link      dialog with clickable copy / open / close buttons",
-      "  click a \u25b8 title   fold or unfold a callout box ({open} starts open)",
-      "  e                 export the document text to clipboard",
-      "  r                 reload file     t           cycle theme",
-      "  R                 force redraw    m           toggle maths rendering",
-      "  ? / Esc           close this help q / Ctrl-C  quit",
-      "",
-      "  Images and formulas are drawn with the terminal graphics protocol",
-      "  (kitty / iTerm2 / sixel); maths is typeset by the embedded TeX engine.",
+    static const char* const lines[2][17] = {
+        {
+            "mdt - markdown in the terminal",
+            "",
+            "  j / k, arrows     scroll one line",
+            "  d / u             half page       space / b   page",
+            "  g / G             top / bottom    J / K       next / prev heading",
+            "  Tab               toggle outline  Enter       jump to heading",
+            "  /                 search          n / N       next / prev match",
+            "  o                 open first link in the browser",
+            "  click a link      dialog with clickable copy / open / close buttons",
+            "  click a \u25b8 title   fold or unfold a callout box ({open} starts open)",
+            "  e                 export the document text to clipboard",
+            "  r                 reload file     t           cycle theme",
+            "  R                 force redraw    m           toggle maths rendering",
+            "  ? / Esc           close this help q / Ctrl-C  quit",
+            "",
+            "  Images and formulas are drawn with the terminal graphics protocol",
+            "  (kitty / iTerm2 / sixel); maths is typeset by the embedded TeX engine.",
+        },
+        {
+            "mdt - 终端里的 Markdown 阅读器",
+            "",
+            "  j / k、方向键      上下滚动一行",
+            "  d / u              半页            space / b   整页",
+            "  g / G              开头 / 结尾     J / K       上/下一个标题",
+            "  Tab                开关大纲        Enter       跳到标题",
+            "  /                  搜索            n / N       下一个/上一个匹配",
+            "  o                  用浏览器打开文档里的第一个链接",
+            "  点链接             弹出「复制 / 打开 / 关闭」对话框",
+            "  点 \u25b8 标题        折叠或展开提示框（{open} 表示默认展开）",
+            "  e                  把全文复制到剪贴板",
+            "  r                  重新读取文件    t           循环配色主题",
+            "  R                  强制重绘        m           开关公式排版",
+            "  ? / Esc            关闭本帮助      q / Ctrl-C  退出",
+            "",
+            "  图片和公式用终端图形协议画出来（kitty / iTerm2 / sixel），",
+            "  公式由内嵌的 TeX 引擎排版。",
+        },
     };
-    int n = (int)(sizeof(lines) / sizeof(lines[0]));
+    const int n = 17;
+    int li = language() == Lang::Zh ? 1 : 0;
     for (int i = 0; i < n && i + 2 < ph; i++)
-      scr.put_str(px + 2, py + 1 + i, lines[i], i == 0 ? theme.heading[1] : theme.fg, pbg,
+      scr.put_str(px + 2, py + 1 + i, lines[li][i], i == 0 ? theme.heading[1] : theme.fg, pbg,
                   i == 0 ? A_BOLD : 0);
   }
 
@@ -538,8 +568,8 @@ void App::run() {
     // link into a command.  Closed links are refused by the scheme check.
     bool ok = plat::open_url(url);
     if (!term.mode_intact()) term.reassert_mode();  // the browser may share the tty
-    if (ok) set_status("已打开: " + url);
-    else set_status("打开失败 (链接未打开): " + url);
+    if (ok) set_status(tr("opened: ", "已打开：") + url);
+    else set_status(tr("could not open the link: ", "打开失败（链接未打开）：") + url);
   };
   // apply_mouse folds an event into the view and says whether anything moved.
   auto apply_mouse = [&](const Terminal::KeyEvent& e) -> bool {
@@ -583,7 +613,7 @@ void App::run() {
             if (e.mx >= g.bx[b] && e.mx < g.bx[b] + g.bw[b]) {
               if (b == 0) {
                 term.set_clipboard(link_url);
-                set_status("已复制: " + link_url, 2.5);
+                set_status(tr("copied: ", "已复制：") + link_url, 2.5);
               } else if (b == 1) {
                 open_url_in_browser(link_url);
                 link_open = false;
@@ -649,8 +679,8 @@ void App::run() {
     bool pending = view.images_pending();
     if (pending != images_pending_) {
       images_pending_ = pending;
-      if (pending) set_status("loading images…", 3600);
-      else set_status("images loaded", 1.5);
+      if (pending) set_status(tr("loading images…", "正在加载图片…"), 3600);
+      else set_status(tr("images loaded", "图片加载完成"), 1.5);
       needs_frame = true;
     }
     Terminal::KeyEvent e = term.read_event(120);
@@ -690,7 +720,7 @@ void App::run() {
         link_open = false;
       } else if (e.type == Terminal::KeyEvent::Char && ch == 'c') {
         term.set_clipboard(link_url);  // OSC 52: the terminal puts it on the clipboard
-        set_status("已复制: " + link_url, 2.5);
+        set_status(tr("copied: ", "已复制：") + link_url, 2.5);
       } else if (key == Terminal::K_ENTER ||
                  (e.type == Terminal::KeyEvent::Char && ch == 'o')) {
         open_url_in_browser(link_url);
@@ -749,7 +779,7 @@ void App::run() {
         if (best) {
           view.open_fold_path(best->path);
           view.scroll_to(std::max(0, view.row_of_block(best->block) - 1));
-        } else set_status("last heading");
+        } else set_status(tr("last heading", "已经是最后一个标题"));
         break;
       }
       case 'K': {
@@ -759,7 +789,7 @@ void App::run() {
         if (best) {
           view.open_fold_path(best->path);
           view.scroll_to(std::max(0, view.row_of_block(best->block) - 1));
-        } else set_status("first heading");
+        } else set_status(tr("first heading", "已经是第一个标题"));
         break;
       }
       case '/': search_mode = true; search_query.clear(); break;
@@ -767,19 +797,20 @@ void App::run() {
       case 'N': jump_to_next_hit(-1); break;
       case 'o': {
         const auto& links = view.doc().links;
-        if (links.empty()) set_status("no links in this document");
+        if (links.empty()) set_status(tr("no links in this document", "这份文档里没有链接"));
         else open_url_in_browser(links[0].url);
         break;
       }
       case 'e': {
         std::string text = view.plain_text();
         term.set_clipboard(text);
-        set_status(fmt("copied %d bytes to the clipboard", (int)text.size()));
+        set_status(fmt(tr("copied %d bytes to the clipboard", "已把 %d 字节复制到剪贴板"),
+                       (int)text.size()));
         break;
       }
       case 'r': {
         std::string err;
-        if (load_file(file, &err)) set_status("reloaded");
+        if (load_file(file, &err)) set_status(tr("reloaded", "已重新读取"));
         else set_status(err);
         break;
       }
@@ -789,7 +820,7 @@ void App::run() {
         ti = (ti + 1) % 4;
         theme = theme_by_name(names[ti]);
         view.set_theme(theme);
-        set_status(std::string("theme: ") + names[ti]);
+        set_status(std::string(tr("theme: ", "主题：")) + names[ti]);
         break;
       }
       case 'm': {
@@ -797,8 +828,10 @@ void App::run() {
         ro.text_math = !ro.text_math;
         view.set_options(ro);
         view.relayout();
-        set_status(ro.text_math ? "maths: plain Unicode (press m to typeset)"
-                                : "maths: typeset via the embedded TeX engine");
+        set_status(ro.text_math ? tr("maths: plain Unicode (press m to typeset)",
+                                     "公式：纯 Unicode（按 m 排版）")
+                                : tr("maths: typeset via the embedded TeX engine",
+                                     "公式：用内嵌的 TeX 引擎排版"));
         break;
       }
       case 'R': {
@@ -841,7 +874,10 @@ static bool read_raw(const std::string& path, std::string& raw, std::string* err
   // (exit status 0), which reads like the file was empty rather than wrong.
   std::string why;
   if (!read_file(path, raw, &why)) {
-    if (err) *err = plat::is_directory(path) ? (path + " is a directory, not a file") : why;
+    if (err)
+      *err = plat::is_directory(path)
+                 ? (path + tr(" is a directory, not a file", " 是目录，不是文件"))
+                 : why;
     return false;
   }
   return true;
@@ -882,7 +918,7 @@ int run_app(const AppOptions& opts) {
     return 0;
   }
   if (opts.files.empty()) {
-    fprintf(stderr, "mdt: no input file\n\n");
+    fprintf(stderr, tr("mdt: no input file\n\n", "mdt: 没有输入文件\n\n"));
     print_usage();
     return 2;
   }
@@ -921,7 +957,9 @@ int run_app(const AppOptions& opts) {
 
   app.math.init(opts.math == "katex", &err);
   if (opts.math == "katex" && !app.math.has_js())
-    fprintf(stderr, "mdt: maths engine unavailable (%s), using unicode\n", err.c_str());
+    fprintf(stderr, tr("mdt: maths engine unavailable (%s), using unicode\n",
+                       "mdt: 公式引擎不可用（%s），改用 Unicode\n"),
+            err.c_str());
 
   mdt::set_compat_mode(opts.compat);
   if (!app.term.init(opts.compat ? "none" : opts.gfx)) return 1;
@@ -969,16 +1007,17 @@ int run_app(const AppOptions& opts) {
   // garbage in the status bar).
   std::string encoding_note;
   if (app.decoding.converted)
-    encoding_note = fmt("  |  %s source converted to UTF-8", app.decoding.encoding.c_str());
+    encoding_note = fmt(tr("  |  %s source converted to UTF-8", "  |  已把 %s 源文件转成 UTF-8"),
+                        app.decoding.encoding.c_str());
   else if (!app.decoding.note.empty())
     encoding_note = fmt("  |  %s", app.decoding.note.c_str());
-  app.set_status(fmt("%s%s%s  |  ? for help",
+  app.set_status(fmt(tr("%s%s%s  |  ? for help", "%s%s%s  |  ? 查看帮助"),
                      gfx_name(app.term.caps.gfx),
                      encoding_note.c_str(),
                      app.view.doc().entities_unescaped
-                          ? "  |  decoded HTML entities"
+                          ? tr("  |  decoded HTML entities", "  |  已解码 HTML 实体")
                           : (app.view.doc().backslashes_removed > 0
-                                 ? "  |  removed backslash escapes"
+                                 ? tr("  |  removed backslash escapes", "  |  已去掉反斜杠转义")
                                  : "")), 5);
   app.run();
   app.term.shutdown();
@@ -1086,6 +1125,7 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
     if (v && *v) envs += std::string(" ") + n + "=" + v;
   }
   printf("  config          : %s\n", opt.config_path.empty() ? "(none)" : opt.config_path.c_str());
+  printf("  language        : %s (%s)\n", lang_name(language()), language_source().c_str());
   printf("  theme           : %s%s\n", opt.theme.c_str(), opt.no_color ? "  (NO_COLOR/--no-color)" : "");
   printf("  terminal env    :%s\n", envs.empty() ? " (none set)" : envs.c_str());
   int tc = plat::stdout_is_tty() ? 1 : 0;
@@ -1233,7 +1273,7 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
     printf("%s", out.c_str());
   } else {
     FILE* f = plat::open_file(opt.dump, "wb");
-    if (!f) { *err = "cannot write " + opt.dump; return false; }
+    if (!f) { *err = std::string(tr("cannot write ", "无法写入 ")) + opt.dump; return false; }
     fwrite(out.data(), 1, out.size(), f);
     fclose(f);
     printf("wrote %s (%d rows x %d cols)\n", opt.dump.c_str(), rows, width);
@@ -1354,7 +1394,7 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   auto png = png_encode(img.rgba.data(), img.w, img.h);
   std::string out = opt.screenshot;
   FILE* f = plat::open_file(out, "wb");
-  if (!f) { *err = "cannot write " + out; return false; }
+  if (!f) { *err = std::string(tr("cannot write ", "无法写入 ")) + out; return false; }
   fwrite(png.data(), 1, png.size(), f);
   fclose(f);
   printf("wrote %s (%dx%d px, font %s)\n", out.c_str(), img.w, img.h, fr.path().c_str());
@@ -1362,7 +1402,8 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
 }
 
 void print_usage() {
-  printf(
+  fputs(
+      tr(
       "mdt - read Markdown in the terminal, with maths and images\n"
       "\n"
       "usage: mdt [options] <file.md>\n"
@@ -1385,10 +1426,14 @@ void print_usage() {
       "                                       how to read a non-UTF-8 (ANSI) file (default: auto)\n"
       "  --entities=off|force                 repair a HTML-escaped source (default: off)\n"
       "  --escapes=auto|off|force             backslash-escaped sources (default: auto)\n"
-      "  --loose=auto|off|on                  \"#标题\" and \"-项目\" without a space (default: auto)\n"
+      "  --loose=auto|off|on                  \"#title\" and \"-item\" without a space (default: auto)\n"
       "  --diag                               print what mdt sees of the file/terminal\n"
       "  --compat                             no graphics/sync/protocol probes (troubleshooting)\n"
       "  --code-fit                           code frames hug the code instead of the page\n"
+      "\n"
+      "language\n"
+      "  --lang=auto|en|zh                    interface language, also \"lang = zh\" in the\n"
+      "                                       config file (default: auto, follows LANG)\n"
       "\n"
       "non interactive\n"
       "  --dump[=file]                        print a text rendering (no graphics)\n"
@@ -1398,11 +1443,58 @@ void print_usage() {
       "  -h, --help / -v, --version\n"
       "\n"
       "keys\n"
-          "  wheel        scroll           click on the scrollbar   jump through the file\n"
+      "  wheel        scroll           click on the scrollbar   jump through the file\n"
       "  j k down up   scroll        space b      page        g G     top / bottom\n"
       "  J K           headings      Tab          outline     / n N   search\n"
       "  t             theme         r reload     o       open link      ? help\n"
-      "  e             copy text     m            maths on/off    q quit\n");
+      "  e             copy text     m            maths on/off    q quit\n"
+      ,
+      "mdt - 在终端里阅读 Markdown，公式和图片都是画出来的\n"
+      "\n"
+      "用法: mdt [选项] <文件.md>\n"
+      "\n"
+      "图形\n"
+      "  --gfx=auto|kitty|iterm2|sixel|none   终端图形协议（默认 auto）\n"
+      "  --math=katex|unicode|off             公式引擎（默认 katex，内嵌）\n"
+      "  --no-color                           单色输出\n"
+      "  --line-numbers                       代码块里显示行号\n"
+      "  --no-syntax                          代码块不做语法高亮\n"
+      "  --font-px=N                          覆盖推导出来的公式字号\n"
+      "\n"
+      "外观\n"
+      "  --theme=dark|light|nord|monochrome   配色主题（默认 dark）\n"
+      "  --toc                                启动时展开大纲面板\n"
+      "  --panels                             代码/引用/表格用底色块\n"
+      "  --terminal-bg                        保留终端自己的背景色\n"
+      "  --no-scrollbar                       不显示滚动条\n"
+      "  --encoding=auto|utf-8|gbk|big5|cp1252|off\n"
+      "                                       怎么读非 UTF-8（ANSI）文件（默认 auto）\n"
+      "  --entities=off|force                 修复被 HTML 转义的源文件（默认 off）\n"
+      "  --escapes=auto|off|force             反斜杠转义的源文件（默认 auto）\n"
+      "  --loose=auto|off|on                  \"#标题\"、\"-项目\" 不带空格（默认 auto）\n"
+      "  --diag                               打印 mdt 看到的文件/终端信息\n"
+      "  --compat                             不做图形/同步/协议探测（排障用）\n"
+      "  --code-fit                           代码框贴合代码，而不是整页宽\n"
+      "\n"
+      "语言\n"
+      "  --lang=auto|en|zh                    界面语言，也可以写进配置文件：\n"
+      "                                       lang = zh（默认 auto，跟随 LANG）\n"
+      "\n"
+      "非交互\n"
+      "  --dump[=文件]                        输出纯文本渲染结果（不带图形）\n"
+      "  --screenshot=out.png                 把屏幕渲染成 PNG\n"
+      "  --width=N --height=N                 --dump / --screenshot 的尺寸\n"
+      "  --list-caps                          打印探测到的终端能力\n"
+      "  -h, --help / -v, --version\n"
+      "\n"
+      "按键\n"
+      "  滚轮         滚动          点滚动条     在文件里跳转\n"
+      "  j k 下 上    滚动        space b      翻页        g G     开头 / 结尾\n"
+      "  J K          标题        Tab          大纲        / n N   搜索\n"
+      "  t            主题        r 重新读取    o           打开链接      ? 帮助\n"
+      "  e            复制文本    m            公式开关    q 退出\n"
+      ),
+      stdout);
 }
 
 }  // namespace mdt

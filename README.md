@@ -457,7 +457,28 @@ the final geometry is exact.
 | `--code-fit` | code frames hug the code instead of spanning the page |
 | `--cell=WxH` | cell size in pixels for `--dump`/`--screenshot` (default 9x19), so a screenshot can match your terminal exactly |
 | `--compat` | no graphics, no DEC 2026 synchronized output, no keyboard-protocol push, no capability probe - for terminals whose support for those is broken |
-| `--diag` | print what mdt sees of the file (encoding, escapes, block census, first characters) and of the terminal; works without a tty |
+| `--diag` | print what mdt sees of the file (encoding, escapes, block census, first characters), the interface language it picked and why, and what it sees of the terminal; works without a tty |
+| `--lang=auto\|en\|zh` | interface language (default `auto`). `--help`, the errors and the status bar come out in Chinese; so does `MDT_LANG=zh` or `lang = zh` in the settings file. `--lang=fr` is refused instead of silently doing nothing |
+
+### Interface language
+
+`--help`, the errors on the command line, the settings file's complaints and the
+status bar of the interactive reader exist in English and in Chinese (simplified).
+The language is decided in this order:
+
+```sh
+mdt --lang=zh doc.md          # 1. the command line
+MDT_LANG=zh mdt doc.md        # 2. mdt's own variable
+lang = zh                     # 3. the settings file, see below
+LANG=zh_CN.UTF-8 mdt doc.md   # 4. the locale
+```
+
+so `mdt` starts speaking Chinese on its own on a Chinese system, and `--lang=en`
+gets English back when you want it. A language mdt does not know (`--lang=fr`) is
+an error, not a silent fallback; an unknown `MDT_LANG` is a warning; an unknown
+`LANG` is simply not ours to complain about. `--diag` prints which of the four
+won. `zh_TW`/`zh_HK` get the same text - one Chinese, the simplified one; there
+is no Traditional translation yet.
 
 ### Settings file
 

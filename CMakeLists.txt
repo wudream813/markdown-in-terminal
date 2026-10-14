@@ -59,6 +59,7 @@ set(MDT_SRC
   src/font.cpp
   src/util.cpp
   src/encoding.cpp
+  src/i18n.cpp
   src/generated/assets_js.cpp
 )
 

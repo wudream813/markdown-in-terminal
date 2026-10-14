@@ -5,6 +5,30 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [Unreleased]
+
+### Added
+
+* The interface speaks Chinese as well as English.  `--lang=zh`, `MDT_LANG=zh`,
+  `lang = zh` in the settings file, or nothing at all on a machine whose `LANG`
+  says `zh_CN.UTF-8`.  Translated: `--help`, the errors from the command line
+  and from files, the settings file's complaints, and - in the reader - the
+  status bar, the `?` help overlay, the outline panel title and the link dialog.
+  `--diag` and `--list-caps` stay English on purpose: they end up in bug
+  reports and a report is easier to read in one language.  `zh_TW`/`zh_HK` get
+  the same text (one Chinese, the simplified one).  A language mdt does not
+  speak is an error (`--lang=fr` exits 2, listing what it does take) rather than
+  a silent fallback; an unknown `MDT_LANG` is a warning; an unknown `LANG` is
+  not ours to complain about.
+
+### Changed
+
+* The link dialog's buttons and the outline panel title used to be hard-coded
+  Chinese in an otherwise English interface ("c 复制" / "o 浏览器打开" /
+  "Esc 关闭"); they follow the language now.
+* `--diag` reports the interface language and which of the four settings chose
+  it, so a bug report says why the reader speaks what it speaks.
+
 ## [0.3.10] — 2026-10-14
 
 A packaging release: nothing about how the reader draws changed, but it is now

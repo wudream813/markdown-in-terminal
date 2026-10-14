@@ -4,7 +4,7 @@ _mdt() {
   local cur prev opts
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  opts="--gfx --math --font-px --theme --encoding --entities --escapes --loose
+  opts="--gfx --math --font-px --theme --encoding --entities --escapes --loose --lang
         --toc --panels --terminal-bg --no-scrollbar --line-numbers --syntax
         --no-syntax --no-color --diag --compat --code-fit --dump --screenshot
         --width --height --cell --list-caps --help --version -h -v"
@@ -14,6 +14,7 @@ _mdt() {
     --math)     COMPREPLY=($(compgen -W "katex unicode off" -- "$cur")); return 0 ;;
     --theme)    COMPREPLY=($(compgen -W "dark light nord monochrome" -- "$cur")); return 0 ;;
     --encoding) COMPREPLY=($(compgen -W "auto utf-8 gbk gb18030 big5 cp1252 latin1 off" -- "$cur")); return 0 ;;
+    --lang) COMPREPLY=($(compgen -W "auto en zh" -- "$cur")); return 0 ;;
     --entities) COMPREPLY=($(compgen -W "off force" -- "$cur")); return 0 ;;
     --escapes)  COMPREPLY=($(compgen -W "auto off force" -- "$cur")); return 0 ;;
     --loose)    COMPREPLY=($(compgen -W "auto off on" -- "$cur")); return 0 ;;
@@ -26,6 +27,7 @@ _mdt() {
     --math=*)     COMPREPLY=($(compgen -W "katex unicode off" -- "${cur#*=}" | sed 's/^/--math=/')); return 0 ;;
     --theme=*)    COMPREPLY=($(compgen -W "dark light nord monochrome" -- "${cur#*=}" | sed 's/^/--theme=/')); return 0 ;;
     --encoding=*) COMPREPLY=($(compgen -W "auto utf-8 gbk gb18030 big5 cp1252 latin1 off" -- "${cur#*=}" | sed 's/^/--encoding=/')); return 0 ;;
+    --lang=*) COMPREPLY=($(compgen -W "auto en zh" -- "${cur#*=}" | sed 's/^/--lang=/')); return 0 ;;
     --*)          COMPREPLY=($(compgen -W "$opts" -- "$cur")); return 0 ;;
   esac
 

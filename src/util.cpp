@@ -1,3 +1,4 @@
+#include "i18n.h"
 #include "util.h"
 
 #if defined(_WIN32)
@@ -340,7 +341,7 @@ bool file_exists(const std::string& path) { return plat::regular_file_exists(pat
 bool read_file(const std::string& path, std::string& out, std::string* err) {
   FILE* f = plat::open_file(path, "rb");  // Windows: the path is UTF-8
   if (!f) {
-    if (err) *err = "cannot read " + path;
+    if (err) *err = std::string(tr("cannot read ", "无法读取 ")) + path;
     return false;
   }
   out.clear();
@@ -361,7 +362,9 @@ bool read_file(const std::string& path, std::string& out, std::string* err) {
     if (out.size() > kMaxReadBytes) {  // /dev/zero, a runaway FIFO, ...
       fclose(f);
       out.clear();
-      if (err) *err = path + " is larger than " + std::to_string(kMaxReadBytes >> 20) + " MB";
+      if (err)
+        *err = path + tr(" is larger than ", " 超过 ") + std::to_string(kMaxReadBytes >> 20) +
+               tr(" MB", " MB");
       return false;
     }
   }
