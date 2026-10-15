@@ -2,7 +2,7 @@
 # Prebuilt -bin package: the release binary is statically linked, so there is
 # nothing to compile and nothing to link against at run time.
 pkgname=mdt-bin
-pkgver=0.3.12
+pkgver=0.3.13
 pkgrel=1
 pkgdesc='Terminal Markdown reader: typeset maths, images, syntax highlighting'
 arch=('x86_64')
@@ -25,8 +25,8 @@ source=("mdt-linux-amd64::$_gh/releases/download/v$pkgver/mdt-linux-amd64"
         "_mdt::$_raw/v$pkgver/completions/_mdt"
         "mdt.fish::$_raw/v$pkgver/completions/mdt.fish"
         "LICENSE::$_raw/v$pkgver/LICENSE")
-sha256sums=('954fd7ef9b7eec1909c4dad216bb8fbf060a2fa463b035f89cbbae56bc6f4521'
-            '3d9eb40584afc6ac1d76dc37fa1f95c786f02a6c4e4049ad22e0ea60594e90a3'
+sha256sums=('f6d24cc4fe43d8644101c6d7e253bfb0ba38053ae05b7e1f40456c59ba19609b'
+            'b06e568e5579cfcf9f38ade425ca552aed8db8998bbcaf6dfeec6212bcc7928f'
             '2ef8c687a3c17e67c16d8fd50104efdd363ce1c4b6a51eba74dc035b43e0439d'
             '0d46d75e85ce6b35c1c08457da8e166ad8c38595ea40619e3b98c3a332fe0f70'
             '6b5bf1b53ef2cd41afe8c0e81e97fd388a6c1fac9dd4b3558a9f295a6781a5c0'
