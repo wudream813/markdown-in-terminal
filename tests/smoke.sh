@@ -294,6 +294,7 @@ python3 tools/injection_test.py "$BIN" || exit 1
 
 echo "== protocols (pty) =="
 python3 tools/pty_test.py "$BIN"
+python3 tools/outline_test.py "$BIN" || exit 1   # issue #2: a long outline
 
 echo "== resize =="
 python3 tools/resize_test.py "$BIN"

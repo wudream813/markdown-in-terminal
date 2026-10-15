@@ -5,6 +5,24 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [Unreleased]
+
+### Fixed
+
+* An outline longer than the panel was only partly reachable (issue #2: thirty
+  headings in a twenty-row terminal).  The panel kept showing the top of the
+  list while the document scrolled on, and the selection could only be moved
+  with a mouse - so the tail of the list could not be selected or jumped to at
+  all.  The panel now behaves like a list: `J`/`K` walk it when it is open
+  (without it they still jump through the document), the wheel over it walks it
+  three entries at a time, and `Enter` jumps to the selection.
+
+### Added
+
+* The outline panel says how long it is: a `12/47` counter in the header and a
+  `↑`/`↓` arrow in its right margin when the list continues past the panel.
+  Before, a panel too short for the list looked exactly like the whole list.
+
 ## [0.3.11] — 2026-10-14
 
 The interface now speaks Chinese as well as English, and the test suite no

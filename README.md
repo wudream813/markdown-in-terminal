@@ -349,8 +349,8 @@ Keys
 | `j` `k` `↓` `↑` | scroll a line |
 | `space` `b` / `d` `u` | page / half page |
 | `g` `G` | top / bottom |
-| `J` `K` | next / previous heading |
-| `Tab` | outline panel (Enter or click jumps to a heading) |
+| `J` `K` | next / previous heading — inside the outline panel they walk the list instead, and `Enter` jumps to the selection |
+| `Tab` | outline panel. A list taller than the panel says so (a `↓`/`↑` arrow and a `12/47` counter in its header) and can be walked with `J`/`K`, the wheel, or clicked |
 | `/` `n` `N` | search, next / previous match |
 | `t` | cycle theme (`dark`, `light`, `nord`, `monochrome`) |
 | `m` | toggle typeset ⇄ plain-Unicode maths |

@@ -339,8 +339,21 @@ void App::render() {
     scr.fill_rect(px, 0, pw, vrows, pbg);
     scr.put_str(px + 2, 0, tr("OUTLINE", "大纲"), theme.heading[1], pbg, A_BOLD);
     int visible = vrows - 2;
+    if (toc_sel < 0) toc_sel = 0;
+    if (toc_sel >= (int)outline.size()) toc_sel = (int)outline.size() - 1;
+    int maxoff = std::max(0, (int)outline.size() - visible);
     if (toc_sel < toc_off) toc_off = toc_sel;
     if (toc_sel >= toc_off + visible) toc_off = toc_sel - visible + 1;
+    if (toc_off > maxoff) toc_off = maxoff;
+    // "12/47" in the header, and an arrow in the right margin when the list
+    // continues past the panel.  Without either, a panel that is too short for
+    // the list looks exactly like the whole list (issue #2: thirty headings in
+    // a twenty-row terminal, and the last one could not be reached at all -
+    // the selection was only movable with a mouse).
+    if (pw >= 18) {
+      std::string counter = fmt("%d/%d", toc_sel + 1, (int)outline.size());
+      scr.put_str(px + pw - 2 - (int)str_width(counter), 0, counter, theme.muted, pbg, 0);
+    }
     for (int i = 0; i < visible; i++) {
       int idx = toc_off + i;
       if (idx >= (int)outline.size()) break;
@@ -352,6 +365,9 @@ void App::render() {
       for (int k = 0; k < pw - 2; k++) scr.put(px + 1 + k, i + 1, ' ', fg, bg);
       scr.put_str(px + 2 + ind, i + 1, label, fg, bg, idx == toc_sel ? A_BOLD : 0);
     }
+    if (toc_off > 0) scr.put_str(px + pw - 2, 1, "\u2191", theme.muted, pbg, 0);
+    if (toc_off + visible < (int)outline.size())
+      scr.put_str(px + pw - 2, visible, "\u2193", theme.muted, pbg, 0);
   }
   if (link_open && !link_url.empty()) {
     LinkDlg g = link_dialog_geom(vcols, vrows, link_url);
@@ -377,14 +393,15 @@ void App::render() {
     RGB pbg = theme.status_bg;
     scr.fill_rect(px, py, pw, ph, pbg);
     scr.box_rounded(px, py, pw, ph, theme.code_frame, pbg);
-    static const char* const lines[2][17] = {
+    static const char* const lines[2][18] = {
         {
             "mdt - markdown in the terminal",
             "",
             "  j / k, arrows     scroll one line",
             "  d / u             half page       space / b   page",
             "  g / G             top / bottom    J / K       next / prev heading",
-            "  Tab               toggle outline  Enter       jump to heading",
+            "  Tab               outline panel   Enter       jump to the selection",
+            "  in the outline    J / K walk it   wheel       scrolls the list",
             "  /                 search          n / N       next / prev match",
             "  o                 open first link in the browser",
             "  click a link      dialog with clickable copy / open / close buttons",
@@ -403,7 +420,8 @@ void App::render() {
             "  j / k、方向键      上下滚动一行",
             "  d / u              半页            space / b   整页",
             "  g / G              开头 / 结尾     J / K       上/下一个标题",
-            "  Tab                开关大纲        Enter       跳到标题",
+            "  Tab                大纲面板        Enter       跳到所选项",
+            "  在大纲面板里        J / K 走列表    滚轮        滚动列表",
             "  /                  搜索            n / N       下一个/上一个匹配",
             "  o                  用浏览器打开文档里的第一个链接",
             "  点链接             弹出「复制 / 打开 / 关闭」对话框",
@@ -417,7 +435,7 @@ void App::render() {
             "  公式由内嵌的 TeX 引擎排版。",
         },
     };
-    const int n = 17;
+    const int n = 18;
     int li = language() == Lang::Zh ? 1 : 0;
     for (int i = 0; i < n && i + 2 < ph; i++)
       scr.put_str(px + 2, py + 1 + i, lines[li][i], i == 0 ? theme.heading[1] : theme.fg, pbg,
@@ -574,6 +592,22 @@ void App::run() {
   };
   // apply_mouse folds an event into the view and says whether anything moved.
   auto apply_mouse = [&](const Terminal::KeyEvent& e) -> bool {
+    // Over the outline panel the wheel walks the list instead of scrolling the
+    // document: it is the second way into a long outline (J/K is the first).
+    // Moving toc_sel rather than a separate scroll offset keeps the panel's
+    // highlight on something the user can see - and the panel already scrolls
+    // itself to keep the selection in view.  Enter then jumps to it, so a
+    // "tail of the list that is not visible" is unreachable no more.
+    if ((e.wheel_up || e.wheel_down) && toc_open && toc_panel_w > 0 && !outline.empty() &&
+        e.mx >= term.caps.cols - toc_panel_w) {
+      int want = toc_sel + (e.wheel_down ? 3 : -3);
+      want = std::max(0, std::min((int)outline.size() - 1, want));
+      if (want == toc_sel) return false;
+      toc_sel = want;
+      set_status(fmt(tr("%d/%d  %s", "%d/%d  %s"), toc_sel + 1, (int)outline.size(),
+                     outline[(size_t)toc_sel].text.c_str()));
+      return true;
+    }
     if (e.wheel_up) {
       int s0 = view.scroll_top(); view.scroll_by(-3); return view.scroll_top() != s0;
     }
@@ -774,6 +808,19 @@ void App::run() {
       case 'G': view.scroll_end(); break;
       case '\t': toc_open = !toc_open; break;
       case 'J': {
+        // With the outline open, J/K walk the outline list (the panel scrolls
+        // to keep the selection visible, and Enter jumps there).  Without it
+        // they jump through the document, as before.
+        if (toc_open && !outline.empty()) {
+          if (toc_sel + 1 < (int)outline.size()) {
+            toc_sel++;
+            set_status(fmt(tr("%d/%d  %s", "%d/%d  %s"), toc_sel + 1, (int)outline.size(),
+                           outline[(size_t)toc_sel].text.c_str()));
+          } else {
+            set_status(tr("last heading", "已经是最后一个标题"));
+          }
+          break;
+        }
         int cur = view.block_at_row(view.scroll_top());
         const OutlineItem* best = nullptr;
         for (auto& it : outline) { if (it.block > cur) { best = &it; break; } }
@@ -784,6 +831,16 @@ void App::run() {
         break;
       }
       case 'K': {
+        if (toc_open && !outline.empty()) {
+          if (toc_sel > 0) {
+            toc_sel--;
+            set_status(fmt(tr("%d/%d  %s", "%d/%d  %s"), toc_sel + 1, (int)outline.size(),
+                           outline[(size_t)toc_sel].text.c_str()));
+          } else {
+            set_status(tr("first heading", "已经是第一个标题"));
+          }
+          break;
+        }
         int cur = view.block_at_row(view.scroll_top());
         const OutlineItem* best = nullptr;
         for (auto& it : outline) { if (it.block < cur) best = &it; }
@@ -1449,6 +1506,7 @@ void print_usage() {
       "  wheel        scroll           click on the scrollbar   jump through the file\n"
       "  j k down up   scroll        space b      page        g G     top / bottom\n"
       "  J K           headings      Tab          outline     / n N   search\n"
+      "  in the outline: J K walk the list, Enter jumps, the wheel scrolls it\n"
       "  t             theme         r reload     o       open link      ? help\n"
       "  e             copy text     m            maths on/off    q quit\n"
       ,
@@ -1494,6 +1552,7 @@ void print_usage() {
       "  滚轮         滚动          点滚动条     在文件里跳转\n"
       "  j k 下 上    滚动        space b      翻页        g G     开头 / 结尾\n"
       "  J K          标题        Tab          大纲        / n N   搜索\n"
+      "  在大纲里：J K 走列表，Enter 跳过去，滚轮滚动列表\n"
       "  t            主题        r 重新读取    o           打开链接      ? 帮助\n"
       "  e            复制文本    m            公式开关    q 退出\n"
       ),
