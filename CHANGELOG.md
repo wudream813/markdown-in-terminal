@@ -5,7 +5,9 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
-## [Unreleased]
+## [0.3.12] — 2026-10-14
+
+Fixes the outline panel for documents with more headings than rows (issue #2).
 
 ### Fixed
 
@@ -235,6 +237,7 @@ Windows support (Win32 console layer, MinGW-w64 cross build, wine tests) and a
 release workflow.
 
 [Unreleased]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.9...HEAD
+[0.3.12]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.11...v0.3.12
 [0.3.11]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.8...v0.3.9
