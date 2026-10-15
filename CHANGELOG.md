@@ -5,6 +5,49 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.13] — 2026-10-15
+
+Fixes the Windows console input path (issue #3) and makes the build work in
+both MSYS2 shells.
+
+### Fixed
+
+* On Windows an arrow key or a mouse click could end the session silently with
+  status 0 (issue #3, WezTerm).  mdt read bytes from the console handle, and
+  that path is only as good as the host's VT translation: `ReadFile` on a
+  console does not return arrow or function keys at all, discards mouse events,
+  and one sequence can reach the application as several separate reads -
+  leaving a lone `ESC`, which in mdt means "quit".  Input now comes from the
+  console's own records (`ReadConsoleInputW`): keys are translated into the
+  same escape sequences a terminal would send, mouse events into SGR reports at
+  the same coordinates, and both are handed to the parser whole.  A console can
+  also no longer look like end-of-input.  Redirected stdin (`mdt -` behind a
+  pipe) still reads bytes, and if a console refuses records mdt falls back to
+  that path with the host's VT translation switched back on.
+
+### Added
+
+* `MDT_KEY_LOG=/path/to/file` appends every chunk of input mdt received, hex
+  and ASCII side by side, one line per read - the difference between "nothing
+  arrived" and "it arrived in pieces".  `tools/keylog_test.py` asserts the
+  property automatically, natively and under Wine.
+* MSYS2 builds.  `make` now asks the compiler what it targets instead of
+  matching its name, so `MSYSTEM=MINGW64` (where the compiler is plain `g++`)
+  gets the Windows build.  In the `MSYSTEM=MSYS` shell the target is POSIX, and
+  the build switches to `-std=gnu++17`/`-std=gnu11` (the strict ANSI modes hide
+  `strdup`, `realpath` and friends) and links iconv as `-lconv`; those
+  libraries are probed rather than assumed.  The same is handled in CMakeLists
+  and documented in both READMEs.
+
+### Documentation
+
+* `README.zh-CN.md` caught up with the English one: the source layout map, the
+  performance numbers and the whole "Display options" section (language,
+  settings file, Markdown notes) were missing, as was how to build in MSYS2.
+  `## 快捷键` and `## 许可` only exist in the Chinese file and stay there.
+* Both READMEs and the man page describe the new Windows input path, and
+  `MDT_KEY_LOG` sits next to `MDT_FRAME_LOG` in the environment tables.
+
 ## [0.3.12] — 2026-10-14
 
 Fixes the outline panel for documents with more headings than rows (issue #2).

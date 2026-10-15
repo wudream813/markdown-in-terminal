@@ -1,8 +1,10 @@
 // platform.h : the only place in mdt that talks to the OS directly.
 //
 // POSIX (Linux/macOS): termios raw mode, SIGWINCH, ioctl(TIOCGWINSZ), select().
-// Windows (MinGW):     Win32 console modes with ENABLE_VIRTUAL_TERMINAL_*,
-//                      WaitForSingleObject/ReadFile, polling for resizes.
+// Windows (MinGW):     Win32 console modes, WaitForSingleObject + console
+//                      input *records* (ReadConsoleInput) translated into the
+//                      escape sequences a terminal would have sent, polling for
+//                      resizes.  Redirected stdin still reads bytes.
 #pragma once
 #include <cstddef>
 #include <cstdio>

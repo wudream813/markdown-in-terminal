@@ -117,22 +117,6 @@ man mdt                        # 同样的选项，trofi 格式
 mdt 不往用户目录写任何东西（没有配置文件、没有缓存）；除非文档里真的有
 `![](https://…)` 图片，否则它不会访问网络。
 
-## 界面语言
-
-`--help`、命令行报错、配置文件的抱怨、交互时的状态栏都有中英文两套。语言按这个顺序决定：
-
-```sh
-mdt --lang=zh 文档.md          # 1. 命令行
-MDT_LANG=zh mdt 文档.md        # 2. mdt 自己的环境变量
-lang = zh                     # 3. 配置文件
-LANG=zh_CN.UTF-8 mdt 文档.md   # 4. 系统 locale
-```
-
-所以在中文系统上 mdt 会自动说中文，而 `--lang=en` 可以随时切回英文。不认识的语言
-（`--lang=fr`）是**报错**而不是静默退回默认；`MDT_LANG` 写了不认识的值会警告一句；
-`LANG` 里的怪值不算你的错，不吵。`--diag` 会告诉你最终是哪一条生效的。`zh_TW`/`zh_HK`
-拿到的同样是简体（只有一套中文，暂时没有繁体翻译）。
-
 ## 从源码构建
 
 ```sh
@@ -162,6 +146,73 @@ sh tools/build_windows.sh           # 构建 + 依赖检查 + dist/*.zip
 `msvcrt.dll`，没有需要一起分发的 MinGW 运行库。Windows 上远程图片走系统自带的
 **WinINet**（不需要 curl.exe，也没有 shell）。字体从 `%WINDIR%\Fonts` 里找
 （正文用 Consolas/Cascadia Mono，宽字符用 MS YaHei / SimSun / Noto CJK）。
+
+### 直接在 MSYS2 里构建
+
+两个 MSYS2 shell 都能用；`make` 不是靠编译器叫什么名字来判断分支的，而是直接问它
+目标平台（`g++ -dumpmachine`）—— 因为在 MSYS2 里 MinGW 那套编译器也叫 `g++`。
+
+```sh
+# MSYSTEM=MINGW64 / UCRT64 / CLANG64 —— 真正的 Windows 程序
+pacman -S mingw-w64-x86_64-gcc make
+make -j                            # -> build/mdt.exe，参数与 `make windows` 相同
+
+# MSYSTEM=MSYS —— 给 MSYS shell 用的 POSIX 版本（/c/… 这类路径直接可用）
+pacman -S gcc make                 # 在“MSYS2 MSYS”终端里
+make -j
+```
+
+在 MSYS shell 里目标平台是 `x86_64-pc-msys`，所以 mdt 走 POSIX 那一半，两处差别：
+`-std=c++17`/`-std=c11` 换成 `-std=gnu++17`/`-std=gnu11`（严格 ANSI 模式会把
+`strdup`、`realpath` 之类藏在 `__STRICT_ANSI__` 后面，不放出来就根本编译不过），
+以及 iconv 要链 `-lconv` 而不是 `-liconv`。这两类库都是**探测**出来的而不是写死的，
+所以你的工具链换了名字或没有那个 stub，也照样能链接。
+
+### Windows 下的键盘与鼠标
+
+Windows 的控制台有两套读输入的方式，mdt 用的是**按记录读**（`ReadConsoleInputW`），
+而不是从控制台句柄里读字节流。字节流那条路看起来更简单，但微软自己的文档写得很直白：
+对着控制台 `ReadFile`「不会返回功能键或方向键的键盘事件」，鼠标、窗口、焦点事件
+「会被丢弃」—— 就算打开了 `ENABLE_MOUSE_INPUT`，这些事件也只有 `ReadConsoleInput`
+读得回来。而且这层翻译是宿主（`CONIN$`/ConPTY）做的，宿主之间并不一致：终端一口气发
+出的序列，到了控制台程序这儿可能变成好几条独立记录，于是程序手里就剩一个孤零零的
+`ESC` —— 在 mdt 里那正是「退出」，没有报错、退出码 0。issue #3 报告的 WezTerm 下的
+现象就是这么来的。
+
+所以 mdt 现在直接读控制台真实记下的东西：`KEY_EVENT` 会翻译成终端本来会发出的转义序列
+（方向键、Home/End、PgUp/PgDn、Insert/Delete、F1–F12，带 Shift/Ctrl 修饰；而本身就
+带字符的 `KEY_EVENT` —— 字母、回车、Tab、退格、Esc、Ctrl-C —— 原样透传），
+`MOUSE_EVENT` 会翻译成同样坐标的 SGR 鼠标报码。两者都是一整条交给解析器，所以任何
+按键或点击都不可能再以「一个裸 ESC」的形式到达。控制台也不存在「输入结束」：
+你把文档管道给 `mdt -` 时 stdin 不是控制台，走的还是原来的字节路径。
+
+如果某个终端上按键还是不听话，让 mdt 把它收到的东西写下来：
+
+```bat
+set MDT_KEY_LOG=C:\Users\me\mdt-keys.log
+mdt.exe --gfx=sixel 文档.md
+```
+
+这个文件每读一次记一行，十六进制和字符并排，比如上方向键就是 `1b [ A`。一份 bug 报告
+需要的正是它：到底什么都没收到，还是收到的是碎片。`tools/keylog_test.py` 在两个平台上
+都自动断言同一件事。
+
+### 验证 Windows 构建
+
+Windows 上：`mdt.exe --list-caps`、`mdt.exe demo\demo.md`。
+
+Linux 上配合 Wine 与伪终端驱动：
+
+```sh
+export WINEPREFIX=~/.wineprefix        # 首次运行会创建
+wine64 build/win/mdt.exe --version
+sh tests/windows.sh          # 文本输出、公式、PNG 导出、主题、控制台模式
+```
+
+`tests/windows.sh` 会把 `--dump` 的结果与本机构建逐字节对比（Wine 的控制台会插入 CR，
+测试会去掉），用内嵌的 QuickJS+MathJax 渲染公式，检查四套主题，并在伪终端里驱动控制台
+（`tools/wine_pty_test.py`）：备用屏、鼠标上报、能力探测、状态栏。它同时跑
+`tools/keylog_test.py`：在真实控制台里按方向键、滚轮、回车，要求解析器收到的是完整序列。
 
 ## 用法
 
@@ -237,7 +288,87 @@ term.cpp：kitty/iTerm2 用 PNG，sixel 终端用 sixel，
 尺寸信息取自 SVG 的 `viewBox` 和 `vertical-align:-2.819ex`，和浏览器用的完全一致，
 所以行内公式能和周围文字对齐，而不是浮在空中。
 
-### 配置文件与 NO_COLOR
+## 代码结构
+
+```
+src/util.*        UTF-8 + wcwidth 表、字符串、base64、颜色
+src/platform.*    唯一面向系统的代码：POSIX 的 tty/窗口/IO 与 Win32 控制台
+src/term.*        终端能力探测、带差分刷新的单元格帧缓冲、kitty/iTerm2/sixel
+src/md.*          CommonMark 子集 + GFM 表格/删除线/任务列表 + $公式$
+src/svg.*         SVG 子集解析 + 软件光栅化
+src/math.*        QuickJS 宿主 + 公式度量/位图缓存 + Unicode 降级
+src/image.*       stb_image 解码、缩放、PNG 编码、http(s) 下载
+src/render*.cpp   文档排版与绘制（文字网格 + 图形叠加层）
+src/font.*        --screenshot 用的 TrueType 光栅化
+src/app.cpp       事件循环、大纲、搜索、状态栏
+src/generated/    内嵌的 JS 包（由 tools/build_assets.py 生成）
+vendor/           stb 单文件库、QuickJS-NG
+```
+
+`tools/pty_test.py` 在伪终端里驱动程序，逐个检查每种图形协议真的发出了对应的转义序列。
+`sh tests/smoke.sh` 不编译任何东西，直接对 `./build/mdt` 跑完整套件（主题、公式模式、
+stdin、文本导出、三种协议）。Windows 构建交给 `sh tests/windows.sh` 通过 Wine 跑同一套
+（含 `tools/wine_pty_test.py` 走控制台路径），并把渲染结果与本机构建逐字节对比。
+`tools/keylog_test.py` 是 issue #3 留下的守卫：它借 `MDT_KEY_LOG` 断言 mdt 交给按键解析器
+的**永远是整条序列**，绝不会是一个孤零零的 ESC（有一个孤立的 ESC 会被当成「退出」）。
+`tools/async_image_test.py` 打开一份图片放在慢速主机上的文档，检查首帧远低于一秒就出现、
+下载期间按键照常响应、每张图只取一次、最终确实画出来。`tools/subcell_align_test.py`
+守住行内公式与图片的纵向对齐：亚格偏移被烘进位图，所以不能把图片放在格内像素偏移处的
+终端（iTerm2、sixel）和能放的终端画在同样的行上 —— 测试用 `MDT_SNAP_SUBCELL=1` 让
+`--screenshot` 以「不带亚格偏移」的方式合成，再要求两张图完全一致。`tools/tall_math_test.py`
+守另一半：多行公式（`$\begin{aligned}...$`，行内定界符）会占多个终端行，那么承载它的那一行
+要预留这些行（`Line::rows`）；测试在截图里确认没有哪一行像素同时混着公式墨迹和正文墨迹，
+且公式块之后的正文从它下面开始。`tools/build_windows.sh` 打 Windows 的发布 zip。
+
+## 性能说明
+
+在一份 250 KB、400 个小节、约 420 个公式（含表格、代码、图片）的文档上实测：
+
+| 阶段 | 用时 |
+|:--|--:|
+| Markdown 解析 | 6 ms |
+| 全文档排版（公式延后） | 21 ms |
+| 首帧上屏（含 QuickJS 启动约 150 ms） | 0.57 s |
+| 同一文档立刻排所有公式（旧行为） | 2.5 s |
+| 滚动一屏的重绘 | < 10 ms（公式位图有缓存） |
+
+公式是懒排版的：只有进入视野的才会被度量与光栅化。如果某个被延后的公式实际比排版时
+估计的更大或更小，文档会重新排一次（此时度量已有缓存），所以最终几何是精确的。
+
+## 显示选项
+
+| 参数 | 作用 |
+|---|---|
+| `--panels` | 给代码块、引用、表头加上带底色的面板（默认关：整页只有一种底色） |
+| `--terminal-bg` | 页面底色用 SGR 49，让终端自己的配色/透明透出来 |
+| `--no-scrollbar` | 不画滚动条 |
+| `--encoding=auto\|utf-8\|gbk\|gb18030\|big5\|cp1252\|latin1\|off` | 非 UTF-8 文件怎么读（默认 `auto`：GBK/GB18030，也就是中文 Windows 的「ANSI」代码页） |
+| `--entities=off\|force` | 修复在到你手里之前就被 HTML 转义过的源码（默认关） |
+| `--escapes=auto\|off\|force` | 控制上面那条反斜杠转义修复 |
+| `--loose=auto\|off\|on` | 接受 `#标题` / `-项目` / `1.项目` 这种没有空格的行首标记 |
+| `--code-fit` | 代码框贴着代码长度，而不是撑满整页 |
+| `--cell=WxH` | `--dump`/`--screenshot` 用的单元格像素尺寸（默认 9x19），让截图能和你的终端严丝合缝 |
+| `--compat` | 不用图形、不用 DEC 2026 同步刷新、不推送键盘协议、不做能力探测 —— 给那些支持有问题的终端 |
+| `--diag` | 打印 mdt 眼中的文件（编码、转义、块统计、开头字符）、选中的界面语言及其理由、以及它眼中的终端；没有 tty 也能跑 |
+| `--lang=auto\|en\|zh` | 界面语言（默认 `auto`）。`--help`、报错和状态栏都会变成中文；`MDT_LANG=zh` 或配置文件里的 `lang = zh` 同样生效。`--lang=fr` 会被拒绝，而不是悄悄退回默认 |
+
+### 界面语言
+
+`--help`、命令行报错、配置文件的抱怨、交互时的状态栏都有中英文两套。语言按这个顺序决定：
+
+```sh
+mdt --lang=zh 文档.md          # 1. 命令行
+MDT_LANG=zh mdt 文档.md        # 2. mdt 自己的环境变量
+lang = zh                     # 3. 配置文件
+LANG=zh_CN.UTF-8 mdt 文档.md   # 4. 系统 locale
+```
+
+所以在中文系统上 mdt 会自动说中文，而 `--lang=en` 可以随时切回英文。不认识的语言
+（`--lang=fr`）是**报错**而不是静默退回默认；`MDT_LANG` 写了不认识的值会警告一句；
+`LANG` 里的怪值不算你的错，不吵。`--diag` 会告诉你最终是哪一条生效的。`zh_TW`/`zh_HK`
+拿到的同样是简体（只有一套中文，暂时没有繁体翻译）。
+
+### 配置文件
 
 每次都敲同样的参数很烦，所以 mdt 会读一个默认值文件：
 
@@ -262,21 +393,6 @@ stderr 上报出来而不是被默默忽略，`mdt --diag` 会告诉你读的是
 设置 `NO_COLOR=1`（见 [no-color.org](https://no-color.org)）会切到 monochrome 主题 ——
 除非你显式指定了主题。
 
-### GBK 等非 UTF-8 文件
-
-中文 Windows 编辑器保存的 Markdown 通常是 GBK（系统「ANSI」代码页），以前每个汉字都会显示成
-乱码。现在 mdt 会发现这些字节不是合法 UTF-8，并在解析前转码 —— 标题、列表、代码块结构都保持
-完整，`--diag` 也会写明它做了什么：
-
-```
-  encoding        : utf-8, no BOM, but 23 invalid byte(s) before offset 200000 - probably not UTF-8 (GBK/ANSI?)
-                    -> converted from gb18030 to UTF-8 for rendering
-```
-
-`--encoding=` 可以覆盖自动判断：`gbk`、`gb18030`、`big5`、`cp1252`、`latin1`，
-或 `off`（保持原样）。自动判断默认按 GBK 处理，因为 GB18030 的字节空间是 Big5 的超集 ——
-Big5 文件会被「成功」转成错误的汉字，所以 Big5 文档请显式加 `--encoding=big5`。
-
 ### Markdown 细节
 
 GitHub 的 alert 语法（`> [!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`、`[!CAUTION]`）
@@ -288,6 +404,7 @@ GitHub 的 alert 语法（`> [!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`
 脚注（`[^1]` 与 `[^1]: 注释内容`）按「首次被引用的位置」编号，注释统一排在文末的有序列表里；
 `术语` 后面跟 `: 定义` 的行会渲染成定义列表，而不是被并成一大段。`mdt --diag 文件.md`
 会报告各识别出多少条。
+
 
 ## 大文档
 
@@ -320,7 +437,23 @@ GitHub 的 alert 语法（`> [!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`
 |:--|:--|
 | `mdt --diag 文件.md` | mdt 眼里这个文件是什么样：编码（BOM？UTF-8？GBK？）、换行符、应用了哪些修复、块统计、开头字符的码点 —— 以及 mdt 眼里的终端是什么样。不需要 tty，可直接贴进 issue。 |
 | `MDT_FRAME_LOG=/tmp/mdt.log mdt 文件.md` | 把每一帧原样写下来（转义序列展开成可读文本），用来区分「mdt 画错了」和「终端弄丢了」。 |
+| `MDT_KEY_LOG=/tmp/mdt-keys.log mdt 文件.md` | 把 mdt 每读一次输入都追加进去，十六进制和字符并排（上方向键是 `1b [ A`），用来区分「终端什么都没发」和「发来的不是一个完整的键」。 |
 | `mdt --compat 文件.md` | 关掉所有可选特性（图形、DEC 2026 同步输出、kitty 键盘协议、能力探测），每行从第 0 列整体重绘。如果显示正常了，就是终端在这些里有一个处理不当，`--compat` 就是规避手段。 |
+
+### GBK 等非 UTF-8 文件
+
+中文 Windows 编辑器保存的 Markdown 通常是 GBK（系统「ANSI」代码页），以前每个汉字都会显示成
+乱码。现在 mdt 会发现这些字节不是合法 UTF-8，并在解析前转码 —— 标题、列表、代码块结构都保持
+完整，`--diag` 也会写明它做了什么：
+
+```
+  encoding        : utf-8, no BOM, but 23 invalid byte(s) before offset 200000 - probably not UTF-8 (GBK/ANSI?)
+                    -> converted from gb18030 to UTF-8 for rendering
+```
+
+`--encoding=` 可以覆盖自动判断：`gbk`、`gb18030`、`big5`、`cp1252`、`latin1`，
+或 `off`（保持原样）。自动判断默认按 GBK 处理，因为 GB18030 的字节空间是 Big5 的超集 ——
+Big5 文件会被「成功」转成错误的汉字，所以 Big5 文档请显式加 `--encoding=big5`。
 
 ## 已知限制
 

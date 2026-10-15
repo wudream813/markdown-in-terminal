@@ -1,6 +1,8 @@
 #include "platform.h"
+#include "util.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 // ===========================================================================
@@ -28,6 +30,47 @@ bool url_scheme_allowed(const std::string& url) {
   }
   return scheme == "http" || scheme == "https" || scheme == "mailto" || scheme == "ftp" ||
          scheme == "ftps" || scheme == "file" || scheme == "tel";
+}
+
+// ------------------------------------------------------------- input log -----
+// MDT_KEY_LOG=/path/to/file makes mdt append every chunk of input it receives,
+// hex-dumped, together with what the read returned.  It exists because a bug
+// report that says "the reader exits when I press an arrow key in <terminal>"
+// cannot be diagnosed from the outside: the answer is either in the bytes the
+// terminal sent or in the fact that none arrived, and this is the difference.
+// It writes to a file the user names, never to the terminal (which the reader
+// has taken over), and appends so several runs can be compared.
+bool key_log_enabled() {
+  const char* path = getenv("MDT_KEY_LOG");
+  return path && *path;
+}
+
+void key_log(const char* what, const char* data, size_t n) {
+  static FILE* f = nullptr;
+  static bool tried = false;
+  if (!tried) {
+    tried = true;
+    const char* path = getenv("MDT_KEY_LOG");
+    if (path && *path) f = fopen(path, "ab");
+    if (f) fprintf(f, "--- mdt %s key log (build " __DATE__ " " __TIME__ ")\n", MDT_VERSION);
+  }
+  if (!f) return;
+  static double t0 = -1;
+  double t = now_ms();
+  if (t0 < 0) t0 = t;
+  // Seconds since the first line of this run: two logs can then be compared
+  // line by line, which an absolute timestamp does not make any easier here.
+  fprintf(f, "[%8.3f] %s", (t - t0) / 1000.0, what);
+  if (n) {
+    fputs(":", f);
+    for (size_t i = 0; i < n; i++) {
+      unsigned char c = (unsigned char)data[i];
+      if (c >= 0x20 && c < 0x7f) fprintf(f, " %c", c);
+      else fprintf(f, " %02x", c);
+    }
+  }
+  fputc('\n', f);
+  fflush(f);
 }
 
 }  // namespace
@@ -232,6 +275,9 @@ bool wait_input(int timeout_ms) {
 
 int read_input(char* buf, size_t n) {
   ssize_t r = read(STDIN_FILENO, buf, n);
+  if (key_log_enabled())
+    key_log(r > 0 ? "read" : (r == 0 ? "read EOF" : "read nothing"), r > 0 ? buf : "",
+            r > 0 ? (size_t)r : 0);
   if (r > 0) return (int)r;
   // Negative == closed/EOF, 0 == nothing available yet.  Reporting EOF as 0
   // would make the event loop spin at 100% once the tty disappears.
@@ -403,6 +449,10 @@ namespace plat {
 
 static HANDLE g_in = INVALID_HANDLE_VALUE;
 static HANDLE g_out = INVALID_HANDLE_VALUE;
+// True when stdin is a console we read with ReadConsoleInput (see the long
+// comment above read_input).  A console is never at EOF.
+static bool g_in_is_console = false;
+static std::string g_win_pending;   // translated bytes waiting to be handed out
 static DWORD g_saved_in_mode = 0;
 static DWORD g_saved_out_mode = 0;
 static DWORD g_raw_in_mode = 0, g_raw_out_mode = 0;
@@ -572,10 +622,29 @@ bool raw_begin(std::string* err) {
   }
   SetConsoleOutputCP(CP_UTF8);
   SetConsoleCP(CP_UTF8);
+  // Input: ask the console for INPUT_RECORDs rather than a character stream.
+  //
+  // This used to enable ENABLE_VIRTUAL_TERMINAL_INPUT and read bytes with
+  // ReadFile, which is what Windows Terminal and mintty need.  The console's
+  // own documentation is blunt about the limits of that path: ReadFile
+  // "does not return keyboard events involving the function keys or arrow
+  // keys", and mouse, window and focus events "are discarded" - and even with
+  // ENABLE_MOUSE_INPUT set, "these events are discarded by ReadFile ... The
+  // ReadConsoleInput function can be used to read MOUSE_EVENT input records".
+  // So on a host whose VT input translation is missing or partial (WezTerm and
+  // other ConPTY users have been through this) an arrow key or a click can
+  // arrive as nothing at all - or, worse, as a read that reports no bytes,
+  // which used to look like end-of-input and quietly ended the session with
+  // status 0 (issue #3).
+  //
+  // Reading records ourselves fixes both halves: every key and mouse event is
+  // translated into the same VT sequences the parser already understands, and
+  // a console can no longer look like a closed pipe.
   DWORD in_mode = g_saved_in_mode;
-  in_mode |= ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_EXTENDED_FLAGS;
+  in_mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT;
   in_mode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT |
-               ENABLE_MOUSE_INPUT | ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE);
+               ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE |
+               ENABLE_VIRTUAL_TERMINAL_INPUT);
   DWORD out_mode = g_saved_out_mode;
   out_mode |= ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING |
               DISABLE_NEWLINE_AUTO_RETURN;
@@ -588,6 +657,8 @@ bool raw_begin(std::string* err) {
   g_raw_in_mode = in_mode;
   g_raw_out_mode = out_mode;
   g_have_raw_modes = true;
+  g_in_is_console = true;   // GetConsoleMode() succeeded on stdin above
+  g_win_pending.clear();
   return true;
 }
 
@@ -605,8 +676,21 @@ void raw_reassert() {
   }
 }
 
+static void fall_back_to_bytes() {
+  g_in_is_console = false;
+  g_win_pending.clear();
+  HANDLE h = g_in != INVALID_HANDLE_VALUE ? g_in : GetStdHandle(STD_INPUT_HANDLE);
+  DWORD mode = g_have_raw_modes ? g_raw_in_mode : 0;
+  if (!mode) return;
+  mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
+  mode &= ~(ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT);
+  SetConsoleMode(h, mode);
+}
+
 void raw_end() {
   g_have_raw_modes = false;
+  g_in_is_console = false;
+  g_win_pending.clear();
   if (!g_modes_saved) return;
   SetConsoleMode(g_in, g_saved_in_mode);
   SetConsoleMode(g_out, g_saved_out_mode);
@@ -662,14 +746,172 @@ bool wait_input(int timeout_ms) {
   return r == WAIT_OBJECT_0;
 }
 
+// ---------------------------------------------------------------- records ----
+// One code point, as UTF-8.
+static void append_utf8(std::string& out, unsigned int cp) {
+  if (cp < 0x80) {
+    out += (char)cp;
+  } else if (cp < 0x800) {
+    out += (char)(0xC0 | (cp >> 6));
+    out += (char)(0x80 | (cp & 0x3F));
+  } else if (cp < 0x10000) {
+    out += (char)(0xE0 | (cp >> 12));
+    out += (char)(0x80 | ((cp >> 6) & 0x3F));
+    out += (char)(0x80 | (cp & 0x3F));
+  } else {
+    out += (char)(0xF0 | (cp >> 18));
+    out += (char)(0x80 | ((cp >> 12) & 0x3F));
+    out += (char)(0x80 | ((cp >> 6) & 0x3F));
+    out += (char)(0x80 | (cp & 0x3F));
+  }
+}
+
+// KEY_EVENT -> the bytes the parser expects: the character itself when the
+// console gave one (letters, digits, Enter as CR, Tab, Backspace, Escape as
+// 0x1b, Ctrl-C as 0x03), otherwise the VT sequence for the named key.
+static void key_event_to_vt(std::string& out, const KEY_EVENT_RECORD& k) {
+  if (!k.bKeyDown) return;                     // key release: the reader is edge-driven
+  if (k.uChar.UnicodeChar) {
+    append_utf8(out, k.uChar.UnicodeChar);
+    return;
+  }
+  const DWORD s = k.dwControlKeyState;
+  int mod = 1;
+  if (s & SHIFT_PRESSED) mod += 1;
+  if (s & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) mod += 2;
+  if (s & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) mod += 4;
+  char final = 0;
+  int tilde = 0;
+  switch (k.wVirtualKeyCode) {
+    case VK_UP: final = 'A'; break;
+    case VK_DOWN: final = 'B'; break;
+    case VK_RIGHT: final = 'C'; break;
+    case VK_LEFT: final = 'D'; break;
+    case VK_HOME: final = 'H'; break;
+    case VK_END: final = 'F'; break;
+    case VK_PRIOR: tilde = 5; break;           // Page Up
+    case VK_NEXT: tilde = 6; break;            // Page Down
+    case VK_DELETE: tilde = 3; break;
+    case VK_INSERT: tilde = 2; break;
+    case VK_F1: case VK_F2: case VK_F3: case VK_F4:
+      out += "\x1bO";
+      out += (char)('P' + (k.wVirtualKeyCode - VK_F1));
+      return;
+    case VK_F5: tilde = 15; break;
+    case VK_F6: tilde = 17; break;
+    case VK_F7: tilde = 18; break;
+    case VK_F8: tilde = 19; break;
+    case VK_F9: tilde = 20; break;
+    case VK_F10: tilde = 21; break;
+    case VK_F11: tilde = 23; break;
+    case VK_F12: tilde = 24; break;
+    case VK_BACK: out += "\x7f"; return;
+    case VK_ESCAPE: out += "\x1b"; return;
+    case VK_RETURN: out += "\r"; return;
+    case VK_TAB: out += (s & SHIFT_PRESSED) ? "\x1b[Z" : "\t"; return;
+    default: return;                           // nothing the reader knows
+  }
+  char buf[32];
+  if (tilde) {
+    if (mod == 1) snprintf(buf, sizeof buf, "\x1b[%d~", tilde);
+    else snprintf(buf, sizeof buf, "\x1b[%d;%d~", tilde, mod);
+  } else {
+    if (mod == 1) snprintf(buf, sizeof buf, "\x1b[%c", final);
+    else snprintf(buf, sizeof buf, "\x1b[1;%d%c", mod, final);
+  }
+  out += buf;
+}
+
+// MOUSE_EVENT -> SGR mouse report.  Windows already reports the position in
+// character cells, and SGR counts from 1, which is the same convention the
+// terminal path uses - so the parser cannot tell the two apart.
+static void mouse_event_to_vt(std::string& out, const MOUSE_EVENT_RECORD& m) {
+  int x = m.dwMousePosition.X + 1, y = m.dwMousePosition.Y + 1;
+  DWORD flags = m.dwEventFlags, buttons = m.dwButtonState;
+  int code = 0;
+  char final = 'M';
+  if (flags & MOUSE_WHEELED) {
+    code = ((short)HIWORD(buttons) > 0) ? 64 : 65;   // away from the user = up
+  } else if (flags & MOUSE_HWHEELED) {
+    code = ((short)HIWORD(buttons) > 0) ? 66 : 67;
+  } else {
+    if (buttons & FROM_LEFT_1ST_BUTTON_PRESSED) code = 0;
+    else if (buttons & FROM_LEFT_2ND_BUTTON_PRESSED) code = 1;
+    else if (buttons & RIGHTMOST_BUTTON_PRESSED) code = 2;
+    else code = 3;                                   // no button held
+    if (flags & MOUSE_MOVED) code |= 32;             // motion (hover or drag)
+    else if (code == 3) final = 'm';                 // a button went up
+    if (code == 3 + 32) final = 'M';
+  }
+  char buf[48];
+  snprintf(buf, sizeof buf, "\x1b[<%d;%d;%d%c", code, x, y, final);
+  out += buf;
+}
+
+// Last resort: give up on records and read bytes, switching the console's own
+// VT translation back on so the behaviour is what it was before records were
+// used at all.  Reached when the handle claims to be a console but refuses to
+// give us records; carrying on regardless could spin on a handle that stays
+// readable.
+static void fall_back_to_bytes();
+
+// Drain what the console has, translating it.  Never reports EOF: a console
+// has no end of input, and pretending it did is what made an arrow key end the
+// session (issue #3).  Returns -1 when the console cannot be read this way.
+static int win_console_read(char* buf, size_t n) {
+  HANDLE h = g_in != INVALID_HANDLE_VALUE ? g_in : GetStdHandle(STD_INPUT_HANDLE);
+  if (!g_win_pending.empty()) {
+    size_t take = g_win_pending.size() < n ? g_win_pending.size() : n;
+    memcpy(buf, g_win_pending.data(), take);
+    g_win_pending.erase(0, take);
+    return (int)take;
+  }
+  DWORD available = 0;
+  if (!GetNumberOfConsoleInputEvents(h, &available)) return -1;
+  if (available == 0) return 0;
+  INPUT_RECORD recs[64];
+  DWORD want = available < 64 ? available : 64;
+  DWORD got = 0;
+  if (!ReadConsoleInputW(h, recs, want, &got)) return -1;  // not a usable console
+  for (DWORD i = 0; i < got; i++) {
+    switch (recs[i].EventType) {
+      case KEY_EVENT: key_event_to_vt(g_win_pending, recs[i].Event.KeyEvent); break;
+      case MOUSE_EVENT: mouse_event_to_vt(g_win_pending, recs[i].Event.MouseEvent); break;
+      case WINDOW_BUFFER_SIZE_EVENT: break;   // poll_resize() compares the size itself
+      case FOCUS_EVENT: break;
+      case MENU_EVENT: break;
+      default: break;
+    }
+  }
+  if (g_win_pending.empty()) return 0;
+  return win_console_read(buf, n);
+}
+
 int read_input(char* buf, size_t n) {
+  if (g_in_is_console) {
+    int got = win_console_read(buf, n);
+    if (got >= 0) {
+      if (key_log_enabled()) {
+        if (got > 0) key_log("console input", buf, (size_t)got);
+        else key_log("console input: nothing this time", nullptr, 0);
+      }
+      return got;                   // 0 == nothing right now, never EOF
+    }
+    if (key_log_enabled()) key_log("console replies only to bytes, falling back", nullptr, 0);
+    fall_back_to_bytes();
+  }
   HANDLE h = g_in != INVALID_HANDLE_VALUE ? g_in : GetStdHandle(STD_INPUT_HANDLE);
   DWORD got = 0;
   if (!ReadFile(h, buf, (DWORD)n, &got, nullptr)) {
     DWORD e = GetLastError();
+    if (key_log_enabled()) key_log(e == ERROR_BROKEN_PIPE || e == ERROR_HANDLE_EOF
+                                       ? "read EOF (redirected stdin)"
+                                       : "read error",
+                                   nullptr, 0);
     if (e == ERROR_BROKEN_PIPE || e == ERROR_HANDLE_EOF) return -1;
     return 0;
   }
+  if (key_log_enabled()) key_log(got ? "read" : "read nothing", buf, (size_t)got);
   return (int)got;
 }
 

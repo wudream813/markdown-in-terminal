@@ -256,9 +256,9 @@ otherwise the `curl` binary is used as a fallback.
 
 Linux and Windows share the whole program; the only OS-specific code is
 `src/platform.{h,cpp}`, which switches between POSIX (termios/ioctl/SIGWINCH)
-and the Win32 console API (`SetConsoleMode`, `ENABLE_VIRTUAL_TERMINAL_*`,
-UTF-8 code pages, `ReadFile`/`WriteFile`, console font probing for the font
-search). Nothing has to be configured — the compiler flags pick the branch.
+and the Win32 console API (`SetConsoleMode`, `ReadConsoleInput`, UTF-8 code
+pages, `WriteFile`, console font probing for the font search). Nothing has to be
+configured — the compiler flags pick the branch.
 
 ```sh
 sudo apt install mingw-w64          # or: dnf install mingw64-gcc-c++; brew install mingw-w64
@@ -275,6 +275,30 @@ cmake -B build/cmake-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-toolchain.cmake
 cmake --build build/cmake-win -j
 ```
 
+### Building inside MSYS2
+
+Both MSYS2 shells work, and `make` works out which one it is by asking the
+compiler what it targets (`g++ -dumpmachine`) rather than trusting its name —
+inside MSYS2 the MinGW compiler is plain `g++` too.
+
+```sh
+# MSYSTEM=MINGW64 / UCRT64 / CLANG64 — a real Windows binary
+pacman -S mingw-w64-x86_64-gcc make
+make -j                            # -> build/mdt.exe, same flags as `make windows`
+
+# MSYSTEM=MSYS — a POSIX build for the MSYS shell (paths like /c/… just work)
+pacman -S gcc make                 # in the "MSYS2 MSYS" terminal
+make -j
+```
+
+In the MSYS shell the target is `x86_64-pc-msys`, so mdt builds the POSIX side
+and two things change: `-std=c++17`/`-std=c11` are replaced by
+`-std=gnu++17`/`-std=gnu11` (the strict-ANSI modes hide `strdup`, `realpath`
+and friends behind `__STRICT_ANSI__`, and the build stops without them), and
+iconv is linked as `-lconv` instead of `-liconv`. Those libraries are probed
+rather than assumed, so a toolchain that names or omits one of them still
+links.
+
 Notes:
 
 * The `.exe` is linked with `-static -static-libgcc -static-libstdc++`, so it
@@ -288,6 +312,44 @@ Notes:
   part of Windows - no curl.exe on the PATH is needed.
 * Fonts come from `%WINDIR%\Fonts` (Consolas/Cascadia Mono for text, MS YaHei /
   SimSun / Noto CJK for wide characters), discovered at runtime.
+
+### Keyboard and mouse on Windows
+
+A Windows console offers two ways to read input, and mdt uses the record based
+one (`ReadConsoleInputW`) rather than reading bytes from the console handle.
+The byte path looks simpler, but Microsoft's own documentation is blunt about
+what it loses: `ReadFile` on a console "does not return keyboard events
+involving the function keys or arrow keys", and mouse, window and focus events
+"are discarded" — even with `ENABLE_MOUSE_INPUT` set, they can only be read
+back with `ReadConsoleInput`. That translation is also done by the host
+(`CONIN$`/ConPTY), and hosts differ: a sequence a terminal sends as one piece
+can reach a console application as several separate records, so a reader can
+find itself holding a lone `ESC` — which in mdt means "quit", silently, with
+status 0. That is exactly what was reported in
+[issue #3](https://github.com/wudream813/markdown-in-terminal/issues/3) for
+WezTerm.
+
+So mdt reads what the console actually recorded: `KEY_EVENT`s are turned into
+the same escape sequences a terminal would send (arrows, Home/End, Page
+Up/Down, Insert/Delete, F1–F12, with Shift/Ctrl modifiers, and a `KEY_EVENT`
+that already carries a character — letters, Enter, Tab, Backspace, Escape,
+Ctrl-C — is passed through as it is), and `MOUSE_EVENT`s become SGR mouse
+reports at the same coordinates. Both are handed to the parser complete, so no
+key or click can arrive as a bare `ESC`. A console is also never at
+end-of-input: if you pipe a document into `mdt -`, stdin is not a console and
+the byte path is used, as before.
+
+If a key still misbehaves on your terminal, ask mdt what it received:
+
+```bat
+set MDT_KEY_LOG=C:\Users\me\mdt-keys.log
+mdt.exe --gfx=sixel doc.md
+```
+
+The file gets one line per read, hex and ASCII side by side, e.g. `1b [ A` for
+an up-arrow. That log is what a bug report needs: it shows whether nothing
+arrived, or something arrived in pieces. `tools/keylog_test.py` asserts the
+same property automatically on both platforms.
 
 ### Verifying the Windows build
 
@@ -305,7 +367,9 @@ sh tests/windows.sh          # text output, maths, PNG export, themes, console m
 (Wine's console adds CRs, which the test strips), renders maths through the
 embedded QuickJS+MathJax engine, checks all four themes and drives the console
 inside a pty (`tools/wine_pty_test.py`): alt screen, mouse reporting,
-capability probing and the status line. `tools/panic_test.py` then interrupts
+capability probing and the status line. It also runs `tools/keylog_test.py`,
+which presses an arrow key, a wheel and Enter through a real console and
+requires the parser to receive whole sequences (see below). `tools/panic_test.py` then interrupts
 the running program and asserts that it hands the terminal back (same script
 on both platforms, exit code 143 for SIGTERM / 130 for Ctrl-Break).
 A GitHub Actions workflow (`.github/workflows/build.yml`) runs the Linux build,
@@ -560,6 +624,7 @@ Three switches exist for the cases where the terminal and mdt disagree:
 |---|---|
 | `mdt --diag file.md` | what mdt sees of the file: encoding (BOM? UTF-8? GBK?), line endings, which repairs were applied, the block census, the first characters as code points - and what it sees of the terminal. Works without a tty, so the output can be pasted into a bug report. |
 | `MDT_FRAME_LOG=/tmp/mdt.log mdt file.md` | writes every frame exactly as it was sent, escape sequences spelled out. Compare it with what the screen shows to tell "mdt drew it wrong" apart from "the terminal lost it". |
+| `MDT_KEY_LOG=/tmp/mdt-keys.log mdt file.md` | appends every chunk of input mdt received, hex and ASCII side by side (`1b [ A` for an up-arrow). Tells "the terminal sent nothing" apart from "what arrived was not a whole key". |
 | `mdt --compat file.md` | turns everything optional off - graphics, DEC 2026 synchronized output, the kitty keyboard push, the capability probe - and paints each changed row from column 0 as one run, so no cursor jump ever happens inside a row. If the display becomes correct, the terminal is mishandling one of those; `--compat` is the workaround. |
 
 The repairs on the source side can be controlled individually with

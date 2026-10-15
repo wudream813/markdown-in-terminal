@@ -168,6 +168,12 @@ Path of the settings file.
 Write every frame to this file exactly as it was sent, escape sequences spelled
 out, to tell "mdt drew it wrong" apart from "the terminal lost it".
 .TP
+.B MDT_KEY_LOG
+Append every chunk of input mdt receives to this file, hex and ASCII side by
+side, one line per read.  For a report of the shape "it exits when I press an
+arrow key", this is what tells "nothing arrived" apart from "it arrived in
+pieces" \- on Windows the console decides that, and hosts differ.
+.TP
 .B MDT_FORCE_CURL_BIN
 Use this program instead of \fBcurl\fR to fetch a remote picture.
 .SH EXIT STATUS

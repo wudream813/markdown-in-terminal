@@ -170,6 +170,9 @@ echo "== console mode (pty) ="
 if command -v python3 >/dev/null 2>&1; then
   python3 tools/wine_pty_test.py "$EXE" "$WINE" || exit 1
 
+  echo "== the key parser is handed whole sequences (issue #3) =="
+  python3 tools/keylog_test.py "$EXE" "$WINE" || exit 1
+
   echo "== startup geometry (resize polling is exercised on real Windows) =="
   MDT_RESIZE_SKIP=1 python3 tools/resize_test.py "$EXE" "$WINE" || exit 1
 

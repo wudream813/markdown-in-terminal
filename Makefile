@@ -34,12 +34,18 @@ ifneq ($(CURL),)
   NO_CURL :=
 endif
 
+# What the compiler targets, not what it is called: inside MSYS2 the MinGW
+# compiler is plain `g++`, so looking at $(CXX) alone would send a MSYSTEM=
+# MINGW64 shell down the Linux path.
+TARGET   := $(shell $(CXX) -dumpmachine 2>/dev/null)
+
 # ------------------------------------------------------- cross compilation ---
 # Windows (MinGW-w64):
 #   make CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
 #   make CXX=i686-w64-mingw32-g++   CC=i686-w64-mingw32-gcc     (32 bit)
+#   (MSYS2, MSYSTEM=MINGW64/UCRT64/CLANG64: just `make`)
 WINDOWS :=
-ifneq ($(findstring mingw,$(CXX)),)
+ifneq ($(findstring mingw,$(CXX)$(TARGET)),)
   WINDOWS  := 1
   # keep cross artefacts inside build/ so `make clean` and tooling find them
   BUILD    := $(if $(filter build,$(BUILD)),build/win,$(BUILD))
@@ -49,6 +55,27 @@ ifneq ($(findstring mingw,$(CXX)),)
   # static libgcc/libstdc++/winpthread so the .exe has no MinGW DLL deps
   # -lpsapi: process_memory_counters, used by --diag's memory line
   LDLIBS   := -lm -lws2_32 -lwininet -lpsapi -static -static-libgcc -static-libstdc++
+endif
+
+# -------------------------------------------- MSYS2, MSYSTEM=MSYS (POSIX) ----
+# In the MSYS shell gcc targets x86_64-pc-msys: a POSIX layer on top of Win32,
+# so mdt builds against the POSIX half of platform.cpp and needs three things
+# the Linux line does not:
+#   * the MSYS headers hide POSIX declarations under -std=c++17 / -std=c11,
+#     because those define __STRICT_ANSI__ (strdup, realpath, fileno... all
+#     vanish - and so the build fails).  GNU mode puts them back;
+#   * iconv is libconv there, not libiconv;
+#   * -lpthread / -ldl are stubs that some installs do not ship as files.
+# The libraries are probed instead of assumed, so a toolchain that spells one
+# of them differently does not break the build.
+ifneq ($(findstring msys,$(TARGET)),)
+  MSYS     := 1
+  CXXFLAGS := $(patsubst -std=c++17,-std=gnu++17,$(CXXFLAGS))
+  CFLAGS   := $(patsubst -std=c11,-std=gnu11,$(CFLAGS))
+  MSYS_LDLIBS := $(shell for lib in pthread dl conv; do \
+      printf 'int main(){return 0;}\n' | $(CXX) -x c++ - -l$$lib -o /dev/null \
+        >/dev/null 2>&1 && printf '%s ' -l$$lib; done)
+  LDLIBS   := -lm $(MSYS_LDLIBS)
 endif
 
 # macOS does not export iconv from libc; it lives in its own library.  (Windows

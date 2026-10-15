@@ -4,6 +4,15 @@ project(mdt LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# MSYS2, MSYSTEM=MSYS (CMAKE_SYSTEM_NAME "MSYS"): a POSIX layer on top of Win32,
+# but its headers hide the POSIX declarations behind __STRICT_ANSI__, which
+# -std=c++17 / -std=c11 define.  GNU extensions put strdup, realpath and
+# friends back; without them the build stops with a wall of "not declared".
+if(CMAKE_SYSTEM_NAME STREQUAL "MSYS")
+  set(CMAKE_C_EXTENSIONS ON)
+  set(CMAKE_CXX_EXTENSIONS ON)
+endif()
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -90,7 +99,13 @@ target_link_libraries(mdt PRIVATE qjs)
 # uses MultiByteToWideChar).  On macOS iconv is a separate library, which the
 # linker does not find on its own - the release build failed there until it was
 # linked in.
-if(NOT MINGW)
+if(CMAKE_SYSTEM_NAME STREQUAL "MSYS")
+  # MSYS ships iconv as libconv, and FindIconv() looks for libiconv.
+  find_library(MDT_CONV_LIBRARY NAMES conv)
+  if(MDT_CONV_LIBRARY)
+    target_link_libraries(mdt PRIVATE ${MDT_CONV_LIBRARY})
+  endif()
+elseif(NOT MINGW)
   find_package(Iconv)
   if(Iconv_FOUND AND NOT Iconv_IS_BUILT_IN)
     target_link_libraries(mdt PRIVATE Iconv::Iconv)

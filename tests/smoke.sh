@@ -299,6 +299,9 @@ python3 tools/outline_test.py "$BIN" || exit 1   # issue #2: a long outline
 echo "== resize =="
 python3 tools/resize_test.py "$BIN"
 
+echo "== the key parser is handed whole sequences (issue #3) =="
+python3 tools/keylog_test.py "$BIN" || exit 1
+
 echo "== interrupted from the outside (SIGTERM) =="
 python3 tools/panic_test.py "$BIN"
 
