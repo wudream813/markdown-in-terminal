@@ -284,11 +284,11 @@ inside MSYS2 the MinGW compiler is plain `g++` too.
 ```sh
 # MSYSTEM=MINGW64 / UCRT64 / CLANG64 — a real Windows binary
 pacman -S mingw-w64-x86_64-gcc make
-make -j                            # -> build/mdt.exe, same flags as `make windows`
+make -j                            # -> build/mdt.exe, the flags `make windows` uses
 
 # MSYSTEM=MSYS — a POSIX build for the MSYS shell (paths like /c/… just work)
 pacman -S gcc make                 # in the "MSYS2 MSYS" terminal
-make -j
+make -j                            # -> build/mdt.exe
 ```
 
 In the MSYS shell the target is `x86_64-pc-msys`, so mdt builds the POSIX side

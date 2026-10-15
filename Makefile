@@ -84,7 +84,9 @@ ifneq ($(findstring Darwin,$(shell uname -s)),)
   LDLIBS += -liconv
 endif
 
-BIN      := $(BUILD)/mdt$(if $(WINDOWS),.exe,)
+# MSYS (and Cygwin) gcc appends .exe by itself, so name it here as well: every
+# later rule in this file, and `make install`, has to point at the real file.
+BIN      := $(BUILD)/mdt$(if $(WINDOWS),.exe,$(if $(MSYS),.exe,))
 
 CPP_SRC := src/main.cpp src/app.cpp src/render.cpp src/render_draw.cpp src/md.cpp \
            src/term.cpp src/platform.cpp src/image.cpp src/svg.cpp src/math.cpp \

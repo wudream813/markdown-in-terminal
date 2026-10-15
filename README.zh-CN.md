@@ -159,7 +159,7 @@ make -j                            # -> build/mdt.exe，参数与 `make windows`
 
 # MSYSTEM=MSYS —— 给 MSYS shell 用的 POSIX 版本（/c/… 这类路径直接可用）
 pacman -S gcc make                 # 在“MSYS2 MSYS”终端里
-make -j
+make -j                            # -> build/mdt.exe
 ```
 
 在 MSYS shell 里目标平台是 `x86_64-pc-msys`，所以 mdt 走 POSIX 那一半，两处差别：
