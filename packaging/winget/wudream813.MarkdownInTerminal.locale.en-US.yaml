@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
 PackageIdentifier: wudream813.MarkdownInTerminal
-PackageVersion: 0.3.11
+PackageVersion: 0.3.12
 PackageLocale: en-US
 Publisher: wudream813
 PublisherUrl: https://github.com/wudream813/wudream813
@@ -18,6 +18,6 @@ Tags:
 - tui
 - math
 - latex
-ReleaseNotesUrl: https://github.com/wudream813/markdown-in-terminal/releases/tag/v0.3.11
+ReleaseNotesUrl: https://github.com/wudream813/markdown-in-terminal/releases/tag/v0.3.12
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0

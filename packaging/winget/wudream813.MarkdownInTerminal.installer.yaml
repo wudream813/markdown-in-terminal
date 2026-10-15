@@ -1,14 +1,14 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
 PackageIdentifier: wudream813.MarkdownInTerminal
-PackageVersion: 0.3.11
+PackageVersion: 0.3.12
 InstallerType: zip
 NestedInstallerType: portable
 NestedInstallerFiles:
-- RelativeFilePath: mdt-0.3.11-win64\mdt.exe
+- RelativeFilePath: mdt-0.3.12-win64\mdt.exe
   PortableCommandAlias: mdt
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.11/mdt-0.3.11-win64.zip
-  InstallerSha256: E133B4AFE4175E1234EB253F7CE450437DBCE6711830B5B3EAAB8E7627F9A557
+  InstallerUrl: https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.12/mdt-0.3.12-win64.zip
+  InstallerSha256: 0FEBBD66EDF8554DB2A59720B3B33BDBC7BAD6B2EB77F7A495DD4BE4349F8E9B
 ManifestType: installer
 ManifestVersion: 1.6.0
