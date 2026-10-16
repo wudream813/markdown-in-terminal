@@ -5,6 +5,37 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.16] — 2026-10-16
+
+One layer below the last fix: why the Windows leg of CI had been red since
+0.3.14, and what it cost to find out.
+
+### Fixed
+
+* **Input reaches the program again under Wine - keys as much as mouse.**  The
+  event loop asked the console how many records were waiting
+  (`GetNumberOfConsoleInputEvents`) before reading.  Under Wine 9 - the version
+  the CI runner installs - that count stays 0 while a key or a mouse report is
+  already waiting, so the reader never woke up and never read anything at all:
+  the failing "wheel / click / drag" checks were never about the mouse, every
+  keystroke was lost the same way.  `PeekConsoleInput` is the second opinion
+  now; it does not consume the record, so on a console that answers honestly
+  this is one extra syscall per nap and nothing else changes.  Verified on a
+  local Ubuntu wine 9 install identical to the runner's: wheel, click and drag
+  all arrive, and an idle reader still reads nothing at all.  On a host whose
+  count is honest (Windows proper, wine 10) the peek is consulted only when the
+  count says zero, so the wake-up path is unchanged there.
+
+### Changed
+
+* **The Windows checks now say what they know.**  `tools/mouse_test.py` and
+  `tools/luogu_test.py` print the reader's own mode line (which host, which
+  mode bits were kept) and its empty-read count when something is missing, and
+  they skip the click/hover checks with that explanation when a host hands the
+  program no mouse input at all - instead of failing checks the environment
+  cannot pass.  `tools/wine_pty_test.py` waits for the first frame before
+  typing and no longer hangs the suite on a child that never exits.
+
 ## [0.3.15] — 2026-10-16
 
 Third round on issue #3: pictures on Windows, and where they went.

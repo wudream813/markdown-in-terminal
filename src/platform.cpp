@@ -486,8 +486,10 @@ static bool g_in_is_console = false;
 static bool g_vt_input_kept = false;
 
 // Real Windows console, or Wine's?  Wine exports wine_get_version() from
-// ntdll, which is the documented way to ask, and the answer matters because the
-// two hosts disagree about ENABLE_VIRTUAL_TERMINAL_INPUT (see raw_begin).
+// ntdll, which is the documented way to ask.  Nothing depends on the answer any
+// more (the input path below copes with either), but the key log says which
+// host it was talking to, which is what one wants to know when a report says
+// "the keys did nothing".
 static bool console_is_wine() {
   HMODULE ntdll = GetModuleHandleA("ntdll.dll");
   return ntdll != nullptr && GetProcAddress(ntdll, "wine_get_version") != nullptr;
@@ -685,20 +687,14 @@ bool raw_begin(std::string* err) {
   // them).  Window-buffer-size events are deliberately not asked for: mdt
   // polls the size itself, and every bit asked for is a bit some host may
   // refuse to keep.
-  // A real Windows terminal needs ENABLE_VIRTUAL_TERMINAL_INPUT for mouse
-  // reports to reach the program as VT bytes: WezTerm's ConPTY does not turn
-  // them into MOUSE_EVENT records, so with the bit off a click never arrives
-  // (issue #3).  Wine's console is the opposite: ask for that bit and it stops
-  // delivering *anything* - keys and mouse both - because there is no window
-  // console behind it (Ubuntu's wine 9, the one CI runs, does this; wine 10
-  // tolerates the bit).  With the bit off Wine passes the pty's bytes straight
-  // through, which is the very stream the parser wants, so leave it off there.
+  // ENABLE_VIRTUAL_TERMINAL_INPUT is what makes a Windows terminal hand mouse
+  // reports over as VT bytes: WezTerm's ConPTY does not turn them into
+  // MOUSE_EVENT records, so with the bit off a click never arrives (issue #3).
+  // Both record shapes are translated either way (see key_event_to_vt).
   DWORD in_mode = g_saved_in_mode;
-  in_mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT;
+  in_mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT;
   in_mode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT |
-               ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE | ENABLE_WINDOW_INPUT |
-               ENABLE_VIRTUAL_TERMINAL_INPUT);
-  if (!console_is_wine()) in_mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
+               ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE | ENABLE_WINDOW_INPUT);
   DWORD out_mode = g_saved_out_mode;
   out_mode |= ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING |
               DISABLE_NEWLINE_AUTO_RETURN;
@@ -836,6 +832,15 @@ bool wait_input(int timeout_ms) {
     DWORD available = 0;
     if (!GetNumberOfConsoleInputEvents(h, &available)) return true;  // read_input decides
     if (available > 0) return true;
+    // The count can be a lie: under Wine 9 (the one CI's runner installs) it
+    // stays 0 while keys and mouse reports are already waiting, so the reader
+    // never woke up and CI saw "no input at all - 0 empty reads".  PeekConsole-
+    // Input is the second opinion; it does not consume a record, so on a
+    // console that answers honestly this is one extra syscall per nap and
+    // nothing else changes.
+    INPUT_RECORD rec;
+    DWORD peeked = 0;
+    if (PeekConsoleInputW(h, &rec, 1, &peeked) && peeked > 0) return true;
     if ((long)(GetTickCount() - deadline) >= 0) return false;
     Sleep((DWORD)nap);
     if (nap < 8) nap++;

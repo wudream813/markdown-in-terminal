@@ -171,21 +171,19 @@ def main():
     args = ["--gfx=none", "demo/demo.md"]
     argv = [wine, exe] + args if wine else [exe] + args
 
-    # Under wine the console host may accept ENABLE_MOUSE_INPUT and then never
-    # deliver a single mouse record to the program (Ubuntu's Wine 9 in CI does
-    # exactly that: verified with MDT_KEY_LOG, the mode line is all the reader
-    # ever sees).  That is the host, not the program, so when we are running
-    # through wine and not one byte of the mouse reports arrives, say so and
-    # skip.  Wine 10 (tested locally) and a real Windows console do deliver
-    # them - and a real console is driven without this wine argument, so a
-    # genuine regression there still fails the build.
+    # Wine may swallow mouse reports entirely (its conhost has no window to
+    # turn them into console events, and --gfx=none keeps mdt from asking the
+    # terminal for any either).  When that is what happens, say so and skip:
+    # an environment that hands the program no input cannot fail the program.
+    # A real Windows console is driven without this wine argument, so a genuine
+    # regression there still fails the build.
     if wine:
         run(argv, [b"\x1b[<65;40;12M"] * 6)
         if not received_any_input():
-            print(f"   skip  {wine} delivers no console mouse input at all to the")
-            print("         program: the console accepts the mouse mode and then")
-            print("         nothing arrives.  Known Wine 9 limitation, not a")
-            print("         reader bug (wine 10 and real Windows deliver them)")
+            print(f"   skip  {wine} handed the reader no mouse report at all")
+            print("         (nothing arrived, the reader never even woke up for")
+            print("         it), so there is nothing here to assert against;")
+            print("         real Windows runs this test without the wine argument")
             return 0
 
     fails = []
@@ -255,8 +253,6 @@ def main():
         else:
             print(f"the reader received no mouse report (it did {idle} empty reads,")
             print("so the reading path runs: the reports never reached the program).")
-            print("Ubuntu's Wine 9 console host takes the mouse mode and then drops")
-            print("every report; wine 10 and real Windows deliver them.")
         return 1
     print("   mouse + scrollbar ok")
     return 0

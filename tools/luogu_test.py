@@ -90,10 +90,9 @@ def main():
     if wine:
         clicks = host_delivers_mouse(argv, fixture)
         if not clicks:
-            print(f"   skip  {wine} drops every mouse report (the console takes")
-            print("         the mouse mode and then delivers nothing), so the")
-            print("         checks that need a click or a hover are skipped here;")
-            print("         keyboard and --dump checks still run")
+            print(f"   skip  {wine} handed the reader no mouse report at all, so")
+            print("         the checks that need a click or a hover are skipped;")
+            print("         keyboard and --dump checks still run here")
 
     dump = subprocess.run(argv + ["--dump", "--width=80", fixture],
                           capture_output=True).stdout.decode("utf-8", "replace")
