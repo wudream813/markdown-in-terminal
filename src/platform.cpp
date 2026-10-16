@@ -45,7 +45,7 @@ bool key_log_enabled() {
   return path && *path;
 }
 
-void key_log(const char* what, const char* data, size_t n) {
+static FILE* key_log_file() {
   static FILE* f = nullptr;
   static bool tried = false;
   if (!tried) {
@@ -54,6 +54,19 @@ void key_log(const char* what, const char* data, size_t n) {
     if (path && *path) f = fopen(path, "ab");
     if (f) fprintf(f, "--- mdt %s key log (build " __DATE__ " " __TIME__ ")\n", MDT_VERSION);
   }
+  return f;
+}
+
+// One free-form line (mode readback, what the console decided to keep, ...).
+void key_log_note(const char* text) {
+  FILE* f = key_log_file();
+  if (!f) return;
+  fprintf(f, "          %s\n", text);
+  fflush(f);
+}
+
+void key_log(const char* what, const char* data, size_t n) {
+  FILE* f = key_log_file();
   if (!f) return;
   static double t0 = -1;
   double t = now_ms();
@@ -219,6 +232,9 @@ bool raw_begin(std::string* err) {
 
 bool raw_intact() {
   if (!g_have_raw) return true;
+  // Test hook, Windows section has the long explanation: pretend the terminal
+  // will not keep the modes, which used to make the event loop redraw forever.
+  if (getenv("MDT_FAKE_STALE_MODE")) return false;
   struct termios cur;
   if (tcgetattr(STDIN_FILENO, &cur) != 0) return true;
   return cur.c_lflag == g_raw.c_lflag && cur.c_iflag == g_raw.c_iflag &&
@@ -272,6 +288,8 @@ bool wait_input(int timeout_ms) {
   int r = select(STDIN_FILENO + 1, &rf, nullptr, nullptr, &tv);
   return r > 0;
 }
+
+const char* input_backend() { return "posix tty (bytes)"; }
 
 int read_input(char* buf, size_t n) {
   ssize_t r = read(STDIN_FILENO, buf, n);
@@ -640,11 +658,16 @@ bool raw_begin(std::string* err) {
   // Reading records ourselves fixes both halves: every key and mouse event is
   // translated into the same VT sequences the parser already understands, and
   // a console can no longer look like a closed pipe.
+  // ENABLE_MOUSE_INPUT is what puts MOUSE_EVENT records in the buffer at all
+  // (without it the console throws mouse events away before anyone can read
+  // them).  Window-buffer-size events are deliberately not asked for: mdt
+  // polls the size itself, and every bit asked for is a bit some host may
+  // refuse to keep.
   DWORD in_mode = g_saved_in_mode;
-  in_mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT;
+  in_mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT;
   in_mode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT |
                ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE |
-               ENABLE_VIRTUAL_TERMINAL_INPUT);
+               ENABLE_WINDOW_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT);
   DWORD out_mode = g_saved_out_mode;
   out_mode |= ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING |
               DISABLE_NEWLINE_AUTO_RETURN;
@@ -654,9 +677,26 @@ bool raw_begin(std::string* err) {
              "or Windows Terminal / WezTerm / mintty)";
     return false;
   }
-  g_raw_in_mode = in_mode;
-  g_raw_out_mode = out_mode;
+  // Store what the console says it kept, not what was asked for.  A console
+  // does not have to keep every bit (ConPTY drops some), and comparing against
+  // the request made raw_intact() call the mode damaged on every single pass of
+  // the event loop: the reader then re-sent "enter the alternate screen" about
+  // six hundred times a second, which is the flickering reported in issue #3.
+  DWORD in_now = in_mode, out_now = out_mode;
+  GetConsoleMode(g_in, &in_now);
+  GetConsoleMode(g_out, &out_now);
+  g_raw_in_mode = in_now;
+  g_raw_out_mode = out_now;
   g_have_raw_modes = true;
+  if (key_log_enabled()) {
+    char note[160];
+    snprintf(note, sizeof note,
+             "console modes: asked in=0x%08lx out=0x%08lx -> kept in=0x%08lx out=0x%08lx "
+             "(mouse events %s)",
+             (unsigned long)in_mode, (unsigned long)out_mode, (unsigned long)in_now,
+             (unsigned long)out_now, (in_now & ENABLE_MOUSE_INPUT) ? "on" : "REFUSED");
+    key_log_note(note);
+  }
   g_in_is_console = true;   // GetConsoleMode() succeeded on stdin above
   g_win_pending.clear();
   return true;
@@ -664,6 +704,10 @@ bool raw_begin(std::string* err) {
 
 bool raw_intact() {
   if (!g_have_raw_modes) return true;
+  // Test hook: pretend the host silently drops mode bits, which is what turned
+  // the "did a child cook my tty" check into a redraw storm on Windows
+  // (issue #3).  Used by tools/idle_frame_test.py, not documented for users.
+  if (getenv("MDT_FAKE_STALE_MODE")) return false;
   DWORD in_mode = 0, out_mode = 0;
   if (!GetConsoleMode(g_in, &in_mode) || !GetConsoleMode(g_out, &out_mode)) return true;
   return in_mode == g_raw_in_mode && out_mode == g_raw_out_mode;
@@ -742,8 +786,27 @@ bool poll_resize() {
 
 bool wait_input(int timeout_ms) {
   HANDLE h = g_in != INVALID_HANDLE_VALUE ? g_in : GetStdHandle(STD_INPUT_HANDLE);
-  DWORD r = WaitForSingleObject(h, (DWORD)timeout_ms);
-  return r == WAIT_OBJECT_0;
+  if (!g_in_is_console) {
+    DWORD r = WaitForSingleObject(h, (DWORD)timeout_ms);
+    return r == WAIT_OBJECT_0;
+  }
+  // A console input handle reports itself as ready even when its buffer is
+  // empty, so WaitForSingleObject is useless here: trusting it turned the
+  // event loop into a spin that polled ~600 times a second (issue #3, and the
+  // reason the reader looked like it was flickering).  The buffer count is the
+  // only honest answer, so this polls it and sleeps in between.  The sleep
+  // grows to a few milliseconds, which keeps a key press feeling immediate
+  // while an idle reader costs a handful of wake-ups per second-pause.
+  if (timeout_ms < 0) timeout_ms = 0;
+  DWORD deadline = GetTickCount() + (DWORD)timeout_ms;
+  for (int nap = 1;;) {
+    DWORD available = 0;
+    if (!GetNumberOfConsoleInputEvents(h, &available)) return true;  // read_input decides
+    if (available > 0) return true;
+    if ((long)(GetTickCount() - deadline) >= 0) return false;
+    Sleep((DWORD)nap);
+    if (nap < 8) nap++;
+  }
 }
 
 // ---------------------------------------------------------------- records ----
@@ -887,6 +950,10 @@ static int win_console_read(char* buf, size_t n) {
   return win_console_read(buf, n);
 }
 
+const char* input_backend() {
+  return g_in_is_console ? "windows console records" : "windows byte stream";
+}
+
 int read_input(char* buf, size_t n) {
   if (g_in_is_console) {
     int got = win_console_read(buf, n);
@@ -919,9 +986,13 @@ bool write_out(const char* data, size_t n) {
   HANDLE h = g_out != INVALID_HANDLE_VALUE ? g_out : GetStdHandle(STD_OUTPUT_HANDLE);
   size_t off = 0;
   while (off < n) {
-    // conhost refuses (or crawls on) very large console writes; 64 KB is the
-    // size its own buffered writer uses.
-    DWORD chunk = (DWORD)std::min<size_t>(n - off, (size_t)(64 * 1024));
+    // A whole frame is one WriteFile, and a console write of many megabytes is
+    // not something a console can take in one gulp: the host will display what
+    // it managed to buffer and mdt keeps going, which a reader scrolling past a
+    // big document feels as flicker (issue #3).  A few kilobytes per call is
+    // what a terminal keeps up with.  ConPTY's own input buffer is 4 KB, and
+    // this stays clear of it.
+    DWORD chunk = (DWORD)std::min<size_t>(n - off, (size_t)(4 * 1024));
     DWORD written = 0;
     if (!WriteFile(h, data + off, chunk, &written, nullptr) || written == 0) {
       // fall back to the CRT for redirected output

@@ -76,7 +76,22 @@ class DocView {
  public:
   void set_terminal(Terminal* t) { term_ = t; }
   void set_math(MathRenderer* m) { math_ = m; }
-  void set_theme(const Theme& th) { theme_ = th; }
+  void set_theme(const Theme& th) {
+    theme_ = th;
+    // A formula's bitmap has the theme's ink colour and the page background
+    // composited into it, and the layout keeps those bitmaps, so re-theming
+    // without rebuilding them leaves the old theme's formulas - including
+    // their background - on screen (issue #3).  relayout() rebuilds them;
+    // theme_gen() lets the caller re-key the terminal's image cache too.
+    theme_gen_++;
+    // relayout() drops the layout's own caches (assets_, asset_map_,
+    // clip_cache_) and rebuilds the pictures for the new colours.  The image
+    // loader is deliberately *not* cleared: it holds downloaded pictures, which
+    // do not depend on the theme, and clearing it makes mdt download every
+    // picture again (tools/async_image_test.py catches exactly that).
+    relayout();
+  }
+  int theme_gen() const { return theme_gen_; }
   void set_options(const RenderOptions& o) { opt_ = o; lazy_metrics_ = o.lazy_metrics; }
   const RenderOptions& options() const { return opt_; }
   void set_document(MdDocument doc, const std::string& path, const std::string& base_dir);
@@ -290,6 +305,7 @@ class DocView {
   // scrolling revisits the same cut over and over.
   std::shared_ptr<ImageAsset> sub_variant(const ImageAsset& a, int clip_top, int vis_h);
   std::map<std::tuple<const ImageAsset*, int, int>, std::shared_ptr<ImageAsset>> clip_cache_;
+  int theme_gen_ = 0;
 
   void layout_blocks();
   // Lays a table out into bl, starting at column `indent` with `avail` columns

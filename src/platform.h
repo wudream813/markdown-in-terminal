@@ -68,6 +68,11 @@ bool poll_resize();
 
 // Waits up to timeout_ms for input. Returns true when data may be available.
 bool wait_input(int timeout_ms);
+
+// What stdin is being read as, for --diag: "console records" / "byte stream".
+// The two paths differ in ways that produced two bugs in issue #3 (mouse
+// records and the idle behaviour), so a report should say which one ran.
+const char* input_backend();
 // Reads pending bytes; returns -1 on EOF, 0 when nothing was available.
 int read_input(char* buf, size_t n);
 

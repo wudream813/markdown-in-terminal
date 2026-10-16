@@ -58,9 +58,12 @@ ifneq ($(findstring mingw,$(CXX)$(TARGET)),)
 endif
 
 # -------------------------------------------- MSYS2, MSYSTEM=MSYS (POSIX) ----
-# In the MSYS shell gcc targets x86_64-pc-msys: a POSIX layer on top of Win32,
-# so mdt builds against the POSIX half of platform.cpp and needs three things
-# the Linux line does not:
+# In the MSYS shell gcc reports a POSIX-on-Windows target - one contributor's
+# MSYS2 gcc 15 says "x86_64-pc-cygwin" where older ones said "x86_64-pc-msys",
+# and Cygwin's own gcc says the same - so both names select this branch.  A
+# win32 target (mingw) was already handled above and never reaches here.
+#
+# The build needs three things the Linux line does not:
 #   * the MSYS headers hide POSIX declarations under -std=c++17 / -std=c11,
 #     because those define __STRICT_ANSI__ (strdup, realpath, fileno... all
 #     vanish - and so the build fails).  GNU mode puts them back;
@@ -68,7 +71,7 @@ endif
 #   * -lpthread / -ldl are stubs that some installs do not ship as files.
 # The libraries are probed instead of assumed, so a toolchain that spells one
 # of them differently does not break the build.
-ifneq ($(findstring msys,$(TARGET)),)
+ifneq ($(findstring msys,$(TARGET))$(findstring cygwin,$(TARGET)),)
   MSYS     := 1
   CXXFLAGS := $(patsubst -std=c++17,-std=gnu++17,$(CXXFLAGS))
   CFLAGS   := $(patsubst -std=c11,-std=gnu11,$(CFLAGS))

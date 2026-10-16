@@ -5,6 +5,71 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.14] — 2026-10-16
+
+Second round on issue #3: the release build of 0.3.13 still flickered, its mouse
+did not work in WezTerm, and switching theme left the old theme's formula
+backgrounds on screen.
+
+### Fixed
+
+* **The reader flickered and redrew without end (Windows).** `raw_intact()`
+  compared the *requested* console mode with the current one, but a console
+  does not have to keep every bit that was asked for (ConPTY drops some).  The
+  comparison was therefore permanently false, and the "a child process cooked
+  my tty" repair - which re-enters the alternate screen, clearing it, and hides
+  the cursor - ran on *every* pass of the event loop.  Repairs now happen on the
+  transition (and, if a host really keeps refusing, at most once every five
+  seconds), and the mode that is remembered is the one the console said it kept
+  rather than the one that was requested.  `tools/idle_frame_test.py` measures
+  it: a still document is drawn once, and the "host drops a mode bit" case is
+  simulated with `MDT_FAKE_STALE_MODE=1` so the regression is testable anywhere
+  (90 frames in the old code, 1-6 now).
+* **The loop spun at ~600 Hz while idle (Windows).** A console input handle
+  reports itself as readable even when its buffer is empty, so the wait the
+  event loop relies on returned immediately.  `wait_input()` now polls the
+  console's buffer count and sleeps in between; a spurious "ready but nothing
+  there" read costs a millisecond instead of a busy loop.
+* **Mouse did not work under WezTerm (Windows).** 0.3.13 asked only for
+  `ENABLE_VIRTUAL_TERMINAL_INPUT` and relied on the host forwarding mouse
+  reports as VT bytes; WezTerm's ConPTY does not do that, so mice were simply
+  lost (the log in the issue shows keyboard records arriving and no mouse
+  events at all).  `ENABLE_MOUSE_INPUT` is now requested, which is what makes
+  the console produce MOUSE_EVENT records in the first place; whether the host
+  kept that bit is written to the key log.
+* **Frames are written in 4 KB pieces (Windows).** A whole frame used to be one
+  `WriteFile` - megabytes for a long document, far more than a console can take
+  in one gulp, which a reader scrolling past a big document feels as flicker.
+* **Formula backgrounds did not follow a theme change (all platforms).** A
+  formula bitmap has the theme's ink colour and the page background composited
+  into it, and the layout keeps those bitmaps, while the terminal caches images
+  by content - so neither noticed.  `set_theme()` now relayouts, which drops the
+  layout's pictures and rebuilds them (the image *loader* is deliberately left
+  alone: it holds downloaded pictures, which do not depend on the theme, and
+  clearing it made mdt download every picture again - caught by
+  `tools/async_image_test.py`), and the terminal cache is re-keyed with the
+  theme's name plus a generation counter, which also fixes sixel payload reuse.
+  `tools/theme_formula_test.py` drives the reader, presses `t` and requires
+  image payloads that were never sent before: with the old single-line
+  `set_theme()` the base64 sets are identical phase after phase, which is what
+  "the background did not change" looks like on the wire.
+* **MSYS2's MSYS shell was not detected** (`gcc -dumpmachine` reports
+  `x86_64-pc-cygwin` there, not `x86_64-pc-msys`): it never took the GNU-dialect
+  / `-lconv` branch, and `make TARGET=…` made it worse because `TARGET` is a
+  make-internal variable.  Both spellings are recognised now.  The MSYS build
+  also names its output `mdt.exe`, since MSYS gcc appends the suffix itself.
+
+### Added
+
+* `--diag` prints which input path is in use (`windows console records` /
+  `windows byte stream` / `posix tty (bytes)`) - the two Windows paths differ in
+  exactly the ways this issue was about.
+* The key log also records what the console *kept* of the requested modes, so
+  "the mouse is missing" can be told apart from "the console refused the bit".
+* `tools/keylog_test.py` now also asserts that an idle reader waits instead of
+  reading in a loop, and `tools/idle_frame_test.py` guards both halves of the
+  flicker on every platform.
+
 ## [0.3.13] — 2026-10-15
 
 Fixes the Windows console input path (issue #3) and makes the build work in

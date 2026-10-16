@@ -377,12 +377,31 @@ void Terminal::handle_resize() {
 }
 bool Terminal::resized() { return plat::poll_resize(); }
 
+void Terminal::set_theme_cache(const std::string& key) {
+  // The terminal caches image payloads (PNG bytes / sixel data) by content -
+  // 64 bytes of SHA-256.  A formula's bitmap bakes in the theme's ink colour,
+  // so a theme change produces different bytes for the same key, and a
+  // terminal that trusts its cache would keep drawing the old theme's
+  // pictures.  (Issue #3: "the background inside KaTeX formulas did not change
+  // with the theme" - that was this cache.)
+  theme_cache_ = key;
+  // sixel payloads are cached by content hash here as well
+  sixel_cache_.clear();
+}
+
 bool Terminal::poll_input(std::string& out, int timeout_ms) {
   if (!plat::wait_input(timeout_ms)) return true;  // timeout
   char buf[4096];
   int n = plat::read_input(buf, sizeof(buf));
   if (n < 0) return false;  // EOF
-  if (n == 0) return true;
+  if (n == 0) {
+    // "Ready but nothing there": a spurious wake-up, or a console that reports
+    // itself readable with an empty buffer (issue #3's spin).  Waiting a
+    // millisecond here keeps any such host from burning the CPU even if the
+    // wait above ever becomes a lie again.
+    plat::sleep_ms(1);
+    return true;
+  }
   out.assign(buf, (size_t)n);
   return true;
 }
@@ -607,6 +626,9 @@ std::string Terminal::emit_images(const std::vector<PlacedImage>& imgs) {
         size_t h = 1469598103934665603ull;
         for (uint8_t b : *im.png) { h ^= b; h *= 1099511628211ull; }
         h ^= (size_t)im.px_w * 1315423911u + (size_t)im.px_h;
+        // ... and by the theme the bitmap was drawn for: a formula's ink
+        // colour is baked in, so the same PNG bytes can belong to two themes.
+        for (char tc : theme_cache_) { h ^= (unsigned char)tc; h *= 1099511628211ull; }
         ImgEntry* hit = nullptr;
         for (auto& e : kitty_cache_) {
           if (e.hash == h && e.len == im.png->size()) { hit = &e; break; }
@@ -653,6 +675,7 @@ std::string Terminal::emit_images(const std::vector<PlacedImage>& imgs) {
         if (!im.rgba) continue;
         RGB cb = im.has_comp_bg ? im.comp_bg : image_bg;
         size_t h = hash_bytes(im.rgba->data(), im.rgba->size()) ^ ((size_t)im.px_w << 20) ^ im.px_h;
+        for (char tc : theme_cache_) { h ^= (unsigned char)tc; h *= 1099511628211ull; }
         h ^= (size_t)cb.r * 0x9E3779B97F4A7C15ull + (size_t)cb.g * 0x517CC1B727220A95ull + cb.b;
         auto it = sixel_cache_.find(h);
         if (it != sixel_cache_.end()) {

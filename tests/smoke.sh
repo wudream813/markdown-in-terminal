@@ -302,6 +302,12 @@ python3 tools/resize_test.py "$BIN"
 echo "== the key parser is handed whole sequences (issue #3) =="
 python3 tools/keylog_test.py "$BIN" || exit 1
 
+echo "== an untouched reader stays untouched (issue #3) =="
+python3 tools/idle_frame_test.py "$BIN" || exit 1
+
+echo "== a theme change reaches the formulas (issue #3) =="
+python3 tools/theme_formula_test.py "$BIN" || exit 1
+
 echo "== interrupted from the outside (SIGTERM) =="
 python3 tools/panic_test.py "$BIN"
 

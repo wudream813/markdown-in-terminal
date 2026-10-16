@@ -173,6 +173,12 @@ if command -v python3 >/dev/null 2>&1; then
   echo "== the key parser is handed whole sequences (issue #3) =="
   python3 tools/keylog_test.py "$EXE" "$WINE" || exit 1
 
+  echo "== an untouched reader stays untouched (issue #3) =="
+  python3 tools/idle_frame_test.py "$EXE" "$WINE" || exit 1
+
+  echo "== a theme change reaches the formulas (issue #3) =="
+  python3 tools/theme_formula_test.py "$EXE" "$WINE" || exit 1
+
   echo "== startup geometry (resize polling is exercised on real Windows) =="
   MDT_RESIZE_SKIP=1 python3 tools/resize_test.py "$EXE" "$WINE" || exit 1
 

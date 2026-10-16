@@ -176,6 +176,9 @@ struct App {
 
   bool images_pending_ = false;    // mirror of view.images_pending()
 
+  bool mode_broken_ = false;       // the tty modes are not ours right now
+  double mode_retry_at_ = 0.0;     // ... and nagging about it is useless anyway
+
   void set_status(const std::string& s, double secs = 3.0) {
     status_msg = s;
     status_until = now_ms() + secs * 1000;
@@ -691,9 +694,24 @@ void App::run() {
     return false;
   };
   while (!quit) {
-    if (!term.mode_intact()) {  // a child process cooked our tty: take it back
-      term.reassert_mode();
-      needs_frame = true;
+    // A child process sharing the tty can cook it, and taking raw mode back
+    // also re-enters the alternate screen (which clears it) and hides the
+    // cursor.  So repair on the *transition*, not on every pass: a host that
+    // does not keep a mode bit would otherwise be "repaired" hundreds of times
+    // a second, which is the flickering reported in issue #3.  While the modes
+    // stay broken it retries at a human pace instead of spinning.
+    {
+      double now = now_ms();
+      if (!term.mode_intact()) {
+        if (!mode_broken_ || now >= mode_retry_at_) {
+          mode_broken_ = true;
+          mode_retry_at_ = now + 5000.0;
+          term.reassert_mode();
+          needs_frame = true;
+        }
+      } else if (mode_broken_) {
+        mode_broken_ = false;
+      }
     }
     if (term.resized()) {
       term.handle_resize();
@@ -877,7 +895,10 @@ void App::run() {
         static int ti = 0;
         ti = (ti + 1) % 4;
         theme = theme_by_name(names[ti]);
-        view.set_theme(theme);
+        view.set_theme(theme);                 // drops the old clipped assets
+        term.set_theme_cache(fmt("%s:%d", names[ti], view.theme_gen()));
+        needs_frame = true;
+        term.clear_images();                   // wipe the old theme's pictures
         set_status(std::string(tr("theme: ", "主题：")) + names[ti]);
         break;
       }
@@ -896,6 +917,9 @@ void App::run() {
         term.drop_image_cache();
         view.clear_image_cache();
         view.set_theme(theme);
+        term.set_theme_cache(fmt("cell-%dx%d-%d", term.caps.px_cell_w(), term.caps.px_cell_h(),
+                                 view.theme_gen()));
+        term.clear_images();
         needs_frame = true;
         set_status(fmt("[%s] %dx%d cells, cell %dx%d px, window %dx%d px",
                        gfx_name(term.caps.gfx), term.caps.cols, term.caps.rows,
@@ -1186,6 +1210,7 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
   printf("  language        : %s (%s)\n", lang_name(language()), language_source().c_str());
   printf("  theme           : %s%s\n", opt.theme.c_str(), opt.no_color ? "  (NO_COLOR/--no-color)" : "");
   printf("  terminal env    :%s\n", envs.empty() ? " (none set)" : envs.c_str());
+  printf("  input backend   : %s\n", plat::input_backend());
   int tc = plat::stdout_is_tty() ? 1 : 0;
   int cols = 0, rows = 0;
   int pxw = 0, pxh = 0;

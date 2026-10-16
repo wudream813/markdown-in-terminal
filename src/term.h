@@ -143,6 +143,10 @@ class Terminal {
   void clear_images();
   // Emit placed images (called after the text frame has been written).
   std::string emit_images(const std::vector<PlacedImage>& imgs);
+  // Tell the terminal-side image cache which theme the pictures belong to:
+  // a formula's ink colour is baked into the PNG, so the same payload can
+  // belong to two themes and must not be reused across them (issue #3).
+  void set_theme_cache(const std::string& key);
   void drop_image_cache();
 
   // Non-blocking read of pending bytes (input + resize); returns false on EOF.
@@ -197,6 +201,7 @@ class Terminal {
   int next_img_id_ = 1;
   struct ImgEntry { int id = 0; size_t hash = 0; size_t len = 0; int last_seen = 0; };
   std::vector<ImgEntry> kitty_cache_;
+  std::string theme_cache_;   // what the cached image payloads were drawn for
   // sixel encoding is expensive: cache the payload by content hash
   struct SixelEntry { std::string payload; int last_seen = 0; };
   std::map<size_t, SixelEntry> sixel_cache_;

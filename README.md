@@ -339,6 +339,17 @@ key or click can arrive as a bare `ESC`. A console is also never at
 end-of-input: if you pipe a document into `mdt -`, stdin is not a console and
 the byte path is used, as before.
 
+What the console keeps is not necessarily what was asked for, so mdt remembers
+the mode the console reported back and writes it to the key log
+(`console modes: asked in=0x… kept in=0x… (mouse events on/REFUSED)`).  It also
+no longer believes a console handle that says it is readable while its buffer is
+empty - it counts the buffered records and sleeps in between, so an idle reader
+draws no frames and writes no bytes - and it no longer asks for window-size
+events, since it polls the size itself.
+
+`mdt --diag` prints which input path is in use: `windows console records`,
+`windows byte stream` or `posix tty (bytes)`.
+
 If a key still misbehaves on your terminal, ask mdt what it received:
 
 ```bat
