@@ -173,6 +173,10 @@ AutoReqProv:    no
 
 %global debug_package %{{nil}}
 %global _build_id_links none
+# rpm's brp-strip runs the *host* strip over everything in the build root, which
+# refuses a binary of the other architecture (fatal on rpm 4.18, only a warning
+# on newer ones).  Nothing here is compiled, so there is nothing to strip.
+%global __strip /bin/true
 
 %description
 {long_text}
