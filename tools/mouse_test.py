@@ -149,24 +149,17 @@ def status(out):
     return int(m[-1]) if m else -1
 
 
-def wine_major(wine):
-    """Major version of the wine we are about to use, or 0 if it cannot be read."""
-    import re as _re
-    import subprocess
+def log_lines():
     try:
-        out = subprocess.run([wine, "--version"], capture_output=True, text=True, timeout=20).stdout
-    except Exception:
-        return 0
-    m = _re.search(r"wine[-\s]*(\d+)", out)
-    return int(m.group(1)) if m else 0
+        return open(KEY_LOG, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        return []
 
 
 def received_any_input():
-    try:
-        lines = open(KEY_LOG, encoding="utf-8", errors="replace").read().splitlines()
-    except OSError:
-        return False
-    return any("nothing" not in ln and not ln.startswith("---") for ln in lines)
+    # Event lines start with "[time] "; key_log_note() lines are indented and
+    # describe the console modes, so they do not count as input.
+    return any(ln.startswith("[") and "nothing" not in ln for ln in log_lines())
 
 
 def main():
@@ -178,19 +171,21 @@ def main():
     args = ["--gfx=none", "demo/demo.md"]
     argv = [wine, exe] + args if wine else [exe] + args
 
-    # Ubuntu's Wine 9 console host accepts ENABLE_MOUSE_INPUT and then never
-    # delivers a single mouse record or mouse byte to the program (verified with
-    # MDT_KEY_LOG in CI: the mode log line is the only thing the reader sees).
-    # Wine 10 does deliver them, as does a real Windows console, so this is a
-    # property of that host - skip with an explanation there instead of failing
-    # a build for something that is not the program's doing.
-    old_wine = bool(wine) and 0 < wine_major(wine) < 10
-    if old_wine:
+    # Under wine the console host may accept ENABLE_MOUSE_INPUT and then never
+    # deliver a single mouse record to the program (Ubuntu's Wine 9 in CI does
+    # exactly that: verified with MDT_KEY_LOG, the mode line is all the reader
+    # ever sees).  That is the host, not the program, so when we are running
+    # through wine and not one byte of the mouse reports arrives, say so and
+    # skip.  Wine 10 (tested locally) and a real Windows console do deliver
+    # them - and a real console is driven without this wine argument, so a
+    # genuine regression there still fails the build.
+    if wine:
         run(argv, [b"\x1b[<65;40;12M"] * 6)
         if not received_any_input():
-            print(f"   skip  {wine} does not deliver console mouse input to the")
-            print("         program (mode accepted, zero records: known Wine 9")
-            print("         limitation); wine 10 and real Windows are tested")
+            print(f"   skip  {wine} delivers no console mouse input at all to the")
+            print("         program: the console accepts the mouse mode and then")
+            print("         nothing arrives.  Known Wine 9 limitation, not a")
+            print("         reader bug (wine 10 and real Windows deliver them)")
             return 0
 
     fails = []
@@ -246,16 +241,15 @@ def main():
 
     if fails:
         print("\nmouse checks failed:", ", ".join(fails))
-        try:
-            log = open(KEY_LOG, encoding="utf-8", errors="replace").read().splitlines()
-        except OSError:
-            log = []
-        interesting = [ln for ln in log if "nothing" not in ln][1:]  # skip the header
-        if interesting:
+        log = log_lines()
+        inputs = [ln for ln in log if ln.startswith("[") and "nothing" not in ln]
+        if inputs:
             print("input the reader actually received:")
-            for ln in interesting[-12:]:
+            for ln in inputs[-12:]:
                 print("   " + ln)
         else:
+            for ln in [l for l in log if not l.startswith("[")][-3:]:
+                print("   " + ln.strip())
             print("the reader received no input at all from this host: the mouse")
             print("reports never left the test's pty, so nothing here is mdt's")
             print("doing (Ubuntu's Wine 9 console host does not deliver them).")
