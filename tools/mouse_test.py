@@ -149,6 +149,26 @@ def status(out):
     return int(m[-1]) if m else -1
 
 
+def wine_major(wine):
+    """Major version of the wine we are about to use, or 0 if it cannot be read."""
+    import re as _re
+    import subprocess
+    try:
+        out = subprocess.run([wine, "--version"], capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return 0
+    m = _re.search(r"wine[-\s]*(\d+)", out)
+    return int(m.group(1)) if m else 0
+
+
+def received_any_input():
+    try:
+        lines = open(KEY_LOG, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        return False
+    return any("nothing" not in ln and not ln.startswith("---") for ln in lines)
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -157,6 +177,21 @@ def main():
     wine = sys.argv[2] if len(sys.argv) > 2 else None
     args = ["--gfx=none", "demo/demo.md"]
     argv = [wine, exe] + args if wine else [exe] + args
+
+    # Ubuntu's Wine 9 console host accepts ENABLE_MOUSE_INPUT and then never
+    # delivers a single mouse record or mouse byte to the program (verified with
+    # MDT_KEY_LOG in CI: the mode log line is the only thing the reader sees).
+    # Wine 10 does deliver them, as does a real Windows console, so this is a
+    # property of that host - skip with an explanation there instead of failing
+    # a build for something that is not the program's doing.
+    old_wine = bool(wine) and 0 < wine_major(wine) < 10
+    if old_wine:
+        run(argv, [b"\x1b[<65;40;12M"] * 6)
+        if not received_any_input():
+            print(f"   skip  {wine} does not deliver console mouse input to the")
+            print("         program (mode accepted, zero records: known Wine 9")
+            print("         limitation); wine 10 and real Windows are tested")
+            return 0
 
     fails = []
     out = run(argv, [])
