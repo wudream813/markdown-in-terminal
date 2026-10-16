@@ -15,6 +15,7 @@
 
 ```
 gen.py                  从一个 tag 重新生成全部清单（下载产物 → 算 sha256 → 重写文件）
+pkgs.py                 从发布产物打 .deb 与 .rpm（dpkg-deb + rpmbuild，四种包一次出）
 verify.py               把清单里每个 url/sha256 真的下载一遍、比一遍（发布前跑它）
 scoop/mdt.json          Scoop manifest（装 release zip，把 mdt.exe 放进 PATH）
 homebrew/mdt.rb         Homebrew formula（macOS arm64 + Linux x86-64/arm64，含 man page 与补全）
@@ -22,7 +23,21 @@ winget/*.yaml           winget 的三件套（version / installer / defaultLocal
 aur/{PKGBUILD,.SRCINFO} AUR 的 mdt-bin（x86_64 与 aarch64 静态二进制，无依赖，带 optdepends）
 ```
 
-`gen.py` 和 `verify.py` 只依赖 Python 3 标准库，跟仓库其它工具一样。
+`gen.py` 和 `verify.py` 只依赖 Python 3 标准库，跟仓库其它工具一样；
+`pkgs.py` 另需 `dpkg-deb`（dpkg 自带）与 `rpmbuild`（`rpm` 包）。
+
+## .deb 与 .rpm
+
+```sh
+python3 packaging/pkgs.py v0.3.18                     # 下载发布产物再打包
+python3 packaging/pkgs.py v0.3.18 --from dist --out dist   # 用已有文件（CI 就是这么调的）
+```
+
+一次出四个：`mdt_<版本>-1_amd64.deb`、`mdt_<版本>-1_arm64.deb`、
+`mdt-<版本>-1.x86_64.rpm`、`mdt-<版本>-1.aarch64.rpm`。包里是二进制 + man page +
+三个补全；因为是静态二进制，**依赖是空的**，`curl` 与 `xdg-utils` 只写成
+Recommends。aarch64 的 rpm 由 `rpmbuild --target aarch64` 在 x86-64 上直接打出来
+（这里不编译任何东西，payload 是现成的），所以 CI 不需要 ARM runner。
 
 ## 发布一个新版本时
 
@@ -113,6 +128,8 @@ cd mdt-bin && makepkg --printsrcinfo > .SRCINFO && git add -A && git commit -m "
 * ~~Linux 只有 amd64、macOS 只有 arm64~~ —— **Linux arm64 已在 0.3.17 补上**（交叉编译 + qemu
   冒烟测试，发布文件 `mdt-linux-arm64`，Scoop 之外的三个渠道都覆盖到了）。macOS 仍只有 arm64
   （Intel Mac 需要 x86-64 交叉编译，暂无需求）。
+* ~~Debian 包~~ —— **已在 0.3.18 补上**（`packaging/pkgs.py`：.deb 与 .rpm，各两种架构）。
+  它们不进任何包仓库：装法是直接下 release 里的文件（README 里有一行命令）。
 * macOS 未签名公证：要 Apple Developer ID 才能根治，不是改代码能解决的。
-* 其余候选：`nixpkgs`、Fedora COPR、Debian 包（`.deb` 可以用 `nfpm` 从一个静态二进制直接生成，
-  是最省事的下一个）。
+* 其余候选：把 `.deb`/`.rpm` 推进某个仓库（Debian 要 mentor + NEW 队列、Fedora 要 COPR），
+  以及 `nixpkgs`、Alpine。

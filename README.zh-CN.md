@@ -98,6 +98,25 @@ chmod +x mdt && xattr -d com.apple.quarantine mdt 2>/dev/null
 sudo install -m 0755 mdt /usr/local/bin/mdt
 ```
 
+也可以直接用发行版的包（发布页里就是这两个名字）：
+
+```sh
+# Debian / Ubuntu / 树莓派 OS（amd64 与 arm64）
+curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt_0.3.18-1_amd64.deb
+sudo apt install ./mdt_0.3.18-1_amd64.deb     # 静态二进制，apt 不会额外拉依赖
+
+# Fedora / RHEL / openSUSE（x86_64 与 aarch64）
+sudo dnf install https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-0.3.18-1.x86_64.rpm
+```
+
+包里带二进制、man page 和三个补全脚本；`curl` 与 `xdg-utils` 是**推荐**而非依赖
+（远程图片和 `o` 键才用到）。每个版本的包都由 `packaging/pkgs.py` 生成：
+
+| 包 | 架构 |
+|:--|:--|
+| `mdt_<版本>-1_amd64.deb` / `mdt_<版本>-1_arm64.deb` | Debian/Ubuntu/树莓派 OS |
+| `mdt-<版本>-1.x86_64.rpm` / `mdt-<版本>-1.aarch64.rpm` | Fedora/RHEL/openSUSE |
+
 也可以交给包管理器（升级时 `mdt --version` 会告诉你新版号）：
 
 ```sh

@@ -216,6 +216,25 @@ Or let a package manager do it, and let `mdt --version` tell you when to
 upgrade:
 
 ```sh
+# Debian, Ubuntu, Raspberry Pi OS ... (amd64 and arm64)
+V=0.3.18                                   # the table below lists both names
+curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/download/v$V/mdt_$V-1_amd64.deb
+sudo apt install ./mdt_$V-1_amd64.deb      # nothing to pull in: the binary is static
+
+# Fedora, RHEL, openSUSE ... (x86_64 and aarch64)
+sudo dnf install https://github.com/wudream813/markdown-in-terminal/releases/download/v$V/mdt-$V-1.x86_64.rpm
+```
+
+The packages carry the binary, the man page and the three completions; `curl`
+and `xdg-utils` are **recommended**, not required (remote pictures and the `o`
+key use them).  They are built by `packaging/pkgs.py` for every release:
+
+| package | architecture |
+|:--|:--|
+| `mdt_<version>-1_amd64.deb` / `mdt_<version>-1_arm64.deb` | Debian/Ubuntu/Raspberry Pi OS |
+| `mdt-<version>-1.x86_64.rpm` / `mdt-<version>-1.aarch64.rpm` | Fedora/RHEL/openSUSE |
+
+```sh
 # macOS (Apple silicon) and Linux (x86-64 or arm64)
 brew tap wudream813/mdt && brew install mdt
 ```

@@ -138,12 +138,21 @@ jobs:
       - name: Make binaries executable
         run: chmod +x dist/mdt-linux-amd64 dist/mdt-linux-arm64 dist/mdt-macos-arm64 2>/dev/null || true
 
+      - name: Install rpm (for the .rpm packages)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rpm
+
+      - name: Build the .deb and .rpm packages
+        run: python3 packaging/pkgs.py "${GITHUB_REF_NAME}" --from dist --out dist
+
       - name: Add install.sh, the licence, and SHA256SUMS
         run: |
           cp install.sh LICENSE dist/
           cd dist
           sha256sum mdt-linux-amd64 mdt-linux-arm64 mdt-macos-arm64 \
-                    mdt-win64.exe mdt-*.zip install.sh LICENSE > SHA256SUMS
+                    mdt-win64.exe mdt-*.zip mdt-*.rpm mdt_*.deb \
+                    install.sh LICENSE > SHA256SUMS
           cat SHA256SUMS
 
       - name: Publish GitHub Release

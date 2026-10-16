@@ -5,6 +5,26 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.18] — 2026-10-16
+
+Distribution packages, without a distribution: every release now carries a
+`.deb` and an `.rpm` for both architectures, built from the same static
+binaries and attached next to them.
+
+### Added
+
+* **`mdt_<version>-1_{amd64,arm64}.deb`** and
+  **`mdt-<version>-1.{x86_64,aarch64}.rpm`**, built by the new
+  `packaging/pkgs.py` (dpkg-deb for the former, rpmbuild for the latter - one
+  x86-64 machine builds all four, because `rpmbuild --target aarch64` does not
+  care that the payload is foreign, and nothing is compiled here anyway).
+  Depends is empty on purpose: the binary is static.  `curl` and `xdg-utils`
+  are Recommends only - remote pictures and the `o` key use them, nothing else
+  does.  Both packages carry the man page and the bash/zsh/fish completions.
+  The release job builds them and `SHA256SUMS` covers them, so
+  `sudo apt install ./mdt_<version>-1_amd64.deb` works straight after a
+  release, and so does `dnf install <url>`.
+
 ## [0.3.17] — 2026-10-16
 
 Linux grew a second architecture: **arm64** (Raspberry Pi 4/5, ARM servers,
