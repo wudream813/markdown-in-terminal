@@ -5,6 +5,7 @@ import os
 import pty
 import re
 import select
+import signal
 import struct
 import sys
 import fcntl
@@ -41,7 +42,11 @@ def run(exe, wine, keys, cols=100, rows=24, timeout=25.0):
             if not chunk:
                 break
             out += chunk
-        if time.time() >= next_key and key_i < len(keys):
+        # Wait for the first frame before typing: wine can take a few seconds
+        # to start on a loaded machine, and keys sent into that gap are simply
+        # lost (the reader would then never see the "q" that ends the run).
+        ready = b"for help" in out or len(out) > 2000
+        if ready and time.time() >= next_key and key_i < len(keys):
             os.write(fd, keys[key_i])
             key_i += 1
             next_key = time.time() + 0.6
@@ -51,10 +56,18 @@ def run(exe, wine, keys, cols=100, rows=24, timeout=25.0):
         os.close(fd)
     except OSError:
         pass
-    try:
-        os.waitpid(pid, 0)
-    except ChildProcessError:
-        pass
+    # The last key is "q"; if the reader is still there a moment later (wine
+    # never delivered it, say) do not hang the whole suite on it - the checks
+    # below report what the screen actually showed either way.
+    for _ in range(20):
+        if os.waitpid(pid, os.WNOHANG) != (0, 0):
+            return out
+        time.sleep(0.1)
+    for fn, arg in ((os.kill, (pid, signal.SIGTERM)), (os.waitpid, (pid, 0))):
+        try:
+            fn(*arg)
+        except OSError:
+            pass
     return out
 
 

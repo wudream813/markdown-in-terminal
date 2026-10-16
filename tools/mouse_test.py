@@ -242,17 +242,21 @@ def main():
     if fails:
         print("\nmouse checks failed:", ", ".join(fails))
         log = log_lines()
-        inputs = [ln for ln in log if ln.startswith("[") and "nothing" not in ln]
+        notes = [ln.strip() for ln in log if not ln.startswith("[")]
+        events = [ln for ln in log if ln.startswith("[")]
+        idle = sum(1 for ln in events if "nothing" in ln)
+        inputs = [ln for ln in events if "nothing" not in ln]
+        for ln in notes[:3]:
+            print("   host said: " + ln)
         if inputs:
             print("input the reader actually received:")
             for ln in inputs[-12:]:
                 print("   " + ln)
         else:
-            for ln in [l for l in log if not l.startswith("[")][-3:]:
-                print("   " + ln.strip())
-            print("the reader received no input at all from this host: the mouse")
-            print("reports never left the test's pty, so nothing here is mdt's")
-            print("doing (Ubuntu's Wine 9 console host does not deliver them).")
+            print(f"the reader received no mouse report (it did {idle} empty reads,")
+            print("so the reading path runs: the reports never reached the program).")
+            print("Ubuntu's Wine 9 console host takes the mouse mode and then drops")
+            print("every report; wine 10 and real Windows deliver them.")
         return 1
     print("   mouse + scrollbar ok")
     return 0

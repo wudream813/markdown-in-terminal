@@ -656,8 +656,16 @@ def main():
         # A failure here has to say whether the keys reached the reader: with
         # the host swallowing input there is nothing the reader can do.
         got = keylog_input_lines()
+        try:
+            log = open(KEY_LOG, encoding="utf-8", errors="replace").read().splitlines()
+        except OSError:
+            log = []
+        for ln in [x.strip() for x in log if not x.startswith("[")][:2]:
+            print("         host said: " + ln)
+        idle = sum(1 for x in log if x.startswith("[") and "nothing" in x)
         print("         input the reader received in that session: "
-              + (" | ".join(g.strip() for g in got[-6:]) if got else "nothing at all"))
+              + (" | ".join(g.strip() for g in got[-6:]) if got
+                 else f"none ({idle} empty reads, so it does read the console)"))
     os.write(fd, b"q")
     try:
         os.close(fd)
