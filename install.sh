@@ -48,7 +48,7 @@ case "$os" in
 esac
 case "$arch" in
   x86_64|amd64) [ "$os_tag" = linux ] && asset=mdt-linux-amd64 || { echo "install.sh: macOS builds are Apple silicon only; build from source" >&2; exit 1; } ;;
-  aarch64|arm64) [ "$os_tag" = macos ] && asset=mdt-macos-arm64 || { echo "install.sh: no prebuilt arm64 Linux binary; build from source" >&2; exit 1; } ;;
+  aarch64|arm64) [ "$os_tag" = macos ] && asset=mdt-macos-arm64 || asset=mdt-linux-arm64 ;;
   *) echo "install.sh: no prebuilt binary for '$arch'" >&2; exit 1 ;;
 esac
 

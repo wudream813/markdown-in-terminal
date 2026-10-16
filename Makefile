@@ -44,6 +44,9 @@ TARGET   := $(shell $(CXX) -dumpmachine 2>/dev/null)
 #   make CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
 #   make CXX=i686-w64-mingw32-g++   CC=i686-w64-mingw32-gcc     (32 bit)
 #   (MSYS2, MSYSTEM=MINGW64/UCRT64/CLANG64: just `make`)
+#
+# Linux AArch64 (needs g++-aarch64-linux-gnu, and qemu-user-static to run it):
+#   make arm64                       -> build/arm64/mdt, static
 WINDOWS :=
 ifneq ($(findstring mingw,$(CXX)$(TARGET)),)
   WINDOWS  := 1
@@ -178,9 +181,16 @@ all-platforms: windows32
 windows32:
 	$(MAKE) BUILD=build/win32 CXX=i686-w64-mingw32-g++ CC=i686-w64-mingw32-gcc
 
-.PHONY: all-platforms windows windows32
+.PHONY: all-platforms windows windows32 arm64
 windows:
 	$(MAKE) BUILD=build/win CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
+
+# Linux on AArch64: the same static artefact the release ships.  Running it on
+# an x86-64 host needs qemu (binfmt_misc registration makes ./build/arm64/mdt
+# work as if it were native):
+#   make arm64 && ./build/arm64/mdt demo/demo.md
+arm64:
+	$(MAKE) STATIC=1 BUILD=build/arm64 CXX=aarch64-linux-gnu-g++ CC=aarch64-linux-gnu-gcc
 
 # header dependencies written by -MMD: without these a change to a .h file only
 # rebuilds the .cpp that directly includes it, leaving other objects compiled

@@ -24,6 +24,10 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux-amd64
+          - os: ubuntu-latest
+            target: linux-arm64
+            arm64: true
+            bin: build/arm64/mdt
           - os: macos-latest
             target: macos-arm64
           - os: ubuntu-latest
@@ -41,6 +45,18 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq g++-mingw-w64-x86-64
+
+      - name: Install the ARM64 cross compiler and qemu
+        if: matrix.arm64
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq g++-aarch64-linux-gnu qemu-user-static binfmt-support
+          # binfmt-support registers qemu-aarch64 by itself on the runner image;
+          # register it by hand if that did not happen, so ./mdt just runs.
+          if [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+            sudo sh -c 'echo ":qemu-aarch64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xb7\x00:\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/usr/bin/qemu-aarch64-static:F" > /proc/sys/fs/binfmt_misc/register'
+          fi
+          cat /proc/sys/fs/binfmt_misc/qemu-aarch64
 
       - name: Build
         run: |
@@ -64,6 +80,17 @@ jobs:
             ldd build/mdt 2>&1 | grep -q "not a dynamic executable" \
               || { echo "error: the Linux build is not static"; exit 1; }
             cp build/mdt "mdt-${{ matrix.target }}"
+          elif [ "${{ matrix.arm64 }}" = "true" ]; then
+            # Same static build as linux-amd64, cross compiled: the release
+            # runner is x86-64, the artefact is AArch64 (Raspberry Pi 4/5,
+            # Ampere, Apple's Linux VMs and anything else on arm64).
+            make STATIC=1 CXX=aarch64-linux-gnu-g++ CC=aarch64-linux-gnu-gcc \
+                 BUILD=build/arm64 -j"$JOBS"
+            file build/arm64/mdt | grep -q "ARM aarch64" \
+              || { echo "error: not an aarch64 binary"; exit 1; }
+            file build/arm64/mdt | grep -q "statically linked" \
+              || { echo "error: the arm64 build is not static"; exit 1; }
+            cp build/arm64/mdt "mdt-${{ matrix.target }}"
           else
             # macOS: -static is not a thing for the Apple linker, and the
             # system libraries are the ones the OS ships, so the ordinary
@@ -74,7 +101,13 @@ jobs:
 
       - name: Tests
         if: ${{ !matrix.mingw }}
-        run: sh tests/smoke.sh
+        run: |
+          # the arm64 job built into build/arm64 and runs the artefact under
+          # qemu (binfmt registration is transparent); the other jobs built
+          # build/mdt as usual
+          BIN="${{ matrix.bin }}"; BIN="${BIN:-./build/mdt}"
+          export BIN
+          sh tests/smoke.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -98,14 +131,14 @@ jobs:
           merge-multiple: true
 
       - name: Make binaries executable
-        run: chmod +x dist/mdt-linux-amd64 dist/mdt-macos-arm64 2>/dev/null || true
+        run: chmod +x dist/mdt-linux-amd64 dist/mdt-linux-arm64 dist/mdt-macos-arm64 2>/dev/null || true
 
       - name: Add install.sh, the licence, and SHA256SUMS
         run: |
           cp install.sh LICENSE dist/
           cd dist
-          sha256sum mdt-linux-amd64 mdt-macos-arm64 mdt-win64.exe mdt-*.zip \
-                    install.sh LICENSE > SHA256SUMS
+          sha256sum mdt-linux-amd64 mdt-linux-arm64 mdt-macos-arm64 \
+                    mdt-win64.exe mdt-*.zip install.sh LICENSE > SHA256SUMS
           cat SHA256SUMS
 
       - name: Publish GitHub Release

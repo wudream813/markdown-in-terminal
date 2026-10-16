@@ -187,11 +187,13 @@ one file, nothing to install besides it.
 | platform | file | notes |
 |:--|:--|:--|
 | Linux x86-64 | `mdt-linux-amd64` | statically linked since 0.3.9 — runs on any distribution, no glibc version to satisfy |
+| Linux arm64 | `mdt-linux-arm64` | statically linked too: Raspberry Pi 4/5, Ampere, ARM servers and Linux VMs on Apple silicon |
 | macOS arm64 | `mdt-macos-arm64` | Apple silicon; the binary is not signed/notarised, so `xattr -d com.apple.quarantine mdt` once after downloading |
 | Windows x64 | `mdt-win64.exe` | or the `mdt-<version>-win64.zip`, which also carries the demo |
 
 ```sh
-# Linux and macOS (Apple silicon) — one line, no package manager:
+# Linux (x86-64 or arm64) and macOS (Apple silicon) — one line, no package
+# manager; install.sh picks the file for this machine:
 curl -fsSL https://raw.githubusercontent.com/wudream813/markdown-in-terminal/main/install.sh | sh
 
 # ... which is the same as doing it by hand:
@@ -199,6 +201,10 @@ curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/late
 chmod +x mdt && sudo install -m 0755 mdt /usr/local/bin/mdt
 mdt --list-caps          # what mdt detected: cell size, graphics protocol, fonts
 mdt README.md
+
+# Linux arm64 (Raspberry Pi, ARM server, ...)
+curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-linux-arm64
+chmod +x mdt && sudo install -m 0755 mdt /usr/local/bin/mdt
 
 # macOS (Apple silicon)
 curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-macos-arm64
@@ -210,7 +216,7 @@ Or let a package manager do it, and let `mdt --version` tell you when to
 upgrade:
 
 ```sh
-# macOS (Apple silicon) and Linux x86-64
+# macOS (Apple silicon) and Linux (x86-64 or arm64)
 brew tap wudream813/mdt && brew install mdt
 ```
 
@@ -266,6 +272,18 @@ sudo apt install mingw-w64          # or: dnf install mingw64-gcc-c++; brew inst
 make windows                        # -> build/win/mdt.exe         (x86-64)
 make windows32                      # -> build/win32/mdt.exe       (32 bit)
 sh tools/build_windows.sh           # build + dependency check + dist/*.zip
+```
+
+### Building for Linux arm64
+
+The arm64 release is the same static build, cross compiled — no ARM machine
+needed for the compile, and `qemu-user-static` runs it for a smoke test:
+
+```sh
+sudo apt install g++-aarch64-linux-gnu qemu-user-static   # the latter to run it
+
+make arm64                          # -> build/arm64/mdt (static, AArch64)
+./build/arm64/mdt demo/demo.md      # runs through binfmt_misc/qemu on x86-64
 ```
 
 With CMake instead:

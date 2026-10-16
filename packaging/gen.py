@@ -48,6 +48,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 # name -> (url template, what it is used for)
 ASSETS = {
     "linux": ("mdt-linux-amd64", "Homebrew (Linux), AUR"),
+    "linux_arm64": ("mdt-linux-arm64", "Homebrew (Linux arm64), AUR"),
     "macos": ("mdt-macos-arm64", "Homebrew (macOS)"),
     "zip": ("mdt-{version}-win64.zip", "Scoop, winget"),
 }
@@ -130,8 +131,9 @@ def homebrew(version: str, h: dict[str, str]) -> str:
   version "{version}"
   license "{LICENCE}"
 
-  # Prebuilt, self-contained binaries: Apple silicon on macOS, and a fully
-  # static x86-64 build on Linux (no glibc version to satisfy).
+  # Prebuilt, self-contained binaries: Apple silicon on macOS, and fully
+  # static builds on Linux for both x86-64 and arm64 (no glibc version to
+  # satisfy either way).
   on_macos do
     on_arm do
       url "{HOMEPAGE}/releases/download/v{version}/mdt-macos-arm64"
@@ -143,6 +145,10 @@ def homebrew(version: str, h: dict[str, str]) -> str:
     on_intel do
       url "{HOMEPAGE}/releases/download/v{version}/mdt-linux-amd64"
       sha256 "{h['linux']}"
+    end
+    on_arm do
+      url "{HOMEPAGE}/releases/download/v{version}/mdt-linux-arm64"
+      sha256 "{h['linux_arm64']}"
     end
   end
 
@@ -167,7 +173,13 @@ def homebrew(version: str, h: dict[str, str]) -> str:
   end
 
   def install
-    binary = OS.mac? ? "mdt-macos-arm64" : "mdt-linux-amd64"
+    binary = if OS.mac?
+               "mdt-macos-arm64"
+             elsif Hardware::CPU.arm?
+               "mdt-linux-arm64"
+             else
+               "mdt-linux-amd64"
+             end
     bin.install binary => "mdt"
 
     man1.install resource("man")
@@ -260,7 +272,7 @@ pkgname=mdt-bin
 pkgver={version}
 pkgrel=1
 pkgdesc='{DESC}'
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url='{HOMEPAGE}'
 license=('{LICENCE}')
 depends=()
@@ -274,21 +286,28 @@ options=('!strip' '!debug')
 _gh="{HOMEPAGE}"
 _raw="https://raw.githubusercontent.com/{REPO}"
 
-source=("mdt-linux-amd64::$_gh/releases/download/v$pkgver/mdt-linux-amd64"
-        "mdt.1::$_raw/v$pkgver/docs/mdt.1"
+# One statically linked binary per architecture, straight from the release.
+source_x86_64=("mdt-linux-amd64::$_gh/releases/download/v$pkgver/mdt-linux-amd64")
+source_aarch64=("mdt-linux-arm64::$_gh/releases/download/v$pkgver/mdt-linux-arm64")
+source=("mdt.1::$_raw/v$pkgver/docs/mdt.1"
         "mdt.bash::$_raw/v$pkgver/completions/mdt.bash"
         "_mdt::$_raw/v$pkgver/completions/_mdt"
         "mdt.fish::$_raw/v$pkgver/completions/mdt.fish"
         "LICENSE::$_raw/v$pkgver/LICENSE")
-sha256sums=('{h['linux']}'
-            '{h['man']}'
+sha256sums_x86_64=('{h['linux']}')
+sha256sums_aarch64=('{h['linux_arm64']}')
+sha256sums=('{h['man']}'
             '{h['bash']}'
             '{h['zsh']}'
             '{h['fish']}'
             '{h['licence']}')
 
 package() {{
-  install -Dm755 "$srcdir/mdt-linux-amd64" "$pkgdir/usr/bin/mdt"
+  case "$CARCH" in
+    x86_64)  _bin=mdt-linux-amd64 ;;
+    aarch64) _bin=mdt-linux-arm64 ;;
+  esac
+  install -Dm755 "$srcdir/$_bin" "$pkgdir/usr/bin/mdt"
   install -Dm644 "$srcdir/mdt.1"   "$pkgdir/usr/share/man/man1/mdt.1"
   install -Dm644 "$srcdir/mdt.bash" "$pkgdir/usr/share/bash-completion/completions/mdt"
   install -Dm644 "$srcdir/_mdt"     "$pkgdir/usr/share/zsh/site-functions/_mdt"
@@ -302,19 +321,22 @@ package() {{
 \tpkgrel = 1
 \turl = {HOMEPAGE}
 \tarch = x86_64
+\tarch = aarch64
 \tlicense = {LICENCE}
 \tprovides = mdt
 \tconflicts = mdt
 \tconflicts = mdt-git
 \toptdepends = curl: fetch images that are linked from a document
 \toptdepends = xdg-utils: open links in your browser
-\tsource = mdt-linux-amd64::https://github.com/{REPO}/releases/download/v{version}/mdt-linux-amd64
+\tsource_x86_64 = mdt-linux-amd64::https://github.com/{REPO}/releases/download/v{version}/mdt-linux-amd64
+\tsource_aarch64 = mdt-linux-arm64::https://github.com/{REPO}/releases/download/v{version}/mdt-linux-arm64
 \tsource = mdt.1::https://raw.githubusercontent.com/{REPO}/v{version}/docs/mdt.1
 \tsource = mdt.bash::https://raw.githubusercontent.com/{REPO}/v{version}/completions/mdt.bash
 \tsource = _mdt::https://raw.githubusercontent.com/{REPO}/v{version}/completions/_mdt
 \tsource = mdt.fish::https://raw.githubusercontent.com/{REPO}/v{version}/completions/mdt.fish
 \tsource = LICENSE::https://raw.githubusercontent.com/{REPO}/v{version}/LICENSE
-\tsha256sums = {h['linux']}
+\tsha256sums_x86_64 = {h['linux']}
+\tsha256sums_aarch64 = {h['linux_arm64']}
 \tsha256sums = {h['man']}
 \tsha256sums = {h['bash']}
 \tsha256sums = {h['zsh']}
@@ -389,11 +411,11 @@ brew tap wudream813/mdt
 brew install mdt
 ```
 
-Formulas are built from the published release binaries - Apple silicon on
-macOS, static x86-64 on Linux - plus the man page and the bash/zsh/fish
+Formulas install the published release binaries - Apple silicon on macOS,
+static x86-64 or arm64 on Linux - plus the man page and the bash/zsh/fish
 completions from the same tag.
 
-（中文：这是 mdt 的 Homebrew 安装源，macOS 仅 Apple 芯片，Linux 仅 x86-64。）
+（中文：这是 mdt 的 Homebrew 安装源，macOS 为 Apple 芯片，Linux 支持 x86-64 与 arm64。）
 """
 
     targets = [

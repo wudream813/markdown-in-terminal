@@ -5,6 +5,29 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.17] — 2026-10-16
+
+Linux grew a second architecture: **arm64** (Raspberry Pi 4/5, ARM servers,
+Ampere, Linux VMs on Apple silicon).  The audit had left this as "one more
+cross build or runner, waiting for demand" - it turned out to be neither
+exotic nor expensive.
+
+### Added
+
+* **`mdt-linux-arm64`**, built exactly like the x86-64 release artefact
+  (`STATIC=1`, so it carries its own libc) and cross compiled from the same
+  Ubuntu runner: `make arm64` produces `build/arm64/mdt` anywhere with
+  `g++-aarch64-linux-gnu` installed, and `qemu-user-static` runs that binary on
+  an x86-64 host through binfmt_misc, so the release job smoke-tests the real
+  artefact before publishing it.  Verified here the same way: the full
+  `tests/smoke.sh` and `tests/cli.sh` suites pass on the AArch64 binary under
+  qemu.
+* **`install.sh`** picks the arm64 build on `aarch64`/`arm64` Linux instead of
+  telling you to compile it yourself.
+* Homebrew's formula now has a Linux `on_arm` branch (`Hardware::CPU.arm?`),
+  and the AUR package declares `arch=('x86_64' 'aarch64')` with per-architecture
+  sources, so `mdt-bin` builds on both from the same PKGBUILD.
+
 ## [0.3.16] — 2026-10-16
 
 One layer below the last fix: why the Windows leg of CI had been red since

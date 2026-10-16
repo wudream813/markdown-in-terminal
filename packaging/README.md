@@ -17,9 +17,9 @@
 gen.py                  从一个 tag 重新生成全部清单（下载产物 → 算 sha256 → 重写文件）
 verify.py               把清单里每个 url/sha256 真的下载一遍、比一遍（发布前跑它）
 scoop/mdt.json          Scoop manifest（装 release zip，把 mdt.exe 放进 PATH）
-homebrew/mdt.rb         Homebrew formula（macOS arm64 + Linux x86-64，含 man page 与补全）
+homebrew/mdt.rb         Homebrew formula（macOS arm64 + Linux x86-64/arm64，含 man page 与补全）
 winget/*.yaml           winget 的三件套（version / installer / defaultLocale）
-aur/{PKGBUILD,.SRCINFO} AUR 的 mdt-bin（静态二进制，无依赖，带 optdepends）
+aur/{PKGBUILD,.SRCINFO} AUR 的 mdt-bin（x86_64 与 aarch64 静态二进制，无依赖，带 optdepends）
 ```
 
 `gen.py` 和 `verify.py` 只依赖 Python 3 标准库，跟仓库其它工具一样。
@@ -55,8 +55,8 @@ mdt --list-caps
 
 ## Homebrew
 
-formula 装的是发布产物：macOS 走 `mdt-macos-arm64`，Linux 走静态的 `mdt-linux-amd64`，
-另外用 `resource` 从同一个 tag 取 `docs/mdt.1` 和三个补全脚本，一起装到标准位置。
+formula 装的是发布产物：macOS 走 `mdt-macos-arm64`，Linux 按架构走静态的 `mdt-linux-amd64`
+或 `mdt-linux-arm64`，另外用 `resource` 从同一个 tag 取 `docs/mdt.1` 和三个补全脚本，一起装到标准位置。
 
 ```sh
 brew tap wudream813/mdt
@@ -65,8 +65,8 @@ brew install mdt
 
 两点需要注意：
 
-* **macOS 只有 Apple 芯片、Linux 只有 x86-64**，其它架构 formula 会直接报错说没有产物（比装上一个
-  跑不起来的二进制好）。
+* **macOS 只有 Apple 芯片**（Intel Mac 没有产物），其它架构 formula 会直接报错说没有产物（比装上一个
+  跑不起来的二进制好）。Linux 现在 x86-64 与 arm64 都有静态产物。
 * 二进制**没有做 Apple 签名/公证**。Homebrew 自己下载的文件不带 quarantine 属性，能直接跑；但如果
   你从浏览器下载过一份再挪进来，Gatekeeper 会拦，`xattr -d com.apple.quarantine "$(which mdt)"` 可解。
   formula 的 `caveats` 里写了这句。
@@ -110,7 +110,9 @@ cd mdt-bin && makepkg --printsrcinfo > .SRCINFO && git add -A && git commit -m "
 
 ## 还缺什么
 
-* Linux 只有 amd64、macOS 只有 arm64：多一个架构就要多一条交叉编译或 runner，等有需求再说。
+* ~~Linux 只有 amd64、macOS 只有 arm64~~ —— **Linux arm64 已在 0.3.17 补上**（交叉编译 + qemu
+  冒烟测试，发布文件 `mdt-linux-arm64`，Scoop 之外的三个渠道都覆盖到了）。macOS 仍只有 arm64
+  （Intel Mac 需要 x86-64 交叉编译，暂无需求）。
 * macOS 未签名公证：要 Apple Developer ID 才能根治，不是改代码能解决的。
 * 其余候选：`nixpkgs`、Fedora COPR、Debian 包（`.deb` 可以用 `nfpm` 从一个静态二进制直接生成，
   是最省事的下一个）。

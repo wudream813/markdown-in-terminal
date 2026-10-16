@@ -73,11 +73,13 @@ sixel）绘制公式和图片，内置**兼容 KaTeX 语法的数学排版引擎
 | 平台 | 文件 | 说明 |
 |:--|:--|:--|
 | Linux x86-64 | `mdt-linux-amd64` | 0.3.9 起为静态链接 —— 任何发行版都能直接跑，不再挑 glibc 版本 |
+| Linux arm64 | `mdt-linux-arm64` | 同样静态链接：树莓派 4/5、ARM 服务器、Apple 芯片上的 Linux 虚拟机都能用 |
 | macOS Apple 芯片 | `mdt-macos-arm64` | 未签名未公证，下载后执行一次 `xattr -d com.apple.quarantine mdt` |
 | Windows x64 | `mdt-win64.exe` | 或者 `mdt-<版本>-win64.zip`（里面还带 demo） |
 
 ```sh
-# Linux 与 macOS（Apple 芯片）一行装好，不需要包管理器：
+# Linux（x86-64 或 arm64）与 macOS（Apple 芯片）一行装好，不需要包管理器：
+# install.sh 会自己挑本机对应的那个文件
 curl -fsSL https://raw.githubusercontent.com/wudream813/markdown-in-terminal/main/install.sh | sh
 
 # 等价的手动做法：
@@ -85,6 +87,10 @@ curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/late
 chmod +x mdt && sudo install -m 0755 mdt /usr/local/bin/mdt
 mdt --list-caps          # 看看探测到的单元格尺寸、图形协议、字体
 mdt 文档.md
+
+# Linux arm64（树莓派、ARM 服务器等）
+curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-linux-arm64
+chmod +x mdt && sudo install -m 0755 mdt /usr/local/bin/mdt
 
 # macOS（Apple 芯片）
 curl -fL -o mdt https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-macos-arm64
@@ -95,7 +101,7 @@ sudo install -m 0755 mdt /usr/local/bin/mdt
 也可以交给包管理器（升级时 `mdt --version` 会告诉你新版号）：
 
 ```sh
-# macOS（Apple 芯片）与 Linux x86-64
+# macOS（Apple 芯片）与 Linux（x86-64 或 arm64）
 brew tap wudream813/mdt && brew install mdt
 ```
 
@@ -140,6 +146,18 @@ sudo apt install mingw-w64          # 或 dnf install mingw64-gcc-c++; brew inst
 make windows                        # -> build/win/mdt.exe         (x86-64)
 make windows32                      # -> build/win32/mdt.exe       (32 位)
 sh tools/build_windows.sh           # 构建 + 依赖检查 + dist/*.zip
+```
+
+### 为 Linux arm64 构建（交叉编译）
+
+arm64 的发布文件就是同一套静态构建交叉编出来的——不需要 ARM 机器，
+x86-64 上用 `qemu-user-static` 就能直接跑：
+
+```sh
+sudo apt install g++-aarch64-linux-gnu qemu-user-static   # 后者用来运行
+
+make arm64                          # -> build/arm64/mdt（静态、AArch64）
+./build/arm64/mdt demo/demo.md      # 在 x86-64 上经 binfmt_misc/qemu 直接跑
 ```
 
 `.exe` 用 `-static -static-libgcc -static-libstdc++` 链接，只依赖 `KERNEL32.dll` 和
