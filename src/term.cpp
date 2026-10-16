@@ -245,11 +245,31 @@ bool Terminal::init(const std::string& gfx_override) {
                      caps.term_program == "WezTerm" || caps.term_program == "ghostty" ||
                      caps.term_program == "Ghostty" || caps.term_name.find("xterm-ghostty") != std::string::npos;
     bool env_iterm = caps.term_program == "iTerm.app" || getenv("ITERM_SESSION_ID");
+#if defined(_WIN32)
+    // On Windows the guess is not good enough to act on.  A console host sits
+    // between mdt and the terminal, and it does not pass a long escape sequence
+    // through untouched: it draws it as text, wrapped at the console width.
+    // Measured here (Wine, this program, issue #3): an SGR mouse report came
+    // back with one CR inserted, a kitty APC with two, a 2.7 KB sixel DCS with
+    // sixty-four, and an iTerm2 OSC was folded the same way - which is why
+    // WezTerm showed a document's formulas as a screenful of base64 instead of
+    // pictures, and why "the pictures are broken" looked like a terminal bug.
+    // So draw pictures only when the terminal itself answered a probe; a
+    // terminal that merely *looks* capable (TERM_PROGRAM=WezTerm and friends)
+    // gets the formulas as Unicode text instead of escapes sprayed into the
+    // console.  --gfx=kitty|sixel|iterm2 still forces a protocol for a host
+    // that does pass sequences through (mintty is one: MSYS2's pty is not a
+    // ConPTY, and pictures work there).
+    if (kitty_ok_) caps.gfx = GfxProto::Kitty;
+    else if (caps.sixel) caps.gfx = GfxProto::Sixel;
+    else caps.gfx = GfxProto::None;
+#else
     if (kitty_ok_) caps.gfx = GfxProto::Kitty;
     else if (env_kitty) caps.gfx = GfxProto::Kitty;
     else if (caps.sixel) caps.gfx = GfxProto::Sixel;
     else if (env_iterm) caps.gfx = GfxProto::Iterm2;
     else caps.gfx = GfxProto::None;
+#endif
   }
   last_cols_ = caps.cols; last_rows_ = caps.rows;
   initialized_ = true;

@@ -5,6 +5,28 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.15] — 2026-10-16
+
+Third round on issue #3: pictures on Windows, and where they went.
+
+### Fixed
+
+* **Pictures are no longer sprayed into the console (Windows).** A console host
+  sits between mdt and the terminal, and it does not pass a long escape
+  sequence through untouched - it draws it as text, wrapped at the console
+  width.  Measured with this program under Wine: an SGR mouse report came back
+  with one CR inserted, a kitty APC with two, a 2.7 KB sixel DCS with
+  sixty-four, and an iTerm2 OSC was folded the same way, which is why WezTerm
+  showed a document's formulas as a screenful of base64 instead of pictures.
+  On Windows `--gfx=auto` now draws pictures only when the terminal answered
+  the capability probe *itself*; a terminal that merely looks capable
+  (`TERM_PROGRAM=WezTerm`, `KITTY_WINDOW_ID`, ...) gets the formulas as Unicode
+  text.  `--gfx=kitty|sixel|iterm2` still forces a protocol, which is what a
+  host that does pass sequences through needs (mintty: MSYS2's pty is not a
+  ConPTY and pictures work there - that is the window in the issue's
+  screenshot).  `tools/conpty_gfx_test.py` holds the line: a terminal claiming
+  support must receive no picture sequences, and `--gfx=` must still emit them.
+
 ## [0.3.14] — 2026-10-16
 
 Second round on issue #3: the release build of 0.3.13 still flickered, its mouse

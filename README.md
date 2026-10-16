@@ -350,6 +350,18 @@ events, since it polls the size itself.
 `mdt --diag` prints which input path is in use: `windows console records`,
 `windows byte stream` or `posix tty (bytes)`.
 
+Pictures are the other half of that story, and on Windows they are off by
+default.  A console host (ConPTY) rewrites what it does not understand instead
+of passing it through: it draws the sequence as text and wraps it at the console
+width.  Measured with this program: one SGR mouse report came back with a CR
+inserted, a kitty APC with two, a 2.7 KB sixel DCS with sixty-four, and an
+iTerm2 OSC arrived with its base64 printed across the screen.  So on Windows
+mdt draws pictures only when the terminal answered its capability probe itself;
+a terminal that merely *looks* capable (`TERM_PROGRAM=WezTerm`,
+`KITTY_WINDOW_ID`, ...) gets the formulas as Unicode text.  `--gfx=kitty|sixel|iterm2`
+still forces a protocol when you know your host passes sequences through -
+mintty is such a host (MSYS2's pty is not a ConPTY, and pictures work there).
+
 If a key still misbehaves on your terminal, ask mdt what it received:
 
 ```bat

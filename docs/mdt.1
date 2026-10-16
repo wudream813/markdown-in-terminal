@@ -178,6 +178,13 @@ pieces" \- on Windows the console decides that, and hosts differ.
 .TP
 .B MDT_FORCE_CURL_BIN
 Use this program instead of \fBcurl\fR to fetch a remote picture.
+.SH NOTES
+.TP
+.B Pictures on Windows
+A Windows console host (ConPTY) does not pass long escape sequences through: it
+draws them as text, wrapped at the console width.  mdt therefore draws pictures
+there only when the terminal itself answered the capability probe;
+\fB\-\-gfx=\fR forces a protocol for hosts that do pass sequences through.
 .SH EXIT STATUS
 .TP
 .B 0
