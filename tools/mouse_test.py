@@ -21,13 +21,24 @@ TIOCSWINSZ = getattr(termios, "TIOCSWINSZ", 0x5414)  # macOS/BSD differ from Lin
 ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b_G.*?\x1b\\|\x1b\]0;.*?\x07")
 
 
+KEY_LOG = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mdt-mouse-keylog.txt")
+
+
 def run(argv, keys, cols=80, rows=24, settle=2.0, after=1.6, total=None):
+    try:
+        os.unlink(KEY_LOG)
+    except FileNotFoundError:
+        pass
     pid, fd = pty.fork()
     if pid == 0:
         env = dict(os.environ)
         env["TERM"] = "xterm-256color"
         env["MDT_LANG"] = "en"   # the assertions below are English; do not
                                  # inherit a Chinese LANG from the machine
+        # MDT_KEY_LOG: a failure has to say whether the host handed the mouse
+        # reports to mdt at all, or whether mdt received them and dropped them.
+        # (Under Ubuntu's Wine 9 the console host does not deliver them.)
+        env["MDT_KEY_LOG"] = KEY_LOG
         os.execvpe(argv[0], argv, env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     out = b""
@@ -200,6 +211,19 @@ def main():
 
     if fails:
         print("\nmouse checks failed:", ", ".join(fails))
+        try:
+            log = open(KEY_LOG, encoding="utf-8", errors="replace").read().splitlines()
+        except OSError:
+            log = []
+        interesting = [ln for ln in log if "nothing" not in ln][1:]  # skip the header
+        if interesting:
+            print("input the reader actually received:")
+            for ln in interesting[-12:]:
+                print("   " + ln)
+        else:
+            print("the reader received no input at all from this host: the mouse")
+            print("reports never left the test's pty, so nothing here is mdt's")
+            print("doing (Ubuntu's Wine 9 console host does not deliver them).")
         return 1
     print("   mouse + scrollbar ok")
     return 0
