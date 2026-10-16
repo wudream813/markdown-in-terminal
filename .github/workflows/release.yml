@@ -28,6 +28,7 @@ jobs:
             target: linux-arm64
             arm64: true
             bin: build/arm64/mdt
+            slowdown: "4"
           - os: macos-latest
             target: macos-arm64
           - os: ubuntu-latest
@@ -106,7 +107,11 @@ jobs:
           # qemu (binfmt registration is transparent); the other jobs built
           # build/mdt as usual
           BIN="${{ matrix.bin }}"; BIN="${BIN:-./build/mdt}"
-          export BIN
+          # qemu emulates AArch64, so the wall-clock budgets in the test tools
+          # are loosened exactly the way the sanitizer job loosens them
+          MDT_TEST_SLOWDOWN="${{ matrix.slowdown }}"
+          MDT_TEST_SLOWDOWN="${MDT_TEST_SLOWDOWN:-1}"
+          export BIN MDT_TEST_SLOWDOWN
           sh tests/smoke.sh
 
       - name: Upload artifacts
