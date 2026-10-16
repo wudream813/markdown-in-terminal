@@ -207,6 +207,14 @@ bool stdin_is_tty() { return isatty(STDIN_FILENO) == 1; }
 bool stdout_is_tty() { return isatty(STDOUT_FILENO) == 1; }
 
 bool raw_begin(std::string* err) {
+  if (key_log_enabled()) {
+    // One line about the tty in the same log the key bytes go to: "the keys look
+    // wrong" reports usually come down to whether raw mode was really on.
+    char note[120];
+    snprintf(note, sizeof note, "termios: switching to raw mode (%s), ECHO/ICANON off",
+             isatty(STDIN_FILENO) ? "stdin is a tty" : "stdin is NOT a tty");
+    key_log_note(note);
+  }
   struct termios tio;
   if (tcgetattr(STDIN_FILENO, &tio) != 0) {
     if (err) *err = "tcgetattr failed";
@@ -470,6 +478,12 @@ static HANDLE g_out = INVALID_HANDLE_VALUE;
 // True when stdin is a console we read with ReadConsoleInput (see the long
 // comment above read_input).  A console is never at EOF.
 static bool g_in_is_console = false;
+// Did the console keep ENABLE_VIRTUAL_TERMINAL_INPUT?  Both answers are useful:
+// with it, the records carry the VT byte stream (one byte per record) and an
+// incoming mouse report or capability answer stays readable; without it, the
+// records are real key events and the key table below turns them into
+// sequences.  The translation accepts either (see key_event_to_vt).
+static bool g_vt_input_kept = false;
 static std::string g_win_pending;   // translated bytes waiting to be handed out
 static DWORD g_saved_in_mode = 0;
 static DWORD g_saved_out_mode = 0;
@@ -664,10 +678,9 @@ bool raw_begin(std::string* err) {
   // polls the size itself, and every bit asked for is a bit some host may
   // refuse to keep.
   DWORD in_mode = g_saved_in_mode;
-  in_mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT;
+  in_mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT;
   in_mode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT |
-               ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE |
-               ENABLE_WINDOW_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT);
+               ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE | ENABLE_WINDOW_INPUT);
   DWORD out_mode = g_saved_out_mode;
   out_mode |= ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING |
               DISABLE_NEWLINE_AUTO_RETURN;
@@ -687,14 +700,16 @@ bool raw_begin(std::string* err) {
   GetConsoleMode(g_out, &out_now);
   g_raw_in_mode = in_now;
   g_raw_out_mode = out_now;
+  g_vt_input_kept = (in_now & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0;
   g_have_raw_modes = true;
   if (key_log_enabled()) {
     char note[160];
     snprintf(note, sizeof note,
              "console modes: asked in=0x%08lx out=0x%08lx -> kept in=0x%08lx out=0x%08lx "
-             "(mouse events %s)",
+             "(mouse events %s, vt input %s)",
              (unsigned long)in_mode, (unsigned long)out_mode, (unsigned long)in_now,
-             (unsigned long)out_now, (in_now & ENABLE_MOUSE_INPUT) ? "on" : "REFUSED");
+             (unsigned long)out_now, (in_now & ENABLE_MOUSE_INPUT) ? "on" : "REFUSED",
+             g_vt_input_kept ? "on" : "REFUSED");
     key_log_note(note);
   }
   g_in_is_console = true;   // GetConsoleMode() succeeded on stdin above
@@ -835,7 +850,14 @@ static void append_utf8(std::string& out, unsigned int cp) {
 static void key_event_to_vt(std::string& out, const KEY_EVENT_RECORD& k) {
   if (!k.bKeyDown) return;                     // key release: the reader is edge-driven
   if (k.uChar.UnicodeChar) {
-    append_utf8(out, k.uChar.UnicodeChar);
+    // One character.  Values below 0x100 are appended as a byte: with
+    // ENABLE_VIRTUAL_TERMINAL_INPUT the console queues the VT *byte* stream one
+    // byte per record (so a UTF-8 character is several records, and adding up
+    // their bytes rebuilds it exactly), and an ordinary key press carries its
+    // own character anyway.  Anything wider is a wide character typed on a
+    // console without VT input, which gets encoded properly.
+    if (k.uChar.UnicodeChar < 0x100) out += (char)(k.uChar.UnicodeChar & 0xFF);
+    else append_utf8(out, k.uChar.UnicodeChar);
     return;
   }
   const DWORD s = k.dwControlKeyState;
@@ -929,22 +951,30 @@ static int win_console_read(char* buf, size_t n) {
     g_win_pending.erase(0, take);
     return (int)take;
   }
+  // Take everything the console has queued, not just one batch: when the
+  // console delivers the VT byte stream, one key press is *several* records,
+  // and handing them out in separate reads would let the parser meet a lone
+  // ESC - which is the bug this whole path exists to avoid.
   DWORD available = 0;
   if (!GetNumberOfConsoleInputEvents(h, &available)) return -1;
   if (available == 0) return 0;
-  INPUT_RECORD recs[64];
-  DWORD want = available < 64 ? available : 64;
-  DWORD got = 0;
-  if (!ReadConsoleInputW(h, recs, want, &got)) return -1;  // not a usable console
-  for (DWORD i = 0; i < got; i++) {
-    switch (recs[i].EventType) {
-      case KEY_EVENT: key_event_to_vt(g_win_pending, recs[i].Event.KeyEvent); break;
-      case MOUSE_EVENT: mouse_event_to_vt(g_win_pending, recs[i].Event.MouseEvent); break;
-      case WINDOW_BUFFER_SIZE_EVENT: break;   // poll_resize() compares the size itself
-      case FOCUS_EVENT: break;
-      case MENU_EVENT: break;
-      default: break;
+  INPUT_RECORD recs[128];
+  for (int round = 0; round < 8; round++) {
+    DWORD want = available < 128 ? available : 128;
+    DWORD got = 0;
+    if (!ReadConsoleInputW(h, recs, want, &got)) return -1;  // not a usable console
+    for (DWORD i = 0; i < got; i++) {
+      switch (recs[i].EventType) {
+        case KEY_EVENT: key_event_to_vt(g_win_pending, recs[i].Event.KeyEvent); break;
+        case MOUSE_EVENT: mouse_event_to_vt(g_win_pending, recs[i].Event.MouseEvent); break;
+        case WINDOW_BUFFER_SIZE_EVENT: break;  // poll_resize() compares the size itself
+        case FOCUS_EVENT: break;
+        case MENU_EVENT: break;
+        default: break;
+      }
     }
+    if (got == 0 || g_win_pending.size() >= 4096) break;
+    if (!GetNumberOfConsoleInputEvents(h, &available) || available == 0) break;
   }
   if (g_win_pending.empty()) return 0;
   return win_console_read(buf, n);

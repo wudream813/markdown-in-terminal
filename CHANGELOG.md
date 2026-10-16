@@ -34,9 +34,17 @@ backgrounds on screen.
   `ENABLE_VIRTUAL_TERMINAL_INPUT` and relied on the host forwarding mouse
   reports as VT bytes; WezTerm's ConPTY does not do that, so mice were simply
   lost (the log in the issue shows keyboard records arriving and no mouse
-  events at all).  `ENABLE_MOUSE_INPUT` is now requested, which is what makes
-  the console produce MOUSE_EVENT records in the first place; whether the host
-  kept that bit is written to the key log.
+  events at all).  Both bits are requested now: `ENABLE_MOUSE_INPUT` is what
+  makes the console produce `MOUSE_EVENT` records at all, and the VT bit keeps
+  whatever the host forwards as a byte stream readable (a capability answer, a
+  mouse report from a terminal that ConPTY does not translate).  The
+  translation accepts either shape: a record that carries a character below
+  0x100 is passed through as a byte - with VT input a UTF-8 character is
+  several records and their bytes rebuild it exactly - and a record with no
+  character (arrow, Home/End, Page Up/Down, F-keys, with Shift/Ctrl) goes
+  through the key table.  Records are drained in one go, up to eight batches,
+  so a key press that arrives as several records still reaches the parser as
+  one sequence.  Whether the host kept each bit is written to the key log.
 * **Frames are written in 4 KB pieces (Windows).** A whole frame used to be one
   `WriteFile` - megabytes for a long document, far more than a console can take
   in one gulp, which a reader scrolling past a big document feels as flicker.
