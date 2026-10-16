@@ -1,47 +1,58 @@
 class Mdt < Formula
   desc "Terminal Markdown reader: typeset maths, images, syntax highlighting"
   homepage "https://github.com/wudream813/markdown-in-terminal"
-  version "0.3.16"
+  version "0.3.17"
   license "MIT"
 
-  # Prebuilt, self-contained binaries: Apple silicon on macOS, and a fully
-  # static x86-64 build on Linux (no glibc version to satisfy).
+  # Prebuilt, self-contained binaries: Apple silicon on macOS, and fully
+  # static builds on Linux for both x86-64 and arm64 (no glibc version to
+  # satisfy either way).
   on_macos do
     on_arm do
-      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.16/mdt-macos-arm64"
-      sha256 "17799538c9513bcb84b29587780f219ebeb6b65f9f6782da38ee840107b57b34"
+      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.17/mdt-macos-arm64"
+      sha256 "d62982125055a7dabe44bc941227bdb5389ed1a53d64d6d1040b761b8a2cae36"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.16/mdt-linux-amd64"
-      sha256 "785f7e2522f3d1dcb453efc4875dfe49afc8545da18dcdf7c4edd6f8d1bd067f"
+      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.17/mdt-linux-amd64"
+      sha256 "192ebb2b5c57c0a34a1993fd5cb9a0a95e535c566e2124aed97eaa40c163cf8d"
+    end
+    on_arm do
+      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.17/mdt-linux-arm64"
+      sha256 "4e8fbdbe7cd77e82930d96b404eadc3c47edd5fcadbc844efeb283d59039d0e3"
     end
   end
 
   resource "man" do
-    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.16/docs/mdt.1"
+    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.17/docs/mdt.1"
     sha256 "84b40b08162441229c042cd9f86ee7fa6beb7c4d013de12c63c59496f36e98c0"
   end
 
   resource "completion-bash" do
-    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.16/completions/mdt.bash"
+    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.17/completions/mdt.bash"
     sha256 "2ef8c687a3c17e67c16d8fd50104efdd363ce1c4b6a51eba74dc035b43e0439d"
   end
 
   resource "completion-zsh" do
-    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.16/completions/_mdt"
+    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.17/completions/_mdt"
     sha256 "0d46d75e85ce6b35c1c08457da8e166ad8c38595ea40619e3b98c3a332fe0f70"
   end
 
   resource "completion-fish" do
-    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.16/completions/mdt.fish"
+    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.17/completions/mdt.fish"
     sha256 "6b5bf1b53ef2cd41afe8c0e81e97fd388a6c1fac9dd4b3558a9f295a6781a5c0"
   end
 
   def install
-    binary = OS.mac? ? "mdt-macos-arm64" : "mdt-linux-amd64"
+    binary = if OS.mac?
+               "mdt-macos-arm64"
+             elsif Hardware::CPU.arm?
+               "mdt-linux-arm64"
+             else
+               "mdt-linux-amd64"
+             end
     bin.install binary => "mdt"
 
     man1.install resource("man")
