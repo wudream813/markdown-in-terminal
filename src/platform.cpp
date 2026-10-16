@@ -484,6 +484,14 @@ static bool g_in_is_console = false;
 // records are real key events and the key table below turns them into
 // sequences.  The translation accepts either (see key_event_to_vt).
 static bool g_vt_input_kept = false;
+
+// Real Windows console, or Wine's?  Wine exports wine_get_version() from
+// ntdll, which is the documented way to ask, and the answer matters because the
+// two hosts disagree about ENABLE_VIRTUAL_TERMINAL_INPUT (see raw_begin).
+static bool console_is_wine() {
+  HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+  return ntdll != nullptr && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+}
 static std::string g_win_pending;   // translated bytes waiting to be handed out
 static DWORD g_saved_in_mode = 0;
 static DWORD g_saved_out_mode = 0;
@@ -677,10 +685,20 @@ bool raw_begin(std::string* err) {
   // them).  Window-buffer-size events are deliberately not asked for: mdt
   // polls the size itself, and every bit asked for is a bit some host may
   // refuse to keep.
+  // A real Windows terminal needs ENABLE_VIRTUAL_TERMINAL_INPUT for mouse
+  // reports to reach the program as VT bytes: WezTerm's ConPTY does not turn
+  // them into MOUSE_EVENT records, so with the bit off a click never arrives
+  // (issue #3).  Wine's console is the opposite: ask for that bit and it stops
+  // delivering *anything* - keys and mouse both - because there is no window
+  // console behind it (Ubuntu's wine 9, the one CI runs, does this; wine 10
+  // tolerates the bit).  With the bit off Wine passes the pty's bytes straight
+  // through, which is the very stream the parser wants, so leave it off there.
   DWORD in_mode = g_saved_in_mode;
-  in_mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT;
+  in_mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT;
   in_mode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT |
-               ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE | ENABLE_WINDOW_INPUT);
+               ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE | ENABLE_WINDOW_INPUT |
+               ENABLE_VIRTUAL_TERMINAL_INPUT);
+  if (!console_is_wine()) in_mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
   DWORD out_mode = g_saved_out_mode;
   out_mode |= ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING |
               DISABLE_NEWLINE_AUTO_RETURN;
@@ -703,13 +721,13 @@ bool raw_begin(std::string* err) {
   g_vt_input_kept = (in_now & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0;
   g_have_raw_modes = true;
   if (key_log_enabled()) {
-    char note[160];
+    char note[200];
     snprintf(note, sizeof note,
              "console modes: asked in=0x%08lx out=0x%08lx -> kept in=0x%08lx out=0x%08lx "
-             "(mouse events %s, vt input %s)",
+             "(mouse events %s, vt input %s, host %s)",
              (unsigned long)in_mode, (unsigned long)out_mode, (unsigned long)in_now,
              (unsigned long)out_now, (in_now & ENABLE_MOUSE_INPUT) ? "on" : "REFUSED",
-             g_vt_input_kept ? "on" : "REFUSED");
+             g_vt_input_kept ? "on" : "REFUSED", console_is_wine() ? "wine" : "windows");
     key_log_note(note);
   }
   g_in_is_console = true;   // GetConsoleMode() succeeded on stdin above
