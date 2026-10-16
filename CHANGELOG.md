@@ -24,7 +24,9 @@ One layer below the last fix: why the Windows leg of CI had been red since
   local Ubuntu wine 9 install identical to the runner's: wheel, click and drag
   all arrive, and an idle reader still reads nothing at all.  On a host whose
   count is honest (Windows proper, wine 10) the peek is consulted only when the
-  count says zero, so the wake-up path is unchanged there.
+  count says zero, so the wake-up path is unchanged there.  A wine 10.0 run
+  of the same suite is green too: wheel, click and drag all arrive and an
+  idle reader logs no reads at all.
 
 ### Changed
 
