@@ -101,6 +101,45 @@ jobs:
           name: mdt-macos-arm64
           path: build/mdt
 
+  windows-native:
+    name: Windows (native, windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The other Windows job builds with MinGW on Linux and runs the result
+      # under wine, where a POSIX pty makes the interactive reader testable.
+      # This one is the machine the user actually has: it builds with the same
+      # MinGW toolchain natively, runs the exe without a compatibility layer,
+      # finds Consolas instead of Debian's fonts, and receives a UTF-16 command
+      # line.  (Interactive console tests stay in tests/windows.sh: Python on
+      # Windows has no pty module, and a pseudo-console tests ConPTY instead of
+      # a console.)
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
+            diffutils
+      - name: Check the workflow files
+        shell: msys2 {0}
+        run: python3 tools/workflow_lint.py
+      - name: Build (MinGW-w64, on Windows)
+        shell: msys2 {0}
+        run: make windows -j"$(nproc)"
+      - name: Tests (native Windows)
+        shell: msys2 {0}
+        run: sh tests/windows_native.sh
+      - name: Command line and input file (native Windows)
+        shell: msys2 {0}
+        run: sh tests/cli.sh build/win/mdt.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdt-win64-native
+          path: build/win/mdt.exe
+
   windows:
     name: Windows (MinGW-w64 cross build + wine)
     runs-on: ubuntu-latest
