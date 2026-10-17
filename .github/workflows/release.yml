@@ -124,8 +124,34 @@ jobs:
             *.zip
           if-no-files-found: error
 
+  # The artefact is cross compiled on Linux (the matrix above), and wine proves
+  # that it runs.  This job is the other half of the promise: the same sources
+  # build and pass their tests on a real Windows machine, on the machine's own
+  # fonts, before anything is published.  A broken Windows build is not a
+  # release.
+  windows-native:
+    name: Windows (native, windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
+            diffutils
+      - name: Build (MinGW-w64, on Windows)
+        shell: msys2 {0}
+        run: make windows -j"$(nproc)"
+      - name: Tests (native Windows)
+        shell: msys2 {0}
+        run: sh tests/windows_native.sh
+
   release:
-    needs: build
+    needs: [build, windows-native]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -393,6 +393,10 @@ vendor/           stb 单文件库、QuickJS-NG
 `sh tests/smoke.sh` 不编译任何东西，直接对 `./build/mdt` 跑完整套件（主题、公式模式、
 stdin、文本导出、三种协议）。Windows 构建交给 `sh tests/windows.sh` 通过 Wine 跑同一套
 （含 `tools/wine_pty_test.py` 走控制台路径），并把渲染结果与本机构建逐字节对比。
+另有一个 `windows-latest` 的原生 job：MSYS2 的 MinGW 直接编译，跑
+`tests/windows_native.sh` —— 用的是 Windows 自带的字体、命令行是 UTF-16（所以中文文件名
+才是一次真正的测试）、中间没有兼容层。交互式控制台测试仍留在 Wine 那侧：
+Windows 上的 Python 没有 `pty` 模块。
 `tools/keylog_test.py` 是 issue #3 留下的守卫：它借 `MDT_KEY_LOG` 断言 mdt 交给按键解析器
 的**永远是整条序列**，绝不会是一个孤零零的 ESC（有一个孤立的 ESC 会被当成「退出」）。
 `tools/async_image_test.py` 打开一份图片放在慢速主机上的文档，检查首帧远低于一秒就出现、

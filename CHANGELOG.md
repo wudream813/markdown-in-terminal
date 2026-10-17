@@ -25,6 +25,14 @@ instead of a sentence.
   It belongs to the interactive reader: with `--dump`, `--screenshot`, `--diag`
   or stdin it is an error rather than a flag that quietly does nothing.  In the
   settings file it is `watch = on`; `--no-watch` turns it off again.
+* **A Windows runner that is actually Windows**: a `windows-latest` job builds
+  the sources with MSYS2's MinGW and runs `tests/windows_native.sh` - the real
+  fonts (`Consolas`, not Debian's copied into a wine prefix), a UTF-16 command
+  line, so a Chinese file name is a fair test, real path separators and no
+  compatibility layer - plus the whole command-line suite.  The wine job stays:
+  a POSIX pty is the only way to test the interactive console, since Python on
+  Windows has no `pty` module.  A release now publishes only if the native
+  Windows job passes too.
 * **A CI test for the musl claim**: the static build is run on Alpine, and the
   same document is rendered there and on the glibc runner and compared byte for
   byte.  "Runs on any distribution" is now checked rather than argued.

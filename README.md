@@ -450,7 +450,11 @@ requires the parser to receive whole sequences (see below). `tools/panic_test.py
 the running program and asserts that it hands the terminal back (same script
 on both platforms, exit code 143 for SIGTERM / 130 for Ctrl-Break).
 A GitHub Actions workflow (`.github/workflows/build.yml`) runs the Linux build,
-the Windows cross build and both test batteries.
+the Windows cross build and both test batteries - and a `windows-latest` job
+that builds with MSYS2's MinGW and runs `tests/windows_native.sh` on the real
+thing: the machine's own fonts, a UTF-16 command line (so a Chinese file name is
+a fair test), and no compatibility layer in between.  Interactive console tests
+stay on the wine side, because Python on Windows has no `pty` module.
 
 Checked in this repository: `x86_64-w64-mingw32` 14.2.0 + wine 10.0 —
 `--dump` output identical to the Linux build (121 lines), `--screenshot` PNG
