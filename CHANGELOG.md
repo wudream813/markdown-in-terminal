@@ -29,6 +29,14 @@ instead of a sentence.
   same document is rendered there and on the glibc runner and compared byte for
   byte.  "Runs on any distribution" is now checked rather than argued.
 
+### Fixed
+
+* **A status message now lives for its full time on screen**, counted from the
+  first frame that shows it rather than from the moment it was set.  On a slow
+  machine (or an emulated one - the arm64 build under qemu) the first frame
+  after a reload could take longer than the message lived, so the message was
+  never drawn at all: "the file was reloaded" looked like it had not been.
+
 ### Changed
 
 * **`--screenshot` without any font says what to do**: the error now lists the
@@ -39,6 +47,9 @@ instead of a sentence.
 * **The man page caught up**: `--watch`/`--no-watch`, the `watch` settings key,
   where `r` is no longer needed, and a "Reading" section that says what happens
   to the scroll position, search and the outline on a reload.
+* The `--watch` test waits for the status line instead of looking at the
+  screen once: a frame can arrive in more than one read, and the status line is
+  drawn after the body, which made the check fail on Windows under wine.
 * Shell completions know `--watch`/`--no-watch`, and `tests/cli.sh` now
   compares `--help` against the man page and the three completion files, so an
   option cannot be added to the program and forgotten in the documentation

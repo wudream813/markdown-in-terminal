@@ -147,13 +147,15 @@ def run_suite(poll_only: bool) -> list[str]:
             if not r.wait_for("The first version", WARMUP):
                 print("   FAIL no first frame appeared")
                 return 1
-            check(r.seen("watching for changes"), "the status bar says it is watching")
+            # wait_for, not seen: a frame can arrive in more than one read, and
+            # the status line is drawn after the body.
+            check(r.wait_for("watching for changes", 2.0), "the status bar says it is watching")
 
             # 1. plain write
             with open(DOC, "w", encoding="utf-8") as f:
                 f.write("# second\n\nA plain write landed.\n")
             check(r.wait_for("A plain write landed", 5.0), "a plain write reloads")
-            check(r.seen("reloaded"), "the status bar says it reloaded")
+            check(r.wait_for("reloaded", 2.0), "the status bar says it reloaded")
 
             # 2. the same write again must reload too (and not only once)
             time.sleep(0.5)

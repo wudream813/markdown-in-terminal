@@ -153,6 +153,8 @@ struct App {
   std::vector<SearchHit> search_hits;
   std::string status_msg;
   double status_until = 0;
+  double status_secs = 3.0;        // how long it is meant to live, in seconds
+  bool status_painted = true;      // ... counted from its first appearance
   bool toc_open = false;
   bool help_open = false;
   bool link_open = false;          // the clicked-link dialog
@@ -188,7 +190,9 @@ struct App {
 
   void set_status(const std::string& s, double secs = 3.0) {
     status_msg = s;
+    status_secs = secs;
     status_until = now_ms() + secs * 1000;
+    status_painted = false;
   }
   int view_rows() const { return std::max(1, term.caps.rows - 1); }
   int view_cols() const { return term.caps.cols; }
@@ -471,8 +475,17 @@ void App::render() {
   if (view.doc().invisible_removed > 0) engine += " +clean";
   if (decoding.converted) engine += " +" + decoding.encoding;   // 8-bit source, converted
   if (view.doc().code_gaps_collapsed > 0 || view.doc().code_refs_decoded > 0) engine += " +code";
+  // A message is meant to be read, so the clock starts when it is first drawn,
+  // not when it was set: on a slow machine (or a big document) the first frame
+  // after a reload can take longer than the message lives, and a status nobody
+  // ever saw is indistinguishable from a feature that does not work.
+  double now = now_ms();
+  if (!status_painted && !status_msg.empty()) {
+    status_painted = true;
+    if (now > status_until) status_until = now + status_secs * 1000;
+  }
   std::string msg = status_msg;
-  if (now_ms() > status_until) msg.clear();
+  if (now > status_until) msg.clear();
   std::string text;
   if (search_mode) {
     text = "/" + search_query;
