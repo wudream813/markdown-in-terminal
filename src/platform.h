@@ -8,6 +8,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -106,6 +107,53 @@ bool run_capture(const std::vector<std::string>& argv, std::string& out, int* ex
 // link cannot ask the OS to execute a local file.  Returns false when there is
 // no launcher or the scheme is not one of those.
 bool open_url(const std::string& url);
+
+// ------------------------------------------------------------------ watching --
+// `--watch` asks the reader to reload the document when the file on disk
+// changes.  There is no portable notification, so each platform uses its own
+// and the last resort is a stat():
+//
+//   Linux    inotify, watching the *directory*: an editor saves by writing a
+//            temporary file and renaming it over the original, so a watch on
+//            the file's inode goes deaf after the first save.
+//   macOS    kqueue, EVFILT_VNODE on the directory fd, same reason.
+//   Windows  ReadDirectoryChangesW, also on the directory.
+//   other    mtime + size, checked a few times a second.
+//
+// The notifier only says "something happened near this file"; the change
+// itself is decided by comparing the file's stamp, so an unrelated write in
+// the same directory does not reload the document.
+struct FileStamp {
+  long long mtime_ns = 0;
+  long long size = 0;
+};
+// False when the file cannot be stat'ed (deleted, no permissions).
+bool file_stamp(const std::string& utf8_path, FileStamp* out);
+
+class Watch {
+ public:
+  explicit Watch(std::string path);
+  virtual ~Watch() = default;
+  // True when the file differs from the last call's state (a file that
+  // disappeared counts as changed).  Waits at most timeout_ms for the
+  // platform's notifier; 0 looks only at what already arrived.
+  bool changed(int timeout_ms);
+
+ protected:
+  // Platform notification wait.  True when the kernel said something happened.
+  virtual bool wait_event(int timeout_ms) = 0;
+
+  std::string path_;
+
+ private:
+  FileStamp last_;
+  bool had_ = false;
+  bool have_ = false;
+};
+
+// Nullptr when this path cannot be watched (the reader then simply keeps the
+// `r` key).  `utf8_path` must name a regular file.
+std::unique_ptr<Watch> watch_file(const std::string& utf8_path);
 
 // Directory holding the document's files (used to resolve relative paths).
 std::string path_separator();

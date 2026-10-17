@@ -31,6 +31,7 @@ struct AppOptions {
   std::string config_path;         // the config file that was read, if any
   bool diag = false;               // print what mdt sees of the file and of the terminal
   bool compat = false;             // --compat: plain output for terminals that misbehave
+  bool watch = false;              // --watch: reload when the file changes on disk
   bool code_fit = false;           // --code-fit: code frames hug the code
   std::string screenshot;          // write a PNG of the rendered screen
   bool list_caps = false;          // print terminal capabilities and exit

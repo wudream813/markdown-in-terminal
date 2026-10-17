@@ -179,6 +179,13 @@ struct App {
   bool mode_broken_ = false;       // the tty modes are not ours right now
   double mode_retry_at_ = 0.0;     // ... and nagging about it is useless anyway
 
+  // --watch: the platform notifier (inotify / kqueue / ReadDirectoryChangesW,
+  // or the stat fallback) and the moment the last change was seen.  Editors
+  // save in bursts - a temporary file, a rename, a chmod - so the reload waits
+  // for a quiet period instead of firing on the first event.
+  std::unique_ptr<plat::Watch> watch_;
+  double watch_dirty_at_ = 0.0;
+
   void set_status(const std::string& s, double secs = 3.0) {
     status_msg = s;
     status_until = now_ms() + secs * 1000;
@@ -717,6 +724,29 @@ void App::run() {
       term.handle_resize();
       needs_frame = true;
     }
+    // --watch: reload after the file on disk has been quiet for a moment, and
+    // try to stay where the reader was.  Landing at the top of the document
+    // because the editor wrote one byte would make the option useless.
+    if (watch_) {
+      double now = now_ms();
+      if (watch_->changed(0)) watch_dirty_at_ = now;
+      if (watch_dirty_at_ > 0 && now - watch_dirty_at_ >= 300.0) {
+        watch_dirty_at_ = 0.0;
+        int anchor = view.block_at_row(view.scroll_top());
+        int offset = view.scroll_top() - view.row_of_block(anchor);
+        std::string err;
+        if (load_file(file, &err)) {
+          int blocks = (int)view.doc().blocks.size();
+          int row = view.row_of_block(std::max(0, std::min(anchor, blocks - 1)));
+          view.scroll_to(row + offset);
+          set_status(tr("reloaded: the file changed on disk",
+                        "文件已变，已重新载入"), 2.0);
+          needs_frame = true;
+        } else {
+          set_status(err);
+        }
+      }
+    }
     if (needs_frame) {
       render();
     }
@@ -1083,6 +1113,7 @@ int run_app(const AppOptions& opts) {
     fprintf(stderr, "mdt: %s\n", err.c_str());
     return 1;
   }
+  if (opts.watch) app.watch_ = plat::watch_file(path);
   app.toc_open = opts.toc;
   // fmt() is a printf wrapper: building the middle field first keeps it a
   // const char* (handing it a std::string is undefined behaviour and printed
@@ -1101,6 +1132,10 @@ int run_app(const AppOptions& opts) {
                           : (app.view.doc().backslashes_removed > 0
                                  ? tr("  |  removed backslash escapes", "  |  已去掉反斜杠转义")
                                  : "")), 5);
+  if (opts.watch) {
+    app.set_status(tr("watching for changes  |  ? for help",
+                      "已监视文件变化  |  ? 查看帮助"), 4);
+  }
   app.run();
   app.term.shutdown();
   return 0;
@@ -1515,6 +1550,8 @@ void print_usage() {
       "  --diag                               print what mdt sees of the file/terminal\n"
       "  --compat                             no graphics/sync/protocol probes (troubleshooting)\n"
       "  --code-fit                           code frames hug the code instead of the page\n"
+      "  --watch                              reload when the file changes on disk (also\n"
+      "                                       \"watch = on\" in the config; --no-watch undoes it)\n"
       "\n"
       "language\n"
       "  --lang=auto|en|zh                    interface language, also \"lang = zh\" in the\n"
@@ -1561,6 +1598,8 @@ void print_usage() {
       "  --diag                               打印 mdt 看到的文件/终端信息\n"
       "  --compat                             不做图形/同步/协议探测（排障用）\n"
       "  --code-fit                           代码框贴合代码，而不是整页宽\n"
+      "  --watch                              文件在磁盘上变化时自动重新载入（配置里写\n"
+      "                                       watch = on；--no-watch 取消）\n"
       "\n"
       "语言\n"
       "  --lang=auto|en|zh                    界面语言，也可以写进配置文件：\n"

@@ -186,6 +186,8 @@ static void load_config(AppOptions* opts, bool lang_explicit) {
       opts->syntax = truthy(val);
     } else if (key == "code_fit" || key == "code-fit") {
       opts->code_fit = truthy(val);
+    } else if (key == "watch") {
+      opts->watch = truthy(val);
     } else if (key == "lang" || key == "language") {
       // The config file is consulted only when neither --lang nor MDT_LANG
       // said anything: an explicit request should not be undone by a file the
@@ -378,6 +380,8 @@ int main(int argc, char** argv) {
       continue;
     }
     if (a == "--compat") { opts.compat = true; continue; }
+    if (a == "--watch") { opts.watch = true; continue; }
+    if (a == "--no-watch") { opts.watch = false; continue; }
     if (a == "--code-fit") { opts.code_fit = true; continue; }
     if (a == "--diag") { opts.diag = true; continue; }
     if (a == "--dump") { opts.dump = "-"; continue; }
@@ -407,6 +411,14 @@ int main(int argc, char** argv) {
     return usage_error(fmt(tr("mdt reads one file at a time, got %d (%s, %s, ...)",
                               "mdt 一次只读一个文件，但给了 %d 个（%s、%s、……）"),
                            (int)opts.files.size(), opts.files[0].c_str(), opts.files[1].c_str()));
+  // --watch belongs to the interactive reader: --dump/--screenshot/--diag print
+  // once and exit, so silently ignoring the flag would look like it worked.
+  if (opts.watch && (opts.diag || !opts.dump.empty() || !opts.screenshot.empty()))
+    return usage_error(tr("--watch only applies to the interactive reader",
+                          "--watch 只对交互式阅读有效"));
+  if (opts.watch && !opts.files.empty() && opts.files[0] == "-")
+    return usage_error(tr("--watch needs a file on disk, not stdin",
+                          "--watch 需要磁盘上的文件，不能用在标准输入上"));
   // Only one non-interactive output at a time, or the caller cannot tell which
   // one happened.
   int outputs = (opts.diag ? 1 : 0) + (opts.dump.empty() ? 0 : 1) + (opts.screenshot.empty() ? 0 : 1);

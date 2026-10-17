@@ -6,7 +6,8 @@ _mdt() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   opts="--gfx --math --font-px --theme --encoding --entities --escapes --loose --lang
         --toc --panels --terminal-bg --no-scrollbar --line-numbers --syntax
-        --no-syntax --no-color --diag --compat --code-fit --dump --screenshot
+        --no-syntax --no-color --diag --compat --code-fit --watch --no-watch
+        --dump --screenshot
         --width --height --cell --list-caps --help --version -h -v"
 
   case "$prev" in

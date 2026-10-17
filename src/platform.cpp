@@ -87,6 +87,47 @@ void key_log(const char* what, const char* data, size_t n) {
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------- watching ---
+// The part of --watch that is the same everywhere: hold the last stamp of the
+// file, ask the platform whether something may have happened, and answer
+// "changed" only when the stamp really moved.  A directory notification fires
+// for every file in it, so this filter is what keeps `touch notes.txt` next to
+// the document from reloading it.
+Watch::Watch(std::string path) : path_(std::move(path)) { had_ = file_stamp(path_, &last_); }
+
+bool Watch::changed(int timeout_ms) {
+  if (!wait_event(timeout_ms)) return false;
+  FileStamp now;
+  bool have = file_stamp(path_, &now);
+  bool differs =
+      have != had_ || (have && (now.mtime_ns != last_.mtime_ns || now.size != last_.size));
+  last_ = now;
+  had_ = have;
+  return differs;
+}
+
+namespace {
+// No kernel notifier (or the platform refused one): look at the file a few
+// times a second.  The event loop wakes every 120 ms, so a stat on each pass
+// would work too, but a network file system feels every single one.
+class PollWatch final : public Watch {
+ public:
+  explicit PollWatch(std::string path) : Watch(std::move(path)) {}
+
+ protected:
+  bool wait_event(int) override {
+    double now = now_ms();
+    if (now - last_check_ < 250.0) return false;
+    last_check_ = now;
+    return true;
+  }
+
+ private:
+  double last_check_ = 0.0;
+};
+}  // namespace
+
 }  // namespace plat
 }  // namespace mdt
 
@@ -99,10 +140,16 @@ void key_log(const char* what, const char* data, size_t n) {
 #include <cstdint>
 #include <ctime>
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#if defined(__linux__)
+#include <sys/inotify.h>  // --watch
+#elif defined(__APPLE__)
+#include <sys/event.h>  // kqueue, --watch
+#endif
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -434,6 +481,121 @@ bool open_url(const std::string& url) {
   }
   (void)child_errno;
   return got == 0;
+}
+
+// ---------------------------------------------------------------- watching ---
+// An editor saves by writing a temporary file and renaming it over the
+// original, which leaves a watch on the old inode pointing at a file nobody
+// will ever write again.  Watching the *directory* and comparing the target
+// file's mtime/size avoids that whole class of surprise, and also copes with
+// the file being deleted and re-created.
+namespace {
+bool stamp_of(const std::string& path, FileStamp* out) {
+  struct stat st;
+  if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) return false;
+  long long ns = 0;
+#if defined(__APPLE__)
+  ns = (long long)st.st_mtimespec.tv_nsec;
+#elif defined(__linux__) || defined(__CYGWIN__)
+  ns = (long long)st.st_mtim.tv_nsec;
+#endif
+  out->mtime_ns = (long long)st.st_mtime * 1000000000LL + ns;
+  out->size = (long long)st.st_size;
+  return true;
+}
+}  // namespace
+
+bool file_stamp(const std::string& utf8_path, FileStamp* out) { return stamp_of(utf8_path, out); }
+
+namespace {
+#if defined(__linux__)
+// inotify: one descriptor, one watch on the directory, drained on every pass.
+class InotifyWatch final : public Watch {
+ public:
+  InotifyWatch(int fd, std::string path) : Watch(std::move(path)), fd_(fd) {}
+  ~InotifyWatch() override {
+    if (fd_ >= 0) ::close(fd_);  // also removes the watch
+  }
+
+ protected:
+  bool wait_event(int timeout_ms) override {
+    struct pollfd p;
+    p.fd = fd_;
+    p.events = POLLIN;
+    p.revents = 0;
+    if (poll(&p, 1, timeout_ms) <= 0 || !(p.revents & POLLIN)) return false;
+    // Drain: one read holds several events, and leaving them queued would make
+    // the next poll() return immediately, spinning the reader.
+    char buf[8192];
+    while (::read(fd_, buf, sizeof buf) > 0) {
+    }
+    return true;
+  }
+
+ private:
+  int fd_ = -1;
+};
+#elif defined(__APPLE__)
+// kqueue: EVFILT_VNODE on the directory fd.  NOTE_WRITE fires for the rename
+// an editor does, NOTE_DELETE/RENAME/EXTEND cover the rest.
+class KqueueWatch final : public Watch {
+ public:
+  KqueueWatch(int kq, int dfd, std::string path) : Watch(std::move(path)), kq_(kq), dfd_(dfd) {}
+  ~KqueueWatch() override {
+    if (kq_ >= 0) ::close(kq_);
+    if (dfd_ >= 0) ::close(dfd_);
+  }
+
+ protected:
+  bool wait_event(int timeout_ms) override {
+    struct timespec ts;
+    ts.tv_sec = timeout_ms / 1000;
+    ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+    struct kevent ev;
+    return kevent(kq_, nullptr, 0, &ev, 1, &ts) > 0;
+  }
+
+ private:
+  int kq_ = -1;
+  int dfd_ = -1;
+};
+#endif
+}  // namespace
+
+std::unique_ptr<Watch> watch_file(const std::string& utf8_path) {
+  FileStamp st;
+  if (!stamp_of(utf8_path, &st)) return nullptr;  // nothing to watch yet
+  std::string dir = dir_name(utf8_path);
+  if (dir.empty()) dir = ".";
+#if defined(__linux__)
+  // MDT_WATCH_POLL=1 skips the kernel notifier, so the stat fallback is
+  // exercised by the test suite (and is what a hostile file system gets).
+  int fd = getenv("MDT_WATCH_POLL") ? -1 : inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+  if (fd >= 0) {
+    // Everything a save can look like: written in place, renamed over, created,
+    // deleted, permissions touched.  What counts is decided by the stamp.
+    const uint32_t mask = IN_CLOSE_WRITE | IN_MODIFY | IN_MOVED_TO | IN_MOVED_FROM | IN_CREATE |
+                          IN_DELETE | IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF;
+    if (inotify_add_watch(fd, dir.c_str(), mask) >= 0)
+      return std::unique_ptr<Watch>(new InotifyWatch(fd, utf8_path));
+    ::close(fd);
+  }
+#elif defined(__APPLE__)
+  int dfd = getenv("MDT_WATCH_POLL") ? -1 : open(dir.c_str(), O_EVTONLY);
+  if (dfd >= 0) {
+    int kq = kqueue();
+    if (kq >= 0) {
+      struct kevent ch;
+      EV_SET(&ch, (uintptr_t)dfd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+             NOTE_WRITE | NOTE_EXTEND | NOTE_DELETE | NOTE_RENAME | NOTE_ATTRIB, 0, nullptr);
+      if (kevent(kq, &ch, 1, nullptr, 0, nullptr) == 0)
+        return std::unique_ptr<Watch>(new KqueueWatch(kq, dfd, utf8_path));
+      ::close(kq);
+    }
+    ::close(dfd);
+  }
+#endif
+  return std::unique_ptr<Watch>(new PollWatch(utf8_path));
 }
 
 std::string path_separator() { return "/"; }
@@ -1203,7 +1365,96 @@ bool open_url(const std::string& url) {
   return (INT_PTR)r > 32;
 }
 
-std::string path_separator() { return "\\"; }
+// ---------------------------------------------------------------- watching ---
+// ReadDirectoryChangesW on the directory, completed through an event: the
+// reader polls it with a zero timeout on every pass, so no thread is needed.
+namespace {
+bool stamp_of_wide(const std::wstring& wpath, FileStamp* out) {
+  WIN32_FILE_ATTRIBUTE_DATA fa;
+  if (!GetFileAttributesExW(wpath.c_str(), GetFileExInfoStandard, &fa)) return false;
+  if (fa.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return false;
+  ULARGE_INTEGER t, size;
+  t.LowPart = fa.ftLastWriteTime.dwLowDateTime;
+  t.HighPart = fa.ftLastWriteTime.dwHighDateTime;
+  size.LowPart = fa.nFileSizeLow;
+  size.HighPart = fa.nFileSizeHigh;
+  out->mtime_ns = (long long)(t.QuadPart * 100ull);  // 100 ns ticks
+  out->size = (long long)size.QuadPart;
+  return true;
+}
+
+class DirWatch final : public Watch {
+ public:
+  DirWatch(HANDLE dir, HANDLE ev, std::string path)
+      : Watch(std::move(path)), dir_(dir), ev_(ev) {
+    std::memset(&ov_, 0, sizeof ov_);
+    ov_.hEvent = ev_;
+    issue();
+  }
+  ~DirWatch() override {
+    if (pending_) CancelIo(dir_);
+    if (dir_ != INVALID_HANDLE_VALUE) CloseHandle(dir_);
+    if (ev_ != INVALID_HANDLE_VALUE) CloseHandle(ev_);
+  }
+
+ protected:
+  bool wait_event(int timeout_ms) override {
+    if (!pending_) return false;
+    if (WaitForSingleObject(ev_, timeout_ms > 0 ? (DWORD)timeout_ms : 0) != WAIT_OBJECT_0)
+      return false;
+    DWORD got = 0;
+    BOOL ok = GetOverlappedResult(dir_, &ov_, &got, FALSE);
+    pending_ = false;
+    issue();  // arm it again for the next save
+    return ok == TRUE && got > 0;
+  }
+
+ private:
+  void issue() {
+    if (dir_ == INVALID_HANDLE_VALUE) return;
+    ResetEvent(ev_);
+    // Any write, rename or creation in the directory; the stamp decides
+    // whether it was our file.
+    BOOL ok = ReadDirectoryChangesW(
+        dir_, buf_, sizeof buf_, FALSE,
+        FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_FILE_NAME,
+        nullptr, &ov_, nullptr);
+    pending_ = ok == TRUE || GetLastError() == ERROR_IO_PENDING;
+  }
+
+  HANDLE dir_ = INVALID_HANDLE_VALUE;
+  HANDLE ev_ = INVALID_HANDLE_VALUE;
+  OVERLAPPED ov_{};
+  bool pending_ = false;
+  char buf_[4096];
+};
+}  // namespace
+
+bool file_stamp(const std::string& utf8_path, FileStamp* out) {
+  return stamp_of_wide(utf8_to_wide(utf8_path), out);
+}
+
+std::unique_ptr<Watch> watch_file(const std::string& utf8_path) {
+  FileStamp st;
+  if (!file_stamp(utf8_path, &st)) return nullptr;
+  std::string dir = dir_name(utf8_path);
+  if (dir.empty()) dir = ".";
+  HANDLE d = getenv("MDT_WATCH_POLL") ? INVALID_HANDLE_VALUE
+                                      : CreateFileW(utf8_to_wide(dir).c_str(), FILE_LIST_DIRECTORY,
+                                             FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                                 FILE_SHARE_DELETE,
+                                             nullptr, OPEN_EXISTING,
+                                             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+                                             nullptr);
+  if (d != INVALID_HANDLE_VALUE) {
+    HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (ev) return std::unique_ptr<Watch>(new DirWatch(d, ev, utf8_path));
+    CloseHandle(d);
+  }
+  return std::unique_ptr<Watch>(new PollWatch(utf8_path));
+}
+
+std::string path_separator() { return "\\\\"; }
 
 void system_font_dirs(std::string& windows_fonts, std::string& user_fonts) {
   char win[MAX_PATH] = {0};

@@ -1,4 +1,4 @@
-.TH MDT 1 "2026-10-14" "mdt 0.3.8" "User Commands"
+.TH MDT 1 "2026-10-17" "mdt 0.3.19" "User Commands"
 .SH NAME
 mdt \- read Markdown in the terminal, with images, tables and maths
 .SH SYNOPSIS
@@ -44,7 +44,7 @@ toggles maths,
 .B e
 copies the document as text,
 .B r
-reloads the file,
+reloads the file (with \fB\-\-watch\fR this happens by itself),
 .B o
 opens the first link (a click on a link opens a dialog that can copy or open
 it),
@@ -128,6 +128,17 @@ into a bug report.
 Turn off everything optional \- graphics, DEC 2026 synchronized output, the
 keyboard\-protocol push, the capability probe \- for terminals that mishandle
 them.
+.SS Reading
+.TP
+.B \-\-watch, \-\-no\-watch
+Reload the document whenever the file changes on disk; \fB\-\-no\-watch\fR turns
+it back off, and \fBwatch = off\fR does the same from the settings file.  The
+reload keeps the reader's place in the document.  Saving from an editor is the
+case it is built for, including the temporary\-file\-and\-rename save most
+editors use, and a file next to the document changing is not a reason to
+reload.  Only the interactive reader can do this: with \fB\-\-dump\fR,
+\fB\-\-screenshot\fR or \fB\-\-diag\fR, and when reading stdin, \fB\-\-watch\fR
+is an error rather than a flag that quietly does nothing.
 .SS Non\-interactive
 .TP
 .B \-\-dump[=file]
@@ -154,7 +165,7 @@ Print the detected terminal capabilities and exit.
 .I ~/.config/mdt/config
 Defaults, one "key = value" per line: \fBtheme\fR, \fBgfx\fR, \fBmath\fR,
 \fBencoding\fR, \fBpanels\fR, \fBterminal_bg\fR, \fBscrollbar\fR,
-\fBline_numbers\fR, \fBsyntax\fR, \fBcode_fit\fR.  The command line overrides
+\fBline_numbers\fR, \fBsyntax\fR, \fBcode_fit\fR, \fBwatch\fR.  The command line overrides
 the file.  On Windows the file is \fI%APPDATA%\\mdt\\config\fR; the environment
 variable \fBMDT_CONFIG\fR points somewhere else.
 .SH ENVIRONMENT

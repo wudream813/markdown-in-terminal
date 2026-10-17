@@ -28,6 +28,32 @@ jobs:
           ldd build-static/mdt 2>&1 | grep -q "not a dynamic executable" \
             || { echo "error: STATIC=1 did not produce a static binary"; exit 1; }
           build-static/mdt --version
+      - name: The static build runs on Alpine (musl, no glibc at all)
+        run: |
+          # The release artefact is static precisely so it does not care which
+          # libc the distribution ships; this is the cheapest way to keep that
+          # promise honest (Alpine is musl, Ubuntu is glibc).
+          docker run --rm -v "$PWD:/w:ro" -w /w alpine:3.20 \
+            /w/build-static/mdt --version
+          printf '# alpine\n\n- one\n- two\n\ninline $e^{i\\pi}$\n' > alpine.md
+          host_dump=$(build-static/mdt --dump --width=46 alpine.md)
+          alpine_dump=$(docker run --rm -v "$PWD:/w:ro" -w /w alpine:3.20 \
+            /w/build-static/mdt --dump --width=46 alpine.md)
+          [ "$host_dump" = "$alpine_dump" ] \
+            || { echo "error: the Alpine rendering differs from the glibc one"; exit 1; }
+          echo "the same bytes on musl and glibc"
+
+          # and with no fonts at all (the alpine image ships none) the failure
+          # has to say where it looked and what to install
+          printf '# no fonts\n' > /tmp/nofont.md
+          if docker run --rm -v "$PWD:/w:ro" -v /tmp:/t -w /w alpine:3.20 \
+               /w/build-static/mdt --screenshot=/t/o.png /tmp/nofont.md \
+               2>/tmp/font-err.txt; then
+            echo "error: --screenshot worked without any fonts"; exit 1
+          fi
+          grep -q "no usable monospace font found" /tmp/font-err.txt
+          grep -q "ttf-dejavu" /tmp/font-err.txt
+          echo "the no-font error names the packages:"; cat /tmp/font-err.txt
       - name: Tests
         run: sh tests/smoke.sh
       - name: Tests (static build)

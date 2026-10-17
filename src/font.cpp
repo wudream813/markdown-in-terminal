@@ -52,10 +52,11 @@ const char* kCjkCandidates[] = {
   "C:/Windows/Fonts/msyh.ttc",
   "C:/Windows/Fonts/simsun.ttc",
 };
-// Scans the platform font directories and returns candidate paths; on Windows
-// this is how the reader finds consola.ttf / msyh.ttc without hard-coded drives.
-std::vector<std::string> scan_font_dirs() {
-  std::vector<std::string> out;
+// The directories the font search looks at, in order.  Kept in one place so
+// the error message can say where it looked instead of only that it failed
+// (a container without fonts is the case that message is written for).
+std::vector<std::string> font_search_dirs() {
+  std::vector<std::string> dirs;
   std::string wf, uf;
   plat::system_font_dirs(wf, uf);
   const char* extra[] = {
@@ -65,10 +66,17 @@ std::vector<std::string> scan_font_dirs() {
     "/System/Library/Fonts",                // macOS (Menlo, Monaco, ...)
     "/System/Library/Fonts/Supplemental",   // macOS (older system fonts)
   };
-  std::vector<std::string> dirs;
   if (!wf.empty()) dirs.push_back(wf);
   if (!uf.empty()) dirs.push_back(uf);
   for (const char* e : extra) dirs.push_back(e);
+  return dirs;
+}
+
+// Scans the platform font directories and returns candidate paths; on Windows
+// this is how the reader finds consola.ttf / msyh.ttc without hard-coded drives.
+std::vector<std::string> scan_font_dirs() {
+  std::vector<std::string> out;
+  std::vector<std::string> dirs = font_search_dirs();
   struct Entry { std::string path; int score; };
   std::vector<Entry> found;
   for (const std::string& dir : dirs) {
@@ -149,7 +157,17 @@ bool FontRaster::init(int cell_w, int cell_h, std::string* err) {
     break;
   }
   if (!info_) {
-    if (err) *err = "no usable monospace font found";
+    // Say where it looked and what to install: the usual cause is a container
+    // or a minimal system with no fonts at all, and "no font found" alone
+    // leaves the reader guessing which of the two it is.
+    std::string where;
+    for (const std::string& d : font_search_dirs())
+      where += (where.empty() ? "" : ", ") + d;
+    if (err)
+      *err = "no usable monospace font found; looked in " + where +
+             ".  Install one (Debian/Ubuntu: fonts-dejavu-core, Fedora: "
+             "dejavu-sans-mono-fonts, Alpine: ttf-dejavu, Arch: ttf-dejavu) - "
+             "the text reader works without a font, only --screenshot needs one.";
     return false;
   }
   std::vector<std::string> cjk_paths;

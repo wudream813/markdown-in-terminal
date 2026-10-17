@@ -21,6 +21,8 @@ complete -c mdt -l no-color    -d 'monochrome output'
 complete -c mdt -l diag        -d 'print what mdt sees of the file and the terminal'
 complete -c mdt -l compat      -d 'no graphics/sync/probes - troubleshooting'
 complete -c mdt -l code-fit    -d 'code frames hug the code'
+complete -c mdt -l watch       -d 'reload when the file changes on disk'
+complete -c mdt -l no-watch    -d 'turn --watch back off'
 complete -c mdt -l dump        -d 'print a text rendering' -r
 complete -c mdt -l screenshot  -d 'render the screen to a PNG' -r -F
 complete -c mdt -l width       -d 'width for --dump/--screenshot' -x

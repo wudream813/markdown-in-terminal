@@ -5,6 +5,45 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.19] — 2026-10-17
+
+The reader follows the file now, and the "static binary" claim got a test
+instead of a sentence.
+
+### Added
+
+* **`--watch`**: `mdt --watch notes.md` reloads whenever the file changes on
+  disk, and keeps its place in the document - the reader in one window, the
+  editor in another.  The watcher sits on the *directory*, so an editor that
+  saves by writing a temporary file and renaming it over the original is picked
+  up too; a reload waits 0.3 s for the writes to stop, and a change to a
+  neighbouring file does not reload anything (the file's own timestamp and size
+  decide).  Linux uses `inotify`, macOS `kqueue`, Windows
+  `ReadDirectoryChangesW`, everything else - or a file system that refuses
+  those - falls back to stat-ing the file four times a second
+  (`MDT_WATCH_POLL=1` forces the fallback, which is how it is tested).
+  It belongs to the interactive reader: with `--dump`, `--screenshot`, `--diag`
+  or stdin it is an error rather than a flag that quietly does nothing.  In the
+  settings file it is `watch = on`; `--no-watch` turns it off again.
+* **A CI test for the musl claim**: the static build is run on Alpine, and the
+  same document is rendered there and on the glibc runner and compared byte for
+  byte.  "Runs on any distribution" is now checked rather than argued.
+
+### Changed
+
+* **`--screenshot` without any font says what to do**: the error now lists the
+  directories it searched and the package to install on Debian/Ubuntu, Fedora,
+  Alpine and Arch, instead of only "no usable monospace font found".  The
+  README says the same for containers: `--dump`, the reader and `--watch` need
+  no font at all; only `--screenshot` and pictures do.
+* **The man page caught up**: `--watch`/`--no-watch`, the `watch` settings key,
+  where `r` is no longer needed, and a "Reading" section that says what happens
+  to the scroll position, search and the outline on a reload.
+* Shell completions know `--watch`/`--no-watch`, and `tests/cli.sh` now
+  compares `--help` against the man page and the three completion files, so an
+  option cannot be added to the program and forgotten in the documentation
+  again (the audit found seven of those).
+
 ## [0.3.18] — 2026-10-16
 
 Distribution packages, without a distribution: every release now carries a

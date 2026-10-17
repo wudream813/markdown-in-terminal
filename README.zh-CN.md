@@ -102,11 +102,11 @@ sudo install -m 0755 mdt /usr/local/bin/mdt
 
 ```sh
 # Debian / Ubuntu / 树莓派 OS（amd64 与 arm64）
-curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt_0.3.18-1_amd64.deb
-sudo apt install ./mdt_0.3.18-1_amd64.deb     # 静态二进制，apt 不会额外拉依赖
+curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt_0.3.19-1_amd64.deb
+sudo apt install ./mdt_0.3.19-1_amd64.deb     # 静态二进制，apt 不会额外拉依赖
 
 # Fedora / RHEL / openSUSE（x86_64 与 aarch64）
-sudo dnf install https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-0.3.18-1.x86_64.rpm
+sudo dnf install https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-0.3.19-1.x86_64.rpm
 ```
 
 包里带二进制、man page 和三个补全脚本；`curl` 与 `xdg-utils` 是**推荐**而非依赖
@@ -131,6 +131,21 @@ scoop install wudream813/mdt
 ```
 
 每个 release 除二进制外还附 `install.sh`、`LICENSE` 和 `SHA256SUMS`，下载后不必只信页面本身。
+
+**Alpine、musl、distroless、scratch 容器。** Linux 二进制是静态的，不依赖 glibc、包管理器或
+宿主机上的任何东西 —— 把 `mdt-linux-amd64`（或 `-arm64`）拷进镜像就能跑：
+
+```dockerfile
+FROM alpine:3.20
+COPY mdt-linux-amd64 /usr/local/bin/mdt
+RUN chmod +x /usr/local/bin/mdt && \
+    apk add --no-cache ttf-dejavu        # 只有 --screenshot 和图片需要
+ENTRYPOINT ["mdt"]
+```
+
+`--dump`、交互式阅读和 `--watch` 完全不碰字体；只有 `--screenshot`（以及它画的图片）需要，
+而且没有字体时它会告诉你要装哪个包。CI 会把同一份文档在 Alpine 和 Ubuntu 上各渲染一次、
+逐字节比对 —— 「静态」是测出来的，不是声明的。
 
 在源码目录里 `make install` 还会装 man 手册和补全脚本：
 
@@ -307,7 +322,7 @@ cat notes.md | mdt --dump -     # 从标准输入读取
 | `/` `n` `N` | 搜索、下一个 / 上一个匹配 |
 | `t` | 切换主题（dark、light、nord、monochrome） |
 | `m` | 排版公式 ⇄ 纯 Unicode 公式 |
-| `r` | 重新读取文件 |
+| `r` | 重新读取文件（加了 `--watch` 就不用管了） |
 | `o` | 在浏览器里打开文档里的第一个链接 |
 | `e` | 把文档文本导出到剪贴板（OSC 52） |
 | `?` | 帮助 · `q` / `Ctrl-C` 退出 |
@@ -315,6 +330,23 @@ cat notes.md | mdt --dump -     # 从标准输入读取
 鼠标：滚轮滚动（SGR 和 X10 两种上报都支持），点击右侧滚动条跳转、拖动滚动条实时跟随；
 点击链接会弹出可复制/打开的对话框，点击标题、大纲条目可以跳转，点击提示框标题可以
 折叠/展开（搜索、大纲、`J`/`K` 跳到折叠框内部时会自动展开）。
+
+### 监视文件
+
+```sh
+mdt --watch 笔记.md
+```
+
+文件在磁盘上一变就重新载入 —— 写作时的常规用法：一个窗口开阅读器，另一个开编辑器。
+编辑器保存基本是「写临时文件再改名覆盖」，这也能收到（监视的是目录，不是文件的 inode），
+而且重载后会**留在原来的位置**，不会跳回开头。
+
+重新载入会等写入停下来（0.3 秒），同目录里**别的文件**变化不会触发重载 —— 判断依据是
+该文件自己的修改时间和大小。Linux 用 `inotify`，macOS 用 `kqueue`，Windows 用
+`ReadDirectoryChangesW`，其它系统（或拒绝这些机制的文件系统）退回到每秒查几次。
+
+`--watch` 只属于交互式阅读：和 `--dump`、`--screenshot`、`--diag` 一起用，或者读标准输入时，
+它是个错误，而不是一个悄悄什么都不做的开关。配置文件里写 `watch = on`。
 
 ## 数学管线是怎么工作的
 

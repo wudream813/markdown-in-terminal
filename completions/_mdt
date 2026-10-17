@@ -23,6 +23,8 @@ _mdt() {
     '--diag[print what mdt sees of the file and the terminal]'
     '--compat[no graphics/sync/probes - troubleshooting]'
     '--code-fit[code frames hug the code]'
+    '--watch[reload when the file changes on disk]'
+    '--no-watch[turn --watch back off]'
     '--dump=[print a text rendering]:file:_files'
     '--screenshot=[render the screen to a PNG]:file:_files -g "*.png"'
     '--width=[width for --dump/--screenshot]:columns:'

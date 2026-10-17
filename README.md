@@ -217,7 +217,7 @@ upgrade:
 
 ```sh
 # Debian, Ubuntu, Raspberry Pi OS ... (amd64 and arm64)
-V=0.3.18                                   # the table below lists both names
+V=0.3.19                                   # the table below lists both names
 curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/download/v$V/mdt_$V-1_amd64.deb
 sudo apt install ./mdt_$V-1_amd64.deb      # nothing to pull in: the binary is static
 
@@ -247,6 +247,23 @@ scoop install wudream813/mdt
 
 Every release also carries `install.sh`, `LICENSE` and a `SHA256SUMS` next to the
 binaries, so a download can be checked without trusting the page it came from.
+
+**Alpine, musl, distroless, scratch containers.**  The Linux binaries are static,
+so they do not need glibc, a package manager or anything else from the host — copy
+`mdt-linux-amd64` (or `-arm64`) into the image and it runs:
+
+```dockerfile
+FROM alpine:3.20
+COPY mdt-linux-amd64 /usr/local/bin/mdt
+RUN chmod +x /usr/local/bin/mdt && \
+    apk add --no-cache ttf-dejavu        # only needed for --screenshot/-o pictures
+ENTRYPOINT ["mdt"]
+```
+
+`--dump`, the interactive reader and `--watch` all work with no font at all; only
+`--screenshot` (and the pictures it draws) needs a font, and it says which packages
+to install when there is none.  CI renders the same document on Alpine and on
+Ubuntu and compares the bytes, so "static" is checked rather than assumed.
 
 `make install` (from a checkout) also installs the man page and the shell
 completions:
@@ -478,10 +495,33 @@ Keys
 | `/` `n` `N` | search, next / previous match |
 | `t` | cycle theme (`dark`, `light`, `nord`, `monochrome`) |
 | `m` | toggle typeset ⇄ plain-Unicode maths |
-| `r` | reload the file |
+| `r` | reload the file (with `--watch` it happens by itself) |
 | `o` | open the first link in the browser |
 | `e` | export the document text to the clipboard (OSC 52); quotes, lists, tables and callout content are kept in full |
 | `?` | help · `q` / `Ctrl-C` quit |
+
+### Watching a file
+
+```sh
+mdt --watch notes.md
+```
+
+The document reloads whenever the file changes on disk, which is what you want
+while writing it: keep the reader open in one window and the editor in another.
+A save from an editor is picked up even though most editors write a temporary
+file and rename it over the original (the watcher sits on the directory, not on
+the file's inode), and the reader keeps its place in the document.
+
+The reload waits for the writes to stop (a quarter of a second), and a change
+to a *different* file in the same directory does not reload anything - the
+file's timestamp and size are what decide.  Linux uses `inotify`, macOS
+`kqueue`, Windows `ReadDirectoryChangesW`, and any other system (or a file
+system that refuses those) falls back to checking the file a few times a
+second.
+
+`--watch` belongs to the interactive reader: with `--dump`, `--screenshot` or
+`--diag`, and with stdin, it is an error rather than a flag that quietly does
+nothing.  In the settings file it is `watch = on`.
 
 ## How the maths pipeline works
 
@@ -579,6 +619,7 @@ the final geometry is exact.
 | `--escapes=auto\|off\|force` | control the backslash-escape repair described above |
 | `--loose=auto\|off\|on` | accept `#标题` / `-项目` / `1.项目` without a space |
 | `--code-fit` | code frames hug the code instead of spanning the page |
+| `--watch` | reload whenever the file changes on disk (see below) |
 | `--cell=WxH` | cell size in pixels for `--dump`/`--screenshot` (default 9x19), so a screenshot can match your terminal exactly |
 | `--compat` | no graphics, no DEC 2026 synchronized output, no keyboard-protocol push, no capability probe - for terminals whose support for those is broken |
 | `--diag` | print what mdt sees of the file (encoding, escapes, block census, first characters), the interface language it picked and why, and what it sees of the terminal; works without a tty |

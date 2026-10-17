@@ -240,4 +240,36 @@ else:
 PY
 fi
 
+echo "== documents and completions list every option --help prints =="
+# The audit found seven options that existed in --help but in neither the man
+# page nor the completions, and it is the kind of drift nobody notices.  This
+# compares the three lists in one direction only: everything the program offers
+# has to be documented somewhere.
+if [ -n "$RUN" ]; then
+  echo "   (skipped under wine: no troff docs on that side)"
+else
+  python3 - "$BIN" <<'PY'
+import os, re, subprocess, sys
+binary = sys.argv[1]
+env = dict(os.environ, MDT_LANG="en")
+text = subprocess.run([binary, "--help"], capture_output=True, text=True,
+                      env=env).stdout
+opts = sorted(set(re.findall(r"--[a-z][a-z0-9-]*", text)))
+man = open("docs/mdt.1", encoding="utf-8").read().replace(r"\-", "-")
+comp = "".join(open(p, encoding="utf-8").read()
+               for p in ("completions/mdt.bash", "completions/_mdt",
+                         "completions/mdt.fish"))
+bad = 0
+for name, blob in (("docs/mdt.1", man), ("completions", comp)):
+    missing = [o for o in opts if o not in blob]
+    if missing:
+        print("   FAIL not in %s: %s" % (name, " ".join(missing)))
+        bad = 1
+if not bad:
+    print("   ok   all %d options from --help are in the man page and completions"
+          % len(opts))
+sys.exit(bad)
+PY
+fi
+
 echo "cli checks passed"
