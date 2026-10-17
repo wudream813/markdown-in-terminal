@@ -47,7 +47,7 @@ jobs:
           # has to say where it looked and what to install
           printf '# no fonts\n' > /tmp/nofont.md
           if docker run --rm -v "$PWD:/w:ro" -v /tmp:/t -w /w alpine:3.20 \
-               /w/build-static/mdt --screenshot=/t/o.png /tmp/nofont.md \
+               /w/build-static/mdt --screenshot=/t/o.png /t/nofont.md \
                2>/tmp/font-err.txt; then
             echo "error: --screenshot worked without any fonts"; exit 1
           fi
