@@ -116,7 +116,11 @@ bool open_url(const std::string& url);
 //   Linux    inotify, watching the *directory*: an editor saves by writing a
 //            temporary file and renaming it over the original, so a watch on
 //            the file's inode goes deaf after the first save.
-//   macOS    kqueue, EVFILT_VNODE on the directory fd, same reason.
+//   macOS    kqueue, EVFILT_VNODE on two descriptors: the directory (saves
+//            that replace the file, which is what a rename-over save is) and
+//            the file itself (saves that write into it, which change no
+//            directory entry and are therefore invisible to a directory
+//            watch), moving the file watch to the new inode after a replace.
 //   Windows  ReadDirectoryChangesW, also on the directory.
 //   other    mtime + size, checked a few times a second.
 //

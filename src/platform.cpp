@@ -536,28 +536,62 @@ class InotifyWatch final : public Watch {
   int fd_ = -1;
 };
 #elif defined(__APPLE__)
-// kqueue: EVFILT_VNODE on the directory fd.  NOTE_WRITE fires for the rename
-// an editor does, NOTE_DELETE/RENAME/EXTEND cover the rest.
+// kqueue needs two registrations to see everything an editor does: a write in
+// place changes the file but not the directory entry, and a rename-over save
+// changes the directory entry and leaves the old file description behind.  So
+// the directory is watched for saves that replace the file, and the file itself
+// for saves that write into it; after a replacement the file watch is moved to
+// the new inode (NOTE_RENAME / NOTE_DELETE say when).
 class KqueueWatch final : public Watch {
  public:
-  KqueueWatch(int kq, int dfd, std::string path) : Watch(std::move(path)), kq_(kq), dfd_(dfd) {}
+  KqueueWatch(int kq, int dfd, std::string path)
+      : Watch(std::move(path)), kq_(kq), dfd_(dfd) {
+    arm_file();
+  }
   ~KqueueWatch() override {
+    if (ffd_ >= 0) ::close(ffd_);
     if (kq_ >= 0) ::close(kq_);
     if (dfd_ >= 0) ::close(dfd_);
   }
 
  protected:
   bool wait_event(int timeout_ms) override {
+    if (ffd_ < 0) arm_file();  // the file was mid-rename last time round
     struct timespec ts;
     ts.tv_sec = timeout_ms / 1000;
     ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
-    struct kevent ev;
-    return kevent(kq_, nullptr, 0, &ev, 1, &ts) > 0;
+    struct kevent evs[4];
+    int n = kevent(kq_, nullptr, 0, evs, 4, &ts);
+    if (n <= 0) return false;
+    for (int i = 0; i < n; i++) {
+      if (ffd_ >= 0 && (int)evs[i].ident == ffd_ &&
+          (evs[i].fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)))
+        rearm_file();
+    }
+    return true;  // Watch::changed() decides whether *our* file really moved
   }
 
  private:
+  void arm_file() {
+    ffd_ = ::open(path_.c_str(), O_EVTONLY);
+    if (ffd_ < 0) return;
+    struct kevent ch;
+    EV_SET(&ch, (uintptr_t)ffd_, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+           NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_DELETE | NOTE_RENAME, 0, nullptr);
+    if (kevent(kq_, &ch, 1, nullptr, 0, nullptr) != 0) {
+      ::close(ffd_);
+      ffd_ = -1;
+    }
+  }
+  void rearm_file() {
+    if (ffd_ >= 0) ::close(ffd_);  // closing also drops the registration
+    ffd_ = -1;
+    arm_file();
+  }
+
   int kq_ = -1;
   int dfd_ = -1;
+  int ffd_ = -1;
 };
 #endif
 }  // namespace
