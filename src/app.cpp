@@ -234,8 +234,13 @@ bool App::load_file(const std::string& path, std::string* err) {
   mo.loose = opt.loose == "off"      ? MdOptions::LooseOff
            : opt.loose == "on"       ? MdOptions::LooseOn
                                      : MdOptions::LooseAuto;
+  // The old document goes first: a reload must not hold two copies of a big
+  // file at once.  (Nothing draws in between - this is one synchronous call.)
+  outline.clear();
+  view.release();
   MarkdownParser parser;
   MdDocument doc = parser.parse(text, mo);
+  std::string().swap(text);  // the source is not needed for the layout
   view.set_width(view_cols());
   view.set_view_rows(view_rows());
   view.set_document(std::move(doc), path, dir_name(abs_path(path)));
@@ -878,8 +883,8 @@ void App::run() {
     if (needs_frame) {
       render();
     }
-    if (view.layout_dirty()) {  // a formula was measured: refresh the layout once
-      view.relayout();
+    if (view.layout_dirty()) {  // a formula was measured: refresh those blocks
+      view.refresh_layout();
       needs_frame = true;
       continue;
     }
@@ -1443,8 +1448,7 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
     pro.fold_ui = false;
     probe.set_options(pro);
     probe.set_width(opt.width > 0 ? opt.width : 100);
-    probe.set_document(std::move(doc), path, dir_name(abs_path(path)));
-    probe.relayout();
+    probe.set_document(std::move(doc), path, dir_name(abs_path(path)));  // lays it out
     DocView::LayoutStats st = probe.layout_stats();
     printf("  layout          : %d rows, %zu lines, %zu runs, %zu table cells\n", st.rows, st.lines,
            st.runs, st.cells);

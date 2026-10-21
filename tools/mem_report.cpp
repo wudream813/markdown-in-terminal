@@ -7,6 +7,7 @@
 // counts and the peak RSS.  The point is to keep the numbers visible while the
 // layout is being made cheaper - "the 4 MB file uses 500 MB" is not a bug
 // report you can act on.
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -15,6 +16,42 @@
 #include "../src/render.h"
 
 using namespace mdt;
+
+// Resident set right now (Linux; 0 elsewhere) - the peak alone cannot tell
+// what a phase keeps from what it only needed for a moment.
+static double rss_now_mb() {
+  FILE* f = fopen("/proc/self/statm", "r");
+  if (!f) return 0;
+  long pages = 0, res = 0;
+  if (fscanf(f, "%ld %ld", &pages, &res) != 2) res = 0;
+  fclose(f);
+  return res * 4096.0 / 1e6;
+}
+
+struct Count {
+  size_t blocks = 0, spans = 0, cells = 0, str_bytes = 0;
+  void str(const std::string& s) {
+    if (s.capacity() > 15) str_bytes += s.capacity() + 1;
+  }
+  void spans_of(const std::vector<Span>& v) {
+    spans += v.size();
+    for (auto& sp : v) { str(sp.text); str(sp.tex); str(sp.link); }
+  }
+  void walk(const std::vector<Block>& v) {
+    for (auto& b : v) {
+      blocks++;
+      spans_of(b.spans);
+      str(b.code);
+      for (auto& it : b.items) walk(it);
+      for (auto& r : b.rows)
+        for (auto& c : r) { cells++; spans_of(c.spans); }
+    }
+  }
+};
+
+static double ms_since(std::chrono::steady_clock::time_point t) {
+  return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+}
 
 int main(int argc, char** argv) {
   if (argc < 2) {
@@ -35,26 +72,34 @@ int main(int argc, char** argv) {
   }
   double after_read = peak_rss_mb();
 
+  auto t_parse = std::chrono::steady_clock::now();
   MarkdownParser parser;
   MdOptions mo;
   MdDocument doc = parser.parse(text, mo);
-  size_t spans = 0;
-  for (auto& b : doc.blocks) spans += b.spans.size();
+  double parse_ms = ms_since(t_parse);
+  double after_parse = peak_rss_mb();
+  Count n;
+  n.walk(doc.blocks);
   printf("source              : %.2f MB\n", text.size() / 1e6);
-  printf("parse               : %zu blocks, %zu top-level spans, %.1f MB peak\n", doc.blocks.size(),
-         spans, after_read);
+  printf("parse               : %zu top-level blocks, %.0f ms, %.1f MB peak (%.1f MB before), "
+         "%.1f MB resident after\n",
+         doc.blocks.size(), parse_ms, after_parse, after_read, rss_now_mb());
+  printf("document            : %zu blocks, %zu spans, %zu table cells, %.1f MB of heap strings\n",
+         n.blocks, n.spans, n.cells, n.str_bytes / 1e6);
 
   if (!layout) return 0;
   DocView view;
   view.set_options(RenderOptions());
   view.set_width(width);
   view.set_view_rows(40);
-  view.set_document(std::move(doc), argv[1], ".");
-  view.relayout();
+  auto t_layout = std::chrono::steady_clock::now();
+  view.set_document(std::move(doc), argv[1], ".");   // lays the document out
+  double layout_ms = ms_since(t_layout);
 
   DocView::LayoutStats st = view.layout_stats();
-  printf("layout              : %d rows total, %zu lines, %zu runs, %zu table cells, %.1f MB of run text\n",
-         st.rows, st.lines, st.runs, st.cells, st.run_bytes / 1e6);
-  printf("peak RSS            : %.1f MB\n", peak_rss_mb());
+  printf("layout              : %d rows total, %zu lines, %zu runs, %zu table cells, %.1f MB of run text, "
+         "%.0f ms\n",
+         st.rows, st.lines, st.runs, st.cells, st.run_bytes / 1e6, layout_ms);
+  printf("peak RSS            : %.1f MB (%.1f MB resident now)\n", peak_rss_mb(), rss_now_mb());
   return 0;
 }

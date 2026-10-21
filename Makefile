@@ -149,6 +149,10 @@ mem-report: $(BIN)
 	$(CXX) $(CXXFLAGS) -o $(BUILD)/mem-report tools/mem_report.cpp \
 	  $(filter-out $(BUILD)/src/main.o,$(OBJ)) $(OPT) $(LDLIBS)
 
+refresh-check: $(BIN)
+	$(CXX) $(CXXFLAGS) -o $(BUILD)/refresh-check tools/refresh_check.cpp \
+	  $(filter-out $(BUILD)/src/main.o,$(OBJ)) $(OPT) $(LDLIBS)
+
 test: $(BIN)
 	$(CXX) $(CXXFLAGS) -w -o $(BUILD)/test_svg tools/test_svg.cpp src/svg.cpp src/image.cpp src/util.cpp $(OPT) -lm
 	$(CXX) $(CXXFLAGS) -o $(BUILD)/test_math tools/test_math.cpp $(OBJ) $(OPT) $(LDLIBS)

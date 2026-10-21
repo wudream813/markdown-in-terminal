@@ -140,8 +140,8 @@ bool DocView::link_at(int mx, int my, std::string& url) const {
     for (const auto& line : bl.lines) {
       if (base + line.row != my) continue;
       for (const auto& r : line.runs) {
-        if (r.style.is_link && !r.style.link.empty() && mx >= r.x && mx < r.x + r.width) {
-          url = r.style.link;
+        if (r.style.is_link && !r.style.link().empty() && mx >= r.x && mx < r.x + r.width) {
+          url = r.style.link();
           return true;
         }
       }
@@ -190,7 +190,10 @@ bool DocView::toggle_box_at(int mx, int my) {
       auto it = box_open_.find(line.toggle_uid);
       if (it == box_open_.end()) continue;
       it->second = !it->second;
-      relayout();  // clears + rebuilds the rows and clamps the scroll offset
+      // only this block changes; the ones behind it move (and the scroll
+      // offset is clamped) - a full relayout of a big document took ~1 s
+      dirty_blocks_.push_back(bl.block);
+      refresh_layout();
       return true;
     }
   }
@@ -588,8 +591,10 @@ std::shared_ptr<DocView::ImageAsset> DocView::resolve_asset(const ImageAsset& a)
   auto real = asset_for_math(a.source, a.is_display, a.max_w, a.max_h, false, true);
   if (!real || real->failed) return nullptr;
   if (real->cols != a.cols || real->rows != a.rows ||
-      std::abs(real->baseline_px - a.baseline_px) > 1.0)
+      std::abs(real->baseline_px - a.baseline_px) > 1.0) {
     layout_dirty_ = true;
+    dirty_blocks_.push_back(drawing_block_);
+  }
   return real;
 }
 
@@ -625,6 +630,7 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
     if (bl.row + bl.rows <= scroll_row) continue;
     if (bl.row >= scroll_row + h) break;
     const Block& b = doc_.blocks[(size_t)bl.block];
+    drawing_block_ = bl.block;  // resolve_asset() notes which block needs a new layout
 
     // Tables can also be nested inside list items and quotes, so the decision
     // follows the lines, not the block type.  A block may hold both table lines
@@ -774,6 +780,7 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
       }
     }
   }
+  drawing_block_ = -1;
 }
 
 }  // namespace mdt

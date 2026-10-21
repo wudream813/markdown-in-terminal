@@ -116,6 +116,7 @@ class DocView {
   void set_options(const RenderOptions& o) { opt_ = o; lazy_metrics_ = o.lazy_metrics; }
   const RenderOptions& options() const { return opt_; }
   void set_document(MdDocument doc, const std::string& path, const std::string& base_dir);
+  void release();  // frees the document + layout (before a reload parses the new file)
   const MdDocument& doc() const { return doc_; }
   const std::string& path() const { return path_; }
   const Theme& theme() const { return theme_; }
@@ -123,6 +124,10 @@ class DocView {
   void set_width(int cols);
   int width() const { return cols_; }
   void relayout();
+  // After a draw measured formulas (layout_dirty()): lays out only the blocks
+  // that showed them again.  Same result as relayout(), much cheaper.
+  void refresh_layout();
+  std::string layout_signature() const;  // tests: a text fingerprint of the layout
   // True when a formula measured during drawing disagrees with the layout
   // estimate; the caller should relayout once (all metrics are cached by then).
   bool layout_dirty() const { return layout_dirty_; }
@@ -193,9 +198,21 @@ class DocView {
   }
 
  private:
+  // What a laid-out run needs of its Span: 20 bytes instead of 120 (the Span
+  // carries three strings).  The link target is interned, see link_id().
+  struct RunStyle {
+    Span::Kind kind = Span::Text;
+    bool bold = false, italic = false, strike = false, underline = false, dim = false;
+    bool is_link = false, has_color = false;
+    RGB color{0, 0, 0};
+    int link_id = -1;
+    RunStyle() = default;
+    RunStyle(const Span& s);  // NOLINT: implicit on purpose (r.style = span)
+    const std::string& link() const;
+  };
   struct Run {
     std::string text;
-    Span style;
+    RunStyle style;
     int x = 0, width = 0;
     int img = -1;  // index into assets_ for maths / inline images
     int rows = 1;
@@ -304,6 +321,8 @@ class DocView {
   bool lazy_metrics_ = true;
   bool offscreen_ = false;
   bool layout_dirty_ = false;
+  std::vector<int> dirty_blocks_;  // blocks whose formulas were measured (refresh_layout)
+  int drawing_block_ = -1;         // the block draw() is at (-1: unknown -> full relayout)
   std::vector<BlockLayout> layout_;
   std::vector<PlacedImage> images_;
   std::vector<BigText> big_texts_;
@@ -335,6 +354,7 @@ class DocView {
   int theme_gen_ = 0;
 
   void layout_blocks();
+  int layout_range(size_t first, size_t last, int row, std::vector<BlockLayout>& out);
   // Lays a table out into bl, starting at column `indent` with `avail` columns
   // available.  Also used for tables nested in list items and quotes.
   void layout_table(const Block& b, int indent, int avail, BlockLayout& bl, int& row);

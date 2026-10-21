@@ -217,7 +217,7 @@ upgrade:
 
 ```sh
 # Debian, Ubuntu, Raspberry Pi OS ... (amd64 and arm64)
-V=0.3.20                                   # the table below lists both names
+V=0.3.21                                   # the table below lists both names
 curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/download/v$V/mdt_$V-1_amd64.deb
 sudo apt install ./mdt_$V-1_amd64.deb      # nothing to pull in: the binary is static
 
@@ -642,8 +642,12 @@ Measured on a 250 KB document (400 sections, ~420 formulas, tables, code, images
 
 Formulas are typeset lazily: only the ones that come into view are measured and
 rasterised. If a deferred formula turns out to be bigger or smaller than the
-layout estimate, the document is relaid out once (metrics are cached by then) so
-the final geometry is exact.
+layout estimate, the blocks that showed it are laid out again and everything
+behind them moves (metrics are cached by then), so the final geometry is exact.
+Until 0.3.20 that was a relayout of the whole document - on a 10 MB file about
+a second per page that brought a new formula into view.  `make refresh-check`
+builds a tool that scrolls through a document and checks that the partial
+relayout ends where a full one does.
 
 ## Display options
 
@@ -734,14 +738,36 @@ now lays the document out in slices and prints each one as it goes, which is
 where most of it went.  `mdt --diag file.md` prints what a document costs:
 
 ```
-  block struct    : 568 bytes (span 120, line 256, run 168, table cell 96)
-  layout          : 80110 rows, 65110 lines, 57212 runs, 0 table cells
-  memory          : 83.5 MB peak RSS for the whole document
+  block struct    : 568 bytes (span 120, line 256, run 72, table cell 96)
+  layout          : 241941 rows, 165228 lines, 407169 runs, 59010 table cells
+  memory          : 268.6 MB peak RSS for the whole document
 ```
 
 `make mem-report && ./build/mem-report big.md` prints the same numbers with the
-breakdown per phase (parse, layout, run text) for whoever is working on it, and
-`tests/smoke.sh` fails if a 3 MB document goes over its budget.
+breakdown per phase (parse and layout time, what each keeps resident) for
+whoever is working on it, and `tests/smoke.sh` fails if a 3 MB document goes
+over its budget or if opening a document four times as big takes much more
+than four times as long.
+
+What 0.3.21 measured on two 11 MB files - prose with tables and code, and one
+made of the demo plus every test fixture 783 times over (formulas, Luogu
+callouts, nested quotes):
+
+| | prose, 11.7 MB | mixed, 11.4 MB |
+|:--|--:|--:|
+| parse | 0.5 s | 1.0 s (was 11.9 s) |
+| layout | 0.8 s | 0.8 s |
+| reader, first screen | 1.6 s | 2.2 s |
+| reader, peak memory | 253 MB | 420 MB (was 456 MB) |
+| `r` / `--watch` reload, peak memory | | 500 MB (was 690 MB) |
+| a page with new formulas (`j`, `g`) | | 1 ms (was 0.3-0.4 s) |
+| scrolling, `G`, search | ≤ 50 ms | ≤ 80 ms |
+
+The parse was quadratic in the number of Luogu leaf directives
+(`::cute-table{...}`): each one was erased from the block list where it stood.
+A reload now drops the old document before it parses the new one, the laid-out
+runs carry a 20-byte style instead of a whole span, and the layout moves lines
+instead of copying them.
 
 ## The command line is checked
 

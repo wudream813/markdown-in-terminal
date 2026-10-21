@@ -56,6 +56,10 @@ jobs:
           echo "the no-font error names the packages:"; cat /tmp/font-err.txt
       - name: Tests
         run: sh tests/smoke.sh
+      - name: Partial relayout matches a full relayout (refresh-check)
+        run: |
+          make refresh-check
+          for f in demo/demo.md tests/fixtures/*.md; do build/refresh-check "$f"; done
       - name: Tests (static build)
         run: BIN=./build-static/mdt sh tests/smoke.sh
       - uses: actions/upload-artifact@v4
@@ -82,6 +86,14 @@ jobs:
           # here), so the memory budget is set explicitly instead of scaled
           MDT_TEST_SLOWDOWN: "4"
           MDT_MEM_BUDGET_MB: "2000"
+      - name: Partial relayout under ASan + UBSan (refresh-check)
+        run: |
+          make BUILD=build-asan \
+               OPT="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" refresh-check
+          for f in demo/demo.md tests/fixtures/*.md; do build-asan/refresh-check "$f"; done
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1
 
   macos:
     name: macOS (native)

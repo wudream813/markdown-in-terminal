@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <unordered_map>
 
 namespace mdt {
 
@@ -169,6 +170,30 @@ DocView::LayoutStats DocView::layout_stats() const {
   return st;
 }
 
+// Link targets of the laid-out runs, one copy per distinct URL for the whole
+// session (a reload adds only the URLs it did not see before).
+static std::vector<std::string>& link_pool() {
+  static std::vector<std::string> v;
+  return v;
+}
+
+DocView::RunStyle::RunStyle(const Span& s)
+    : kind(s.kind), bold(s.bold), italic(s.italic), strike(s.strike), underline(s.underline),
+      dim(s.dim), is_link(s.is_link), has_color(s.has_color), color(s.color) {
+  if (s.link.empty()) return;
+  static std::unordered_map<std::string, int> index;
+  auto it = index.find(s.link);
+  if (it != index.end()) { link_id = it->second; return; }
+  link_id = (int)link_pool().size();
+  link_pool().push_back(s.link);
+  index.emplace(s.link, link_id);
+}
+
+const std::string& DocView::RunStyle::link() const {
+  static const std::string none;
+  return link_id < 0 ? none : link_pool()[(size_t)link_id];
+}
+
 void DocView::struct_sizes(size_t* block, size_t* span, size_t* line, size_t* run, size_t* cell) {
   if (block) *block = sizeof(Block);
   if (span) *span = sizeof(Span);
@@ -185,6 +210,19 @@ void DocView::set_document(MdDocument doc, const std::string& path, const std::s
   asset_map_.clear();
   scroll_ = 0;
   relayout();
+}
+
+// Drops the document and its layout before a reload parses the new file, so
+// that the old and the new copy of a big document never live side by side
+// (an 11 MB file: 690 MB peak instead of 456 MB).
+void DocView::release() {
+  doc_ = MdDocument();
+  std::vector<BlockLayout>().swap(layout_);
+  clip_cache_.clear();
+  assets_.clear();
+  asset_map_.clear();
+  images_.clear();
+  total_rows_ = 0;
 }
 
 void DocView::set_width(int cols) {
@@ -552,6 +590,7 @@ bool DocView::poll_images() {
 
 void DocView::relayout() {
   layout_dirty_ = false;  // the flag only means "layout may be stale"
+  dirty_blocks_.clear();
   clip_cache_.clear();    // the assets the cuts refer to are gone
   assets_.clear();
   asset_map_.clear();
@@ -787,7 +826,7 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
       l.x = indent;        // blocks nested in a list item start further right
       int x = 0;
       for (int c = 0; c < ncols; c++) { TCell tc; tc.x = x; tc.width = w[c]; x += w[c] + 1; l.cells.push_back(tc); }
-      bl.lines.push_back(l);
+      bl.lines.push_back(std::move(l));
       row++;
     };
     // ONE box around all rows (a border per row made each row its own box)
@@ -943,7 +982,7 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
           l.cells.push_back(tc);
           x += w[c] + 1;
         }
-        bl.lines.push_back(l);
+        bl.lines.push_back(std::move(l));
         row++;
       }
       if (!r.empty() && r[0].header) border_line(3);
@@ -1044,11 +1083,20 @@ RGB callout_color(const std::string& n) {
 
 void DocView::layout_blocks() {
   content_w_ = std::max(20, cols_ - 2 * opt_.content_margin);
-  int row = 0;
+  int row = layout_range(0, doc_.blocks.size(), 0, layout_);
+  layout_.shrink_to_fit();
+  total_rows_ = std::max(1, row + 1);
+}
+
+// Lays out blocks [first, last) starting at screen row `row` and appends them
+// to `out`; returns the row after the last one.  A block's lines are stored
+// relative to the block, so one block can be laid out again on its own and
+// the blocks behind it only move (see refresh_layout()).
+int DocView::layout_range(size_t first, size_t last, int row, std::vector<BlockLayout>& out) {
   int cw = std::max(1, cell_w()), chh = std::max(1, cell_h());
   int max_img_rows = std::max(3, view_rows_ * opt_.max_image_rows_pct / 100);
 
-  for (size_t bi = 0; bi < doc_.blocks.size(); bi++) {
+  for (size_t bi = first; bi < last && bi < doc_.blocks.size(); bi++) {
     const Block& b = doc_.blocks[bi];
     BlockLayout bl;
     bl.block = (int)bi;
@@ -1146,7 +1194,7 @@ void DocView::layout_blocks() {
           } else {
             l.kind = Line::Text;
           }
-          bl.lines.push_back(l);
+          bl.lines.push_back(std::move(l));
           int rows_needed = (!a->failed ? a->rows : 1);
           row += rows_needed;
           if (!a->failed) row += 0;
@@ -1169,12 +1217,12 @@ void DocView::layout_blocks() {
               l.kind = Line::Text;
               row += 1;
             }
-            bl.lines.push_back(l);
+            bl.lines.push_back(std::move(l));
           }
         } else {
           std::vector<Line> lines;
           build_lines(b.spans, 1, content_w_ - 1, Span{}, lines);
-          for (auto& l : lines) { l.row = row - bl.row; bl.lines.push_back(l); row += l.rows; }
+          for (auto& l : lines) { l.row = row - bl.row; bl.lines.push_back(std::move(l)); row += l.rows; }
         }
         row += opt_.paragraph_gap;
         break;
@@ -1201,7 +1249,7 @@ void DocView::layout_blocks() {
             l.code_col = seg.second;        // byte offset inside that line
             l.code_text = seg.first;
             l.row = row - bl.row;
-            bl.lines.push_back(l);
+            bl.lines.push_back(std::move(l));
             row++;
           }
         }
@@ -1233,14 +1281,14 @@ void DocView::layout_blocks() {
           }
           for (Line& l : chunks[k]) {
             l.row = row - bl.row;
-            bl.lines.push_back(l);
+            bl.lines.push_back(std::move(l));
             row += l.rows;
           }
         }
         if (row == start_row) {
           Line l;
           l.row = 0;
-          bl.lines.push_back(l);
+          bl.lines.push_back(std::move(l));
           row++;
         }
         row += opt_.paragraph_gap;
@@ -1281,7 +1329,7 @@ void DocView::layout_blocks() {
             r.style.has_color = true;
             r.style.color = marker_color;
             l.runs.push_back(r);
-            bl.lines.push_back(l);
+            bl.lines.push_back(std::move(l));
             row++;
           }
           for (const Block& sb : sub) {
@@ -1311,7 +1359,7 @@ void DocView::layout_blocks() {
                   r.width = str_width(cl);
                   r.style = cb;
                   l.runs.push_back(r);
-                  lines.push_back(l);
+                  lines.push_back(std::move(l));
                 }
                 break;
               }
@@ -1335,7 +1383,7 @@ void DocView::layout_blocks() {
                         l.runs.insert(l.runs.begin(), r);
                         firstm = false;
                       }
-                      lines.push_back(l);
+                      lines.push_back(std::move(l));
                     }
                   }
                 }
@@ -1344,7 +1392,7 @@ void DocView::layout_blocks() {
               case Block::Hr: {
                 Line l;
                 l.kind = Line::Rule;
-                lines.push_back(l);
+                lines.push_back(std::move(l));
                 break;
               }
               case Block::Quote: {
@@ -1369,7 +1417,7 @@ void DocView::layout_blocks() {
                   r.style.color = marker_color;
                   l.runs.push_back(r);
                   l.row = row - bl.row;
-                  bl.lines.push_back(l);
+                  bl.lines.push_back(std::move(l));
                   row++;
                   first_line_done = true;
                 }
@@ -1378,11 +1426,18 @@ void DocView::layout_blocks() {
               }
               default: {
                 // Never drop content: anything else is shown as its plain text.
-                std::string t = !sb.spans.empty() ? spans_plain_text(sb.spans) : sb.code;
+                // (Before 0.3.21 the span was never added to `sp`, so whatever
+                // reached this branch - a $$ block in a list item - came out as
+                // an empty row.)
+                std::string t = sb.type == Block::MathBlock ? latex_to_unicode(sb.code, true)
+                              : !sb.spans.empty()           ? spans_plain_text(sb.spans)
+                                                            : sb.code;
                 if (!t.empty()) {
                   std::vector<Span> sp;
                   Span s2;
                   s2.text = t;
+                  if (sb.type == Block::MathBlock) { s2.has_color = true; s2.color = theme_.math_fg; }
+                  sp.push_back(s2);
                   build_lines(sp, item_indent, content_w_ - item_indent, Span{}, lines);
                 }
                 break;
@@ -1400,7 +1455,7 @@ void DocView::layout_blocks() {
                 first_line_done = true;
               }
               l.row = row - bl.row;
-              bl.lines.push_back(l);
+              bl.lines.push_back(std::move(l));
               row += l.rows;
             }
             if (!first_line_done) {
@@ -1413,7 +1468,7 @@ void DocView::layout_blocks() {
               r.style.has_color = true;
               r.style.color = marker_color;
               l.runs.push_back(r);
-              bl.lines.push_back(l);
+              bl.lines.push_back(std::move(l));
               row++;
               first_line_done = true;
             }
@@ -1441,7 +1496,7 @@ void DocView::layout_blocks() {
         Line l;
         l.kind = Line::Rule;
         l.row = 0;
-        bl.lines.push_back(l);
+        bl.lines.push_back(std::move(l));
         row += 1;
         row += opt_.paragraph_gap;
         break;
@@ -1472,7 +1527,7 @@ void DocView::layout_blocks() {
           row += opt_.paragraph_gap;
           break;
         }
-        bl.lines.push_back(l);
+        bl.lines.push_back(std::move(l));
         row += opt_.paragraph_gap;
         break;
       }
@@ -1493,7 +1548,7 @@ void DocView::layout_blocks() {
           sp.push_back(s);
           build_lines(sp, 1, content_w_ - 1, base, lines);
         }
-        for (auto& l : lines) { l.row = row - bl.row; bl.lines.push_back(l); row++; }
+        for (auto& l : lines) { l.row = row - bl.row; bl.lines.push_back(std::move(l)); row++; }
         row += opt_.paragraph_gap;
         break;
       }
@@ -1501,9 +1556,77 @@ void DocView::layout_blocks() {
     }
     bl.rows = row - bl.row;
     if (bl.rows < 1) bl.rows = 1;
-    layout_.push_back(bl);
+    // The lines were moved in, so the vectors and strings still have the
+    // slack of push_back / append; trimmed once here (a big document:
+    // ~35 MB).  Copying them in used to trim as a side effect, at the cost of
+    // copying every line two or three times.
+    bl.lines.shrink_to_fit();
+    for (auto& l : bl.lines) {
+      l.runs.shrink_to_fit();
+      for (auto& r : l.runs) r.text.shrink_to_fit();
+      l.cells.shrink_to_fit();
+    }
+    out.push_back(std::move(bl));
   }
-  total_rows_ = std::max(1, row + 1);
+  return row;
+}
+
+// A formula that came into view was measured and is not the size the layout
+// guessed.  Only the blocks that drew such a formula are laid out again; the
+// rest of the document just shifts.  (Laying out everything again cost ~1 s
+// on a 10 MB document, on every page that showed a new formula.)  The result
+// matches relayout() for every block that has been drawn since the formulas
+// were measured (tools/refresh_check.cpp checks it).
+void DocView::refresh_layout() {
+  layout_dirty_ = false;
+  std::vector<int> dirty;
+  dirty.swap(dirty_blocks_);
+  std::sort(dirty.begin(), dirty.end());
+  dirty.erase(std::unique(dirty.begin(), dirty.end()), dirty.end());
+  if (dirty.empty() || layout_.size() != doc_.blocks.size()) {
+    relayout();
+    return;
+  }
+  int shift = 0;
+  size_t next = 0;  // first block not yet shifted
+  if (dirty.front() < 0 || (size_t)dirty.back() >= layout_.size()) {
+    relayout();
+    return;
+  }
+  for (int bi : dirty) {
+    for (; next < (size_t)bi; next++) layout_[next].row += shift;
+    BlockLayout& old = layout_[(size_t)bi];
+    int top = old.row + shift;
+    std::vector<BlockLayout> one;
+    layout_range((size_t)bi, (size_t)bi + 1, top, one);
+    if (one.size() != 1) { relayout(); return; }
+    shift += one[0].rows - old.rows;
+    old = std::move(one[0]);
+    next = (size_t)bi + 1;
+  }
+  for (; next < layout_.size(); next++) layout_[next].row += shift;
+  total_rows_ = std::max(1, total_rows_ + shift);
+  clip_cache_.clear();
+  int maxr = std::max(0, total_rows_ - std::max(1, view_rows_));
+  scroll_ = std::min(scroll_, maxr);
+  if (scroll_ < 0) scroll_ = 0;
+}
+
+// Debug/test aid: a text fingerprint of the layout (rows, lines, run texts).
+std::string DocView::layout_signature() const {
+  std::string out;
+  for (const BlockLayout& bl : layout_) {
+    out += fmt("B%d@%d+%d\n", bl.block, bl.row, bl.rows);
+    for (const Line& l : bl.lines) {
+      out += fmt(" L%d k%d r%d x%d c%d %s|%s", l.row, (int)l.kind, l.rows, l.x, (int)l.cells.size(),
+                 l.marker.c_str(), l.code_text.c_str());
+      for (const Run& r : l.runs) out += fmt("[%d,%d,%d:%s]", r.x, r.width, r.rows, r.text.c_str());
+      for (const TCell& c : l.cells) out += fmt("{%d,%d:%s}", c.x, c.width, c.text.c_str());
+      out += "\n";
+    }
+  }
+  out += fmt("total %d\n", total_rows_);
+  return out;
 }
 
 // Builds wrapped, styled lines from a list of spans.
@@ -1550,14 +1673,14 @@ void DocView::quote_lines(std::vector<Line>& out, const Block& qb, int indent,
         r.width = str_width(cl);
         r.style = base;
         l.runs.push_back(r);
-        lines.push_back(l);
+        lines.push_back(std::move(l));
       }
       break;
     }
     case Block::Hr: {
       Line l;
       l.kind = Line::Rule;
-      lines.push_back(l);
+      lines.push_back(std::move(l));
       break;
     }
     default: {
@@ -1580,7 +1703,7 @@ void DocView::quote_lines(std::vector<Line>& out, const Block& qb, int indent,
   for (Line& l : lines) {
     l.bars = bars;
     l.bar_rgbs = bar_cols;
-    out.push_back(l);
+    out.push_back(std::move(l));
   }
 }
 
@@ -1648,7 +1771,7 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
       l.band_x0 = indent;             // from the callout's own bar column ...
       l.band_x1 = content_w_ - 1;     // ... to the right content edge
       l.row = row - bl.row;
-      bl.lines.push_back(l);
+      bl.lines.push_back(std::move(l));
       row += l.rows;
     }
   }
@@ -1714,7 +1837,7 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
       l.bars_custom = custom;
       l.bar_rgb = bar_rgb;
       l.row = row - bl.row;
-      bl.lines.push_back(l);
+      bl.lines.push_back(std::move(l));
       row += 1;
     }
   }
@@ -1733,7 +1856,7 @@ void DocView::directive_child_layout(BlockLayout& bl, const Block& sb, int& row,
         if (custom) { l.bars_custom = true; l.bar_rgb = bar_rgb; }
       }
       l.row = row - bl.row;
-      bl.lines.push_back(l);
+      bl.lines.push_back(std::move(l));
       row += l.rows;
     }
   };
@@ -2058,7 +2181,8 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
           cur.runs.back().style.underline == r.style.underline &&
           cur.runs.back().style.strike == r.style.strike &&
           cur.runs.back().style.has_color == r.style.has_color &&
-          cur.runs.back().style.kind == r.style.kind) {
+          cur.runs.back().style.kind == r.style.kind &&
+          cur.runs.back().style.link_id == r.style.link_id) {
         cur.runs.back().text += r.text;
         cur.runs.back().width += r.width;
       } else {
@@ -2098,7 +2222,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
     if (a.text == "\n" && a.img < 0) {  // hard break
       trim_line();
       cur.row = (int)lines.size();
-      lines.push_back(cur);
+      lines.push_back(std::move(cur));
       start_line();
       i++;
       continue;
@@ -2107,7 +2231,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
       trim_line();
       if (!cur.runs.empty()) {
         cur.row = (int)lines.size();
-        lines.push_back(cur);
+        lines.push_back(std::move(cur));
         start_line();
       }
       Line l;
@@ -2135,7 +2259,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
         continue;
       }
       l.row = (int)lines.size();
-      lines.push_back(l);
+      lines.push_back(std::move(l));
       start_line();
       i++;
       continue;
@@ -2150,7 +2274,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
       // wrap
       trim_line();
       cur.row = (int)lines.size();
-      lines.push_back(cur);
+      lines.push_back(std::move(cur));
       start_line();
       continue;  // retry atom on the new line
     }
@@ -2160,13 +2284,13 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
   trim_line();
   if (!cur.runs.empty() || lines.empty()) {
     cur.row = (int)lines.size();
-    lines.push_back(cur);
+    lines.push_back(std::move(cur));
   }
   for (auto& l : lines) {
     l.row = 0;
     for (auto& r : l.runs) r.x += indent;
   }
-  for (auto& l : lines) out.push_back(l);
+  for (auto& l : lines) out.push_back(std::move(l));
 }
 
 }  // namespace mdt

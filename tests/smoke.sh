@@ -286,6 +286,15 @@ grep -q "• 列表项" "$TMP/gbk.txt" && echo "  the structure survives the con
 echo "== a big document stays inside its memory budget =="
 python3 tools/memory_test.py "$BIN" || exit 1
 
+echo "== opening time grows linearly with the document =="
+python3 tools/big_doc_test.py "$BIN" || exit 1
+
+echo "== blocks inside a list item are never dropped =="
+printf -- '- item\n\n  $$\n  x^2\n  $$\n\n  <div>html inside</div>\n\n- two\n' > "$TMP/li-blocks.md"
+"$BIN" --dump --width=40 "$TMP/li-blocks.md" > "$TMP/li-blocks.txt"
+grep -q "x²" "$TMP/li-blocks.txt" && echo "  a \$\$ block in a list item is shown"
+grep -q "html inside" "$TMP/li-blocks.txt" && echo "  an HTML block in a list item is shown"
+
 echo "== command line and input file =="
 sh tests/cli.sh "$BIN" || exit 1
 

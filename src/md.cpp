@@ -2176,10 +2176,15 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
   {
     struct Post {
       MdDocument& d;
+      // The leaf directives are dropped in ONE pass at the end: erasing each
+      // one where it stands moved every block behind it, which made a big
+      // Luogu document quadratic (11 MB with 1,500 leaves: 12 s to parse).
       void walk(std::vector<Block>& blocks) {
-        for (size_t i = 0; i < blocks.size();) {
+        bool leaves = false;
+        for (size_t i = 0; i < blocks.size(); i++) {
           Block& b = blocks[i];
           if (b.type == Block::Directive && b.dir_leaf) {
+            leaves = true;
             if (b.dir_name == "cute-table" && i + 1 < blocks.size() &&
                 blocks[i + 1].type == Block::Table) {
               Block& t = blocks[i + 1];
@@ -2187,10 +2192,7 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
               size_t eq = a.find('=');
               t.table_style = eq == std::string::npos ? a : trim(a.substr(0, eq));
               if (eq != std::string::npos) t.table_style_arg = atoi(a.c_str() + eq + 1);
-              blocks.erase(blocks.begin() + (long)i);
-              continue;  // the table moved up to index i
             }
-            blocks.erase(blocks.begin() + (long)i);
             continue;
           }
           if (b.type == Block::CodeBlock && d.luogu) {
@@ -2210,8 +2212,13 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
               }
           }
           for (auto& sublist : b.items) walk(sublist);
-          i++;
         }
+        if (leaves)
+          blocks.erase(std::remove_if(blocks.begin(), blocks.end(),
+                                      [](const Block& b) {
+                                        return b.type == Block::Directive && b.dir_leaf;
+                                      }),
+                       blocks.end());
       }
     } post{doc};
     post.walk(doc.blocks);

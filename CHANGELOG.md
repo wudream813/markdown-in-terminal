@@ -5,6 +5,54 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.21] — 2026-10-21
+
+Big documents: measured on two 11 MB files, three things were fixed and the
+numbers are in the README ("Big documents").
+
+### Fixed
+
+* **Parsing was quadratic in the Luogu leaf directives.**  Every
+  `::cute-table{...}` (and every unknown `::leaf`) was erased from the block
+  list where it stood, which moved every block behind it.  An 11 MB file with
+  1,500 of them took 11.9 s to parse, now 1.0 s; the same 1.5 MB Luogu-style
+  test document went from 4.7 s to 0.65 s.  They are now dropped in one pass.
+* **A page that showed new formulas relaid out the whole document.**  Formulas
+  are measured when they come into view; when one is not the size the layout
+  guessed, only the blocks that showed it are laid out again now and the rest
+  of the document moves.  On a 10 MB file `j` / `g` onto such a page went from
+  0.3-0.4 s to about 1 ms.  Folding a callout open or closed does the same
+  (one block instead of the document).
+* **A reload held two copies of the document.**  `r` and `--watch` parsed the
+  new file while the old document and its layout were still alive: 690 MB peak
+  for an 11 MB file, now 500 MB.  The old one is dropped first (the file is
+  read before, so a read error still leaves the old document on screen).
+* A `$$` block inside a list item came out as an empty row (the text was built
+  and never added); it is now shown as its Unicode transcription.
+
+### Changed
+
+* The laid-out runs carry a 20-byte style instead of a whole `Span` (three
+  strings, 120 bytes); link targets are interned.  `Run` is 72 bytes instead of
+  168, and the reader holds 420 MB instead of 456 MB for the mixed 11 MB file.
+* The layout moves lines into place instead of copying them two or three
+  times, and trims the vectors once at the end of each block.
+* Adjacent runs with different link targets are no longer merged into one
+  (the second link used to open the first one's URL).
+* `--diag` laid the document out twice.
+
+### Added
+
+* `tools/big_doc_test.py` (in `tests/smoke.sh`): writes a Luogu-flavoured
+  document at 1.5 and 6 MB and fails if four times the size takes much more
+  than four times as long (the old parser: x16.5).
+* `make refresh-check`: scrolls through a document with lazy formula metrics
+  like the reader, folds every callout, and checks that the partial relayout
+  ends exactly where a full relayout does.  CI runs it on every fixture, also
+  under ASan + UBSan.
+* `mem-report` prints parse and layout times and what each phase keeps
+  resident (the parse figure used to be the peak after reading the file).
+
 ## [0.3.20] — 2026-10-21
 
 An experimental second way to draw the page, asked for in issue #4.
