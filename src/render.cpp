@@ -1067,7 +1067,32 @@ void DocView::layout_blocks() {
         int marker_w = (int)hashes.size() + 1;
         int text_x = 1 + marker_w;
         row += (bi == 0 ? 0 : 1);
-        if (b.level <= 2) {
+        // The page renderer draws headings 1-2 at twice the size.  Only plain
+        // ones: a formula, a picture or a link inside would need its bitmap
+        // and its hit box scaled as well, and keeps the normal size instead.
+        bool big = opt_.big_headings && b.level <= 2;
+        for (const Span& sp : b.spans)
+          if (sp.kind == Span::Math || sp.kind == Span::Image || sp.is_link) big = false;
+        if (big) {
+          // laid out in enlarged cells: half the width, two rows per line
+          int avail = (content_w_ - 1) / 2 - marker_w;
+          std::vector<Line> lines;
+          build_lines(b.spans, marker_w, std::max(4, avail), base, lines);
+          for (size_t li2 = 0; li2 < lines.size(); li2++) {
+            if (li2 == 0) { lines[li2].marker = hashes + " "; lines[li2].marker_w = marker_w; }
+            lines[li2].scale = 2;
+            lines[li2].rows = 2;
+            lines[li2].row = row - bl.row;
+            bl.lines.push_back(lines[li2]);
+            row += 2;
+          }
+          Line rule;
+          rule.kind = Line::Rule;
+          rule.row = row - bl.row;
+          bl.lines.push_back(rule);
+          row++;
+          row += (b.level == 1 ? 1 : 0);
+        } else if (b.level <= 2) {
           // headings 1-2 get a rule underneath
           std::vector<Line> lines;
           build_lines(b.spans, text_x, content_w_ - text_x, base, lines);

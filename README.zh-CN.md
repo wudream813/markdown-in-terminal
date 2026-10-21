@@ -102,11 +102,11 @@ sudo install -m 0755 mdt /usr/local/bin/mdt
 
 ```sh
 # Debian / Ubuntu / 树莓派 OS（amd64 与 arm64）
-curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt_0.3.19-1_amd64.deb
-sudo apt install ./mdt_0.3.19-1_amd64.deb     # 静态二进制，apt 不会额外拉依赖
+curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt_0.3.20-1_amd64.deb
+sudo apt install ./mdt_0.3.20-1_amd64.deb     # 静态二进制，apt 不会额外拉依赖
 
 # Fedora / RHEL / openSUSE（x86_64 与 aarch64）
-sudo dnf install https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-0.3.19-1.x86_64.rpm
+sudo dnf install https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-0.3.20-1.x86_64.rpm
 ```
 
 包里带二进制、man page 和三个补全脚本；`curl` 与 `xdg-utils` 是**推荐**而非依赖
@@ -348,6 +348,31 @@ mdt --watch 笔记.md
 `--watch` 只属于交互式阅读：和 `--dump`、`--screenshot`、`--diag` 一起用，或者读标准输入时，
 它是个错误，而不是一个悄悄什么都不做的开关。配置文件里写 `watch = on`。
 
+### 整页画成图像（实验性）
+
+```sh
+mdt --render=image 笔记.md      # 或者阅读时按 p
+```
+
+默认情况下 mdt 交给终端的是文字，由终端用它自己的字体画。`--render=image` 时 mdt
+**自己把整屏画出来** —— 文字用自带的等宽字体，图片和公式放在精确的像素位置，一级、二级标题
+**放大一倍** —— 再通过图形协议（kitty / iTerm2 / sixel）发给终端，每一行文字一条图像带。
+只发生变化的行，终端最近见过的行直接复用、不再重发：滚动一行只花一行的代价，而不是一整屏。
+阅读时按 `p` 在两种方式之间切换；大纲、帮助、链接对话框、状态栏都照常工作。
+
+![整页图形模式](docs/page-renderer.png)
+
+需要什么、不做什么：
+
+* **图形协议 + 字符格的像素尺寸。** mdt 会向终端询问；终端不回答时用 `--cell=宽x高` 指定。
+  缺任何一样，mdt 会在状态栏说明原因，继续用文本模式。
+* **Windows 控制台宿主后面不行。** ConPTY（Windows Terminal、Windows 版 wezterm 等）会把长转义
+  序列拆开，图像带过不去 —— 和图片过不去是同一个原因。mintty / MSYS2 没问题。
+* **带宽。** 第一屏几百 KB；慢速 SSH 上还是文本模式更合适。sixel 和 iTerm2 下状态栏仍是文字
+  （最后一行放图像会让屏幕滚动）。
+* `--screenshot` 也认这个选项，`--render=image --screenshot=out.png` 就是终端里会看到的样子。
+  配置文件里写 `render = image`。
+
 ## 数学管线是怎么工作的
 
 ```
@@ -383,7 +408,9 @@ src/svg.*         SVG 子集解析 + 软件光栅化
 src/math.*        QuickJS 宿主 + 公式度量/位图缓存 + Unicode 降级
 src/image.*       stb_image 解码、缩放、PNG 编码、http(s) 下载
 src/render*.cpp   文档排版与绘制（文字网格 + 图形叠加层）
-src/font.*        --screenshot 用的 TrueType 光栅化
+src/font.*        --screenshot 与 --render=image 用的 TrueType 光栅化
+src/page.*        整页图形模式：把一帧（字符格、图片、放大的标题）画成一张位图，
+                  发送见 term.cpp 的 emit_page
 src/app.cpp       事件循环、大纲、搜索、状态栏
 src/generated/    内嵌的 JS 包（由 tools/build_assets.py 生成）
 vendor/           stb 单文件库、QuickJS-NG
@@ -475,7 +502,8 @@ line_numbers = on
 ```
 
 支持的键：`theme`、`gfx`、`math`、`panels`、`terminal_bg`、`scrollbar`、
-`line_numbers`、`syntax`、`code_fit`（真值可写 `1 on yes true`）。写错的键或值会在
+`line_numbers`、`syntax`、`code_fit`、`watch`、`render`（`text` / `image`）、`lang`
+（真值可写 `1 on yes true`）。写错的键或值会在
 stderr 上报出来而不是被默默忽略，`mdt --diag` 会告诉你读的是哪个文件；
 `MDT_CONFIG=/路径` 可以指定另一个文件。
 

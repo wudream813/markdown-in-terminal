@@ -149,6 +149,20 @@ class Terminal {
   void set_theme_cache(const std::string& key);
   void drop_image_cache();
 
+  // Page mode (--render=image): the whole frame is one bitmap (rgba, w x h),
+  // sent as one strip per text row.  Only rows whose pixels changed go out,
+  // and a strip the terminal has seen recently is reused by content - kitty
+  // keeps it as an image id and only gets a new placement, sixel and iTerm2
+  // get the cached payload - so scrolling by a line transmits one new row.
+  // `rows` strips are sent (sixel and iTerm2 leave the status bar to the text
+  // grid: an image on the last row would scroll the screen).
+  std::string emit_page(const uint8_t* rgba, int w, int h, int cell_h, int rows);
+  // Forget what the screen shows (resize, full redraw, theme, mode switch).
+  void reset_page();
+  // Removes the page strips (leaving page mode).
+  std::string clear_page();
+  size_t page_strips_sent() const { return page_sent_; }
+
   // Non-blocking read of pending bytes (input + resize); returns false on EOF.
   bool poll_input(std::string& out, int timeout_ms);
 
@@ -207,6 +221,14 @@ class Terminal {
   std::map<size_t, SixelEntry> sixel_cache_;
   static size_t hash_bytes(const uint8_t* p, size_t n);
   int frame_no_ = 0;
+
+  // page mode bookkeeping (see emit_page)
+  struct PageStrip { int id = 0; std::string payload; int last_seen = 0; };
+  std::map<uint64_t, PageStrip> page_cache_;
+  std::vector<uint64_t> page_rows_;   // content hash per screen row, 0 = unknown
+  std::vector<int> page_ids_;         // kitty image id placed on each row
+  int page_frame_ = 0;
+  size_t page_sent_ = 0;              // strips transmitted (not reused), for tests
 
   std::string kitty_transmit(int id, const std::vector<uint8_t>& png);
   std::string kitty_place(int id, const PlacedImage& im, int cols, int rows);

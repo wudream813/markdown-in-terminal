@@ -25,6 +25,13 @@ class FontRaster {
 
   // Draws one code point into the cell box using the given colours.
   void draw_cell(Image& img, int cx, int cy, uint32_t cp, RGB fg, RGB bg, uint8_t attr);
+  // Same at a pixel origin, painting only rows [clip_y0, clip_y1): the page
+  // renderer draws enlarged headings at arbitrary cell positions and must not
+  // spill them into the status bar.
+  void draw_cell_px(Image& img, int px, int py, uint32_t cp, RGB fg, RGB bg, uint8_t attr,
+                    int clip_y0, int clip_y1);
+  int cell_w() const { return cell_w_; }
+  int cell_h() const { return cell_h_; }
   int advance() const { return adv_; }
   int ascent() const { return asc_; }
   int descriptor() const { return desc_; }

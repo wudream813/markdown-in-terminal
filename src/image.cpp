@@ -131,6 +131,20 @@ std::vector<uint8_t> png_encode(const uint8_t* rgba, int w, int h) {
   return out;
 }
 
+// The page renderer encodes a strip per changed row, every frame: no filter
+// search and the shortest match search - three to four times faster than the
+// defaults, and on flat page backgrounds hardly any bigger.  Main thread only
+// (the settings are stb's globals).
+std::vector<uint8_t> png_encode_fast(const uint8_t* rgba, int w, int h) {
+  int level = stbi_write_png_compression_level, filter = stbi_write_force_png_filter;
+  stbi_write_png_compression_level = 1;
+  stbi_write_force_png_filter = 0;
+  std::vector<uint8_t> out = png_encode(rgba, w, h);
+  stbi_write_png_compression_level = level;
+  stbi_write_force_png_filter = filter;
+  return out;
+}
+
 }  // namespace mdt
 
 #if MDT_HAVE_CURL

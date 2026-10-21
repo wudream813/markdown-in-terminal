@@ -188,6 +188,11 @@ static void load_config(AppOptions* opts, bool lang_explicit) {
       opts->code_fit = truthy(val);
     } else if (key == "watch") {
       opts->watch = truthy(val);
+    } else if (key == "render") {
+      if (one_of(val, {"text", "image"})) opts->render = val;
+      else fprintf(stderr, tr("mdt: %s:%zu: unknown render '%s'\n",
+                              "mdt: %s:%zu: 不认识的绘制方式 '%s'\n"),
+                    path.c_str(), line_no, val.c_str());
     } else if (key == "lang" || key == "language") {
       // The config file is consulted only when neither --lang nor MDT_LANG
       // said anything: an explicit request should not be undone by a file the
@@ -276,6 +281,12 @@ int main(int argc, char** argv) {
       if (!one_of(v, {"auto", "kitty", "iterm2", "sixel", "none"}))
         return usage_error(want_got("--gfx", "auto|kitty|iterm2|sixel|none", v));
       opts.gfx = v;
+      continue;
+    }
+    if (arg_value(a, "--render", &v)) {
+      if (!one_of(v, {"text", "image"}))
+        return usage_error(want_got("--render", "text|image", v));
+      opts.render = v;
       continue;
     }
     if (arg_value(a, "--math", &v)) {

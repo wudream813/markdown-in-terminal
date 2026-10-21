@@ -252,6 +252,38 @@ void DocView::draw_line(Screen& scr, int x0, int y0, int w, const Line& line, in
     case Line::Code:
     case Line::Text:
     default: {
+      if (line.scale > 1) {
+        // An enlarged heading: the grid keeps only the background, and the
+        // glyphs go to the page renderer, which draws them at scale x size.
+        BigText bt;
+        bt.x = x0 + 1;
+        bt.y = sy;
+        bt.scale = line.scale;
+        bt.bg = theme_.bg;
+        bt.clip_y0 = clip_y0_;
+        bt.clip_y1 = clip_y1_;
+        if (!line.marker.empty()) {
+          BigText::Piece pc;
+          pc.text = line.marker;
+          pc.fg = theme_.muted;
+          pc.attr = A_DIM;
+          bt.pieces.push_back(pc);
+        }
+        for (const Run& r : line.runs) {
+          if (r.img >= 0) continue;
+          BigText::Piece pc;
+          pc.text = r.text;
+          pc.fg = r.style.has_color ? r.style.color : theme_.fg;
+          if (r.style.bold) pc.attr |= A_BOLD;
+          if (r.style.underline) pc.attr |= A_UNDER;
+          if (r.style.strike) pc.attr |= A_STRIKE;
+          if (r.style.dim) pc.attr |= A_DIM;
+          pc.col = r.x;
+          bt.pieces.push_back(pc);
+        }
+        big_texts_.push_back(bt);
+        break;
+      }
       RGB lbg = draw_line_chrome(scr, x0, sy, line);
       if (!line.marker.empty())  // dimmed "#" before a heading
         scr.put_str(x0 + 1, sy, line.marker, theme_.muted, lbg, A_DIM);
@@ -583,6 +615,9 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
               assets_[i]->cols, assets_[i]->rows, assets_[i]->baseline_px);
   }
   images_.clear();
+  big_texts_.clear();
+  clip_y0_ = y0;
+  clip_y1_ = y0 + h;
   cell_assets_.clear();  // rebuilt with the frame (see place_cell_math)
   scr.fill_rect(x0, y0, w, h, theme_.bg);
   int chh = std::max(1, cell_h());

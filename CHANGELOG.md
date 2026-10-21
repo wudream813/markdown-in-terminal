@@ -5,6 +5,40 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.20] — 2026-10-21
+
+An experimental second way to draw the page, asked for in issue #4.
+
+### Added
+
+* **The page renderer, `--render=image`** (key `p` switches while reading):
+  mdt draws the whole screen itself - the text in a monospace font of its own,
+  pictures and formulas at their exact pixel position, level 1 and 2 headings
+  at twice the size - and sends it through the graphics protocol, one strip
+  per text row.  Only rows whose pixels changed go out, and a row the terminal
+  has seen recently is reused by content: kitty keeps it as an image and gets a
+  new placement, sixel and iTerm2 get the cached payload.  Scrolling a line at
+  200x60 cells costs one or two new strips and 10-20 ms; the first screen is
+  the expensive one.  The outline, the help, the link dialog, the scrollbar and
+  the status bar are drawn the same way.  It needs a graphics protocol and the
+  cell size in pixels (`--cell=WxH` when the terminal does not say); without
+  them the status bar says why and the reader stays with text.  Behind a
+  Windows console host (ConPTY) the strips are broken up like any picture, so
+  it is no use there - mintty / MSYS2 is fine.  `--screenshot` honours it, and
+  in the settings file it is `render = image`.
+* `tools/page_test.py` rebuilds the screen from what mdt sends to a kitty
+  terminal - decoding every strip, honouring every placement and deletion -
+  and requires it to equal `--screenshot --render=image` pixel for pixel; after
+  one line of scrolling it must be the old screen moved up a row, with at most
+  a few strips transmitted.  sixel and iTerm2: one strip per row, nothing
+  re-encoded when scrolling, the status bar left to the text grid.  Without a
+  protocol or a cell size the mode has to refuse and say why.
+
+### Changed
+
+* `--screenshot` is now drawn by the same code as the page renderer (the text
+  mode output is byte-for-byte what it was).
+
 ## [0.3.19] — 2026-10-17
 
 The reader follows the file now, and the "static binary" claim got a test

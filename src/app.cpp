@@ -23,6 +23,7 @@
 #include "image.h"
 #include "mdmath.h"
 #include "md.h"
+#include "page.h"
 #include "platform.h"
 #include "render.h"
 #include "term.h"
@@ -178,6 +179,15 @@ struct App {
 
   bool images_pending_ = false;    // mirror of view.images_pending()
 
+  // --render=image: the page renderer draws every frame into a bitmap and the
+  // terminal gets it through its graphics protocol (see page.h).  page_scr_
+  // is the text grid underneath: the page background, plus the status bar on
+  // the protocols that cannot put an image on the last row.
+  bool page_active = false;
+  PageRaster page_;
+  Screen page_scr_;
+  Image page_img_;
+
   bool mode_broken_ = false;       // the tty modes are not ours right now
   double mode_retry_at_ = 0.0;     // ... and nagging about it is useless anyway
 
@@ -202,6 +212,8 @@ struct App {
   void do_search(const std::string& q);
   void jump_to_next_hit(int dir);
   void render();
+  void render_page();
+  bool set_page_mode(bool on);
   void run();
   std::string status_line() const;
 };
@@ -310,6 +322,8 @@ void App::jump_to_next_hit(int dir) {
 }
 
 // ------------------------------------------------------------- rendering ----
+static void log_frame(int* no, int cols, int rows, const std::string& out);
+
 void App::render() {
   int vcols = view_cols(), vrows = view_rows();
   Screen& scr = this->scr;
@@ -420,7 +434,7 @@ void App::render() {
             "  o                 open first link in the browser",
             "  click a link      dialog with clickable copy / open / close buttons",
             "  click a \u25b8 title   fold or unfold a callout box ({open} starts open)",
-            "  e                 export the document text to clipboard",
+            "  e                 copy text to clipboard  p   page as an image",
             "  r                 reload file     t           cycle theme",
             "  R                 force redraw    m           toggle maths rendering",
             "  ? / Esc           close this help q / Ctrl-C  quit",
@@ -440,7 +454,7 @@ void App::render() {
             "  o                  用浏览器打开文档里的第一个链接",
             "  点链接             弹出「复制 / 打开 / 关闭」对话框",
             "  点 \u25b8 标题        折叠或展开提示框（{open} 表示默认展开）",
-            "  e                  把全文复制到剪贴板",
+            "  e                  把全文复制到剪贴板  p  整页画成图像",
             "  r                  重新读取文件    t           循环配色主题",
             "  R                  强制重绘        m           开关公式排版",
             "  ? / Esc            关闭本帮助      q / Ctrl-C  退出",
@@ -474,6 +488,7 @@ void App::render() {
   if (view.doc().loose_markers) engine += " +loose";
   if (view.doc().invisible_removed > 0) engine += " +clean";
   if (decoding.converted) engine += " +" + decoding.encoding;   // 8-bit source, converted
+  if (page_active) engine += " +page";
   if (view.doc().code_gaps_collapsed > 0 || view.doc().code_refs_decoded > 0) engine += " +code";
   // A message is meant to be read, so the clock starts when it is first drawn,
   // not when it was set: on a slow machine (or a big document) the first frame
@@ -497,6 +512,11 @@ void App::render() {
                engine.c_str());
     if (!msg.empty()) text += "   " + msg;
     scr.put_str(0, sy, substr_cells(text, 0, vcols), sfg, sbg);
+  }
+
+  if (page_active) {
+    render_page();
+    return;
   }
 
   // ---- output -------------------------------------------------------------
@@ -576,28 +596,123 @@ void App::render() {
   }
   out += term.emit_images(place);
   if (sync) out += "\x1b[?2026l";
-  if (const char* log = getenv("MDT_FRAME_LOG")) {
-    // Writes exactly what mdt sent, with escape sequences spelled out, so a
-    // rendering problem can be told apart from a terminal problem.
-    if (FILE* f = plat::open_file(log, "ab")) {
-      fprintf(f, "--- frame %d, %dx%d, %zu bytes ---\n", frame_log_no_++, term.caps.cols,
-              term.caps.rows, out.size());
-      std::string vis;
-      for (unsigned char c : out) {
-        if (c == 0x1b) vis += "\\e";                       // ESC -> two readable chars
-        else if (c == '\n') vis += "\\n";
-        else if (c == '\r') vis += "\\r";
-        else if (c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\x%02x", c); vis += b; }
-        else vis += (char)c;
-      }
-      fwrite(vis.data(), 1, vis.size(), f);
-      fputc('\n', f);
-      fclose(f);
-    }
-  }
+  log_frame(&frame_log_no_, term.caps.cols, term.caps.rows, out);
   term.write_raw(out);
   images_dirty = false;
   needs_frame = false;
+}
+
+// MDT_FRAME_LOG: writes exactly what mdt sent, with escape sequences spelled
+// out, so a rendering problem can be told apart from a terminal problem.
+static void log_frame(int* no, int cols, int rows, const std::string& out) {
+  const char* log = getenv("MDT_FRAME_LOG");
+  if (!log) return;
+  FILE* f = plat::open_file(log, "ab");
+  if (!f) return;
+  fprintf(f, "--- frame %d, %dx%d, %zu bytes ---\n", (*no)++, cols, rows, out.size());
+  std::string vis;
+  for (unsigned char c : out) {
+    if (c == 0x1b) vis += "\\e";
+    else if (c == '\n') vis += "\\n";
+    else if (c == '\r') vis += "\\r";
+    else if (c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\x%02x", c); vis += b; }
+    else vis += (char)c;
+  }
+  fwrite(vis.data(), 1, vis.size(), f);
+  fputc('\n', f);
+  fclose(f);
+}
+
+// The page renderer's half of render(): the cell grid in `scr` is finished
+// (document, panels, status bar); turn it into pixels and send the rows that
+// changed.
+void App::render_page() {
+  int vcols = view_cols(), vrows = view_rows(), rows = term.caps.rows;
+  std::string err;
+  if (!page_.init(term.caps.cell_w, term.caps.cell_h, &err)) {
+    // the cell size went away (a resize into nonsense, a font that vanished)
+    set_page_mode(false);
+    set_status(std::string(tr("page renderer off: ", "整页图形模式已关闭：")) + err, 6.0);
+    render();
+    return;
+  }
+  std::vector<PageRect> covers;
+  covers.push_back(PageRect{0, rows - 1, vcols, 1});                  // status bar
+  if (scrollbar_active) covers.push_back(PageRect{vcols - 1, 0, 1, vrows});
+  if (toc_open && toc_panel_w > 0 && !outline.empty())
+    covers.push_back(PageRect{vcols - toc_panel_w, 0, toc_panel_w, vrows});
+  if (link_open && !link_url.empty()) {
+    LinkDlg g = link_dialog_geom(vcols, vrows, link_url);
+    covers.push_back(PageRect{g.px, g.py, g.pw, g.ph});
+  }
+  if (help_open) {
+    int pw = std::min(74, vcols - 4), ph = std::min(20, vrows - 2);
+    covers.push_back(PageRect{(vcols - pw) / 2, (vrows - ph) / 2, pw, ph});
+  }
+  page_.paint(scr, view.images(), view.big_texts(), covers, vrows, false, page_img_);
+
+  bool sync = scr.sync_update();
+  std::string out;
+  if (sync) out += "\x1b[?2026h";
+  // The text grid under the strips.  A new grid (first page frame, resize)
+  // repaints every cell, which wipes sixel / iTerm2 pictures, so the strips
+  // are all sent again; kitty's are dropped explicitly.
+  if (page_scr_.width() != vcols || page_scr_.height() != rows) {
+    page_scr_.init(vcols, rows, theme.fg, theme.bg);
+    page_scr_.set_sync_update(sync);
+    if (term.caps.gfx == GfxProto::Kitty) out += "\x1b_Ga=d,d=a,q=2\x1b\\";
+    term.reset_page();
+  }
+  bool text_status = term.caps.gfx != GfxProto::Kitty;
+  page_scr_.fill_rect(0, 0, vcols, rows, theme.bg);
+  if (text_status)
+    for (int x = 0; x < vcols; x++) page_scr_.at(x, rows - 1) = scr.at(x, rows - 1);
+  out += page_scr_.render_diff(false);
+  out += term.emit_page(page_img_.rgba.data(), page_img_.w, page_img_.h, page_.cell_h(),
+                        text_status ? rows - 1 : rows);
+  if (sync) out += "\x1b[?2026l";
+  log_frame(&frame_log_no_, term.caps.cols, rows, out);
+  term.write_raw(out);
+  images_dirty = false;
+  needs_frame = false;
+}
+
+bool App::set_page_mode(bool on) {
+  if (on == page_active) return true;
+  if (on) {
+    std::string why;
+    if (!term.caps.can_show_images())
+      why = tr("page renderer off: no graphics protocol",
+               "整页图形未开启：没有图形协议");
+    else if (term.caps.cell_w <= 0 || term.caps.cell_h <= 0)
+      why = tr("page renderer off: cell size unknown, see --cell",
+               "整页图形未开启：不知道字符格尺寸，见 --cell");
+    else if (!page_.init(term.caps.cell_w, term.caps.cell_h, &why) && why.empty())
+      why = "no font";
+    if (!why.empty()) {
+      set_status(why, 8.0);
+      return false;
+    }
+  }
+  // Enlarged headings change the layout: stay on the same block.
+  int anchor = view.block_at_row(view.scroll_top());
+  int offset = view.scroll_top() - view.row_of_block(anchor);
+  page_active = on;
+  RenderOptions ro = view.options();
+  ro.big_headings = on;
+  view.set_options(ro);
+  view.relayout();
+  if (anchor >= 0) view.scroll_to(view.row_of_block(anchor) + std::max(0, offset));
+  if (on) {
+    term.clear_images();     // the text mode's pictures
+    page_scr_ = Screen();    // a fresh grid: everything is sent again
+  } else {
+    term.write_raw(term.clear_page());
+    term.clear_images();
+    scr.invalidate();        // the full text frame paints over sixel / iTerm2 strips
+  }
+  needs_frame = true;
+  return true;
 }
 
 // ------------------------------------------------------------------- run ----
@@ -963,11 +1078,19 @@ void App::run() {
         term.set_theme_cache(fmt("cell-%dx%d-%d", term.caps.px_cell_w(), term.caps.px_cell_h(),
                                  view.theme_gen()));
         term.clear_images();
+        page_scr_ = Screen();
         needs_frame = true;
         set_status(fmt("[%s] %dx%d cells, cell %dx%d px, window %dx%d px",
                        gfx_name(term.caps.gfx), term.caps.cols, term.caps.rows,
                        term.caps.px_cell_w(), term.caps.px_cell_h(), term.caps.px_width(),
                        term.caps.px_height()));
+        break;
+      }
+      case 'p': {
+        if (set_page_mode(!page_active))
+          set_status(page_active ? tr("page drawn as an image (experimental) - p for text",
+                                      "整页按图像绘制（实验性）- 按 p 回到文本")
+                                 : tr("page drawn as text", "整页按文本绘制"));
         break;
       }
       case '?': help_open = !help_open; break;
@@ -1149,6 +1272,7 @@ int run_app(const AppOptions& opts) {
     app.set_status(tr("watching for changes  |  ? for help",
                       "已监视文件变化  |  ? 查看帮助"), 4);
   }
+  if (opts.render == "image") app.set_page_mode(true);   // complains in the status bar
   app.run();
   app.term.shutdown();
   return 0;
@@ -1460,6 +1584,7 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   ro.em_px_override = opt.font_px;
   ro.text_math = (opt.math == "unicode");
   ro.lazy_metrics = false;  // a screenshot must be exact
+  ro.big_headings = (opt.render == "image");
   ro.code_fit = opt.code_fit;
   view.set_options(ro);
   view.set_width(cols);
@@ -1478,51 +1603,24 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   scr.fill_rect(0, rows - 1, cols, 1, theme.status_bg);
   scr.put_str(0, rows - 1, bar, theme.status_fg, theme.status_bg);
 
-  FontRaster fr;
+  PageRaster pr;
   std::string ferr;
-  if (!fr.init(cell_w, cell_h, &ferr)) { *err = ferr; return false; }
-  Image img;
-  img.w = cols * cell_w;
-  img.h = rows * cell_h;
-  img.rgba.assign((size_t)img.w * img.h * 4, 0);
-  for (int y = 0; y < rows; y++)
-    for (int x = 0; x < cols; x++) {
-      const Cell& c = scr.at(x, y);
-      fr.draw_cell(img, x, y, c.cp, c.fg, c.bg, c.attr);
-    }
-  // composite the document images (maths, pictures) on top
-  if (getenv("MDT_DEBUG_CELLMATH"))
+  if (!pr.init(cell_w, cell_h, &ferr)) { *err = ferr; return false; }
+  if (getenv("MDT_DEBUG_CELLMATH")) {
     fprintf(stderr, "[mdt] screenshot: %zu placed images, cell %dx%d px\n",
             view.images().size(), cell_w, cell_h);
+    for (const PlacedImage& im : view.images())
+      fprintf(stderr, "[mdt]   image at (%d,%d) %dx%d px, off (%d,%d), rgba=%d\n", im.x, im.y,
+              im.px_w, im.px_h, im.sub_x, im.sub_y, im.rgba ? 1 : 0);
+  }
   // MDT_SNAP_SUBCELL makes --screenshot composite the way a terminal that
   // cannot place an image at a pixel offset inside a cell has to (iTerm2,
   // sixel): the bitmap lands on its anchor cell.  The two renders must be
   // identical - tools/subcell_align_test.py checks exactly that.
   bool snap_subcell = getenv("MDT_SNAP_SUBCELL") != nullptr;
-  for (const PlacedImage& im : view.images()) {
-    if (getenv("MDT_DEBUG_CELLMATH"))
-      fprintf(stderr, "[mdt]   image at (%d,%d) %dx%d px, off (%d,%d), rgba=%d\n", im.x, im.y,
-              im.px_w, im.px_h, im.sub_x, im.sub_y, im.rgba ? 1 : 0);
-    if (!im.rgba) continue;
-    int ox = im.x * cell_w;
-    int oy = im.y * cell_h + (snap_subcell ? 0 : im.sub_y);
-    for (int y = 0; y < im.px_h; y++) {
-      int yy = oy + y;
-      if (yy < 0 || yy >= img.h) continue;
-      for (int x = 0; x < im.px_w; x++) {
-        int xx = ox + x;
-        if (xx < 0 || xx >= img.w) continue;
-        const uint8_t* sp = &(*im.rgba)[((size_t)y * im.px_w + x) * 4];
-        uint8_t* dp = &img.rgba[((size_t)yy * img.w + xx) * 4];
-        int a = sp[3];
-        if (!a) continue;
-        dp[0] = (uint8_t)((sp[0] * a + dp[0] * (255 - a)) / 255);
-        dp[1] = (uint8_t)((sp[1] * a + dp[1] * (255 - a)) / 255);
-        dp[2] = (uint8_t)((sp[2] * a + dp[2] * (255 - a)) / 255);
-        dp[3] = 255;
-      }
-    }
-  }
+  Image img;
+  std::vector<PageRect> covers{PageRect{0, rows - 1, cols, 1}};   // the status bar
+  pr.paint(scr, view.images(), view.big_texts(), covers, rows - 1, snap_subcell, img);
   auto png = png_encode(img.rgba.data(), img.w, img.h);
   std::string out = opt.screenshot;
   FILE* f = plat::open_file(out, "wb");
@@ -1530,7 +1628,7 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   fwrite(png.data(), 1, png.size(), f);
   fclose(f);
   printf(tr("wrote %s (%dx%d px, font %s)\n", "已写入 %s（%dx%d 像素，字体 %s）\n"), out.c_str(),
-         img.w, img.h, fr.path().c_str());
+         img.w, img.h, pr.font_path().c_str());
   return true;
 }
 
@@ -1544,6 +1642,8 @@ void print_usage() {
       "graphics\n"
       "  --gfx=auto|kitty|iterm2|sixel|none   terminal graphics protocol (default: auto)\n"
       "  --math=katex|unicode|off             maths engine (default: katex, built in)\n"
+      "  --render=text|image                  image: draw the whole page as a picture,\n"
+      "                                       headings enlarged (experimental; key p)\n"
       "  --no-color                           monochrome output\n"
       "  --line-numbers                       line numbers inside code blocks\n"
       "  --no-syntax                          plain code blocks (no highlighting)\n"
@@ -1584,6 +1684,7 @@ void print_usage() {
       "  in the outline: J K walk the list, Enter jumps, the wheel scrolls it\n"
       "  t             theme         r reload     o       open link      ? help\n"
       "  e             copy text     m            maths on/off    q quit\n"
+      "  p             page as an image (experimental)\n"
       ,
       "mdt - 在终端里阅读 Markdown，公式和图片都是画出来的\n"
       "\n"
@@ -1592,6 +1693,8 @@ void print_usage() {
       "图形\n"
       "  --gfx=auto|kitty|iterm2|sixel|none   终端图形协议（默认 auto）\n"
       "  --math=katex|unicode|off             公式引擎（默认 katex，内嵌）\n"
+      "  --render=text|image                  image：整页画成图像、标题放大\n"
+      "                                       （实验性；按 p 切换）\n"
       "  --no-color                           单色输出\n"
       "  --line-numbers                       代码块里显示行号\n"
       "  --no-syntax                          代码块不做语法高亮\n"
@@ -1632,6 +1735,7 @@ void print_usage() {
       "  在大纲里：J K 走列表，Enter 跳过去，滚轮滚动列表\n"
       "  t            主题        r 重新读取    o           打开链接      ? 帮助\n"
       "  e            复制文本    m            公式开关    q 退出\n"
+      "  p            整页画成图像（实验性）\n"
       ),
       stdout);
 }

@@ -5,6 +5,7 @@ _mdt() {
   opts=(
     '--gfx=[terminal graphics protocol]:protocol:(auto kitty iterm2 sixel none)'
     '--math=[maths engine]:engine:(katex unicode off)'
+    '--render=[draw the page as text or as one picture]:mode:(text image)'
     '--font-px=[override the derived maths font size]:pixels:'
     '--theme=[colour theme]:theme:(dark light nord monochrome)'
     '--encoding=[how to read a non-UTF-8 file]:encoding:(auto utf-8 gbk gb18030 big5 cp1252 latin1 off)'

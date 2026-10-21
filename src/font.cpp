@@ -255,17 +255,23 @@ const FontRaster::Glyph* FontRaster::glyph(uint32_t cp, bool bold) {
 }
 
 void FontRaster::draw_cell(Image& img, int cx, int cy, uint32_t cp, RGB fg, RGB bg, uint8_t attr) {
+  draw_cell_px(img, cx * cell_w_, cy * cell_h_, cp, fg, bg, attr, 0, img.h);
+}
+
+void FontRaster::draw_cell_px(Image& img, int px, int py, uint32_t cp, RGB fg, RGB bg,
+                              uint8_t attr, int clip_y0, int clip_y1) {
   if (img.empty()) return;
   if (cp == 0) return;  // right half of a wide character: the glyph pass painted it
   int cwid = cp_width(cp);
   RGB use_bg = bg;
   RGB use_fg = fg;
   if (attr & A_REVERSE) std::swap(use_bg, use_fg);
-  int px = cx * cell_w_, py = cy * cell_h_;
+  clip_y0 = std::max(0, clip_y0);
+  clip_y1 = std::min(img.h, clip_y1);
   int box_w = cell_w_ * std::max(1, cwid);
   for (int y = 0; y < cell_h_; y++) {
     int yy = py + y;
-    if (yy < 0 || yy >= img.h) continue;
+    if (yy < clip_y0 || yy >= clip_y1) continue;
     for (int x = 0; x < box_w; x++) {
       int xx = px + x;
       if (xx < 0 || xx >= img.w) continue;
@@ -281,7 +287,7 @@ void FontRaster::draw_cell(Image& img, int cx, int cy, uint32_t cp, RGB fg, RGB 
   int gy = py + baseline + g->off_y;
   for (int y = 0; y < g->h; y++) {
     int yy = gy + y;
-    if (yy < 0 || yy >= img.h) continue;
+    if (yy < clip_y0 || yy >= clip_y1) continue;
     for (int x = 0; x < g->w; x++) {
       int xx = gx + x;
       if (xx < 0 || xx >= img.w) continue;
@@ -297,7 +303,7 @@ void FontRaster::draw_cell(Image& img, int cx, int cy, uint32_t cp, RGB fg, RGB 
   }
   if (attr & A_UNDER) {
     int yy = py + asc_ + 1;
-    if (yy >= 0 && yy < img.h) {
+    if (yy >= clip_y0 && yy < clip_y1) {
       for (int x = 0; x < cell_w_ * cp_width(cp); x++) {
         int xx = px + x;
         if (xx < 0 || xx >= img.w) continue;
@@ -308,7 +314,7 @@ void FontRaster::draw_cell(Image& img, int cx, int cy, uint32_t cp, RGB fg, RGB 
   }
   if (attr & A_STRIKE) {
     int yy = py + asc_ - cell_h_ / 3;
-    if (yy >= 0 && yy < img.h) {
+    if (yy >= clip_y0 && yy < clip_y1) {
       for (int x = 0; x < cell_w_ * cp_width(cp); x++) {
         int xx = px + x;
         if (xx < 0 || xx >= img.w) continue;

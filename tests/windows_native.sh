@@ -85,6 +85,13 @@ for th in dark light nord monochrome; do
   [ -s "$TMP/$th.png" ] || fail "--screenshot --theme=$th wrote no file"
 done
 ok "a screenshot in four themes"
+# the page renderer (--render=image) draws with the same fonts; its headings
+# are twice the size, so the picture must differ from the text one
+mdt --render=image --screenshot="$TMP/page.png" --width=70 --height=20 demo/demo.md \
+  >/dev/null 2>&1 || fail "--render=image --screenshot failed"
+[ -s "$TMP/page.png" ] || fail "--render=image --screenshot wrote no file"
+cmp -s "$TMP/page.png" "$TMP/dark.png" && fail "--render=image changed nothing in the picture"
+ok "--render=image: the page renderer's picture, headings enlarged"
 
 if command -v python3 >/dev/null 2>&1; then
   python3 - "$TMP/dark.png" 70 <<'PY' || exit 1

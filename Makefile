@@ -96,7 +96,7 @@ BIN      := $(BUILD)/mdt$(if $(WINDOWS),.exe,$(if $(MSYS),.exe,))
 
 CPP_SRC := src/main.cpp src/app.cpp src/render.cpp src/render_draw.cpp src/md.cpp \
            src/term.cpp src/platform.cpp src/image.cpp src/svg.cpp src/math.cpp \
-           src/font.cpp src/util.cpp src/encoding.cpp src/i18n.cpp
+           src/font.cpp src/util.cpp src/encoding.cpp src/i18n.cpp src/page.cpp
 C_SRC   := vendor/quickjs/quickjs.c vendor/quickjs/libregexp.c vendor/quickjs/libunicode.c \
            vendor/quickjs/cutils.c vendor/quickjs/xsum.c vendor/quickjs/quickjs-libc.c
 GEN_SRC := src/generated/assets_js.cpp

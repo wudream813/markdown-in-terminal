@@ -4,7 +4,7 @@ _mdt() {
   local cur prev opts
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  opts="--gfx --math --font-px --theme --encoding --entities --escapes --loose --lang
+  opts="--gfx --math --render --font-px --theme --encoding --entities --escapes --loose --lang
         --toc --panels --terminal-bg --no-scrollbar --line-numbers --syntax
         --no-syntax --no-color --diag --compat --code-fit --watch --no-watch
         --dump --screenshot
@@ -13,6 +13,7 @@ _mdt() {
   case "$prev" in
     --gfx)      COMPREPLY=($(compgen -W "auto kitty iterm2 sixel none" -- "$cur")); return 0 ;;
     --math)     COMPREPLY=($(compgen -W "katex unicode off" -- "$cur")); return 0 ;;
+    --render)   COMPREPLY=($(compgen -W "text image" -- "$cur")); return 0 ;;
     --theme)    COMPREPLY=($(compgen -W "dark light nord monochrome" -- "$cur")); return 0 ;;
     --encoding) COMPREPLY=($(compgen -W "auto utf-8 gbk gb18030 big5 cp1252 latin1 off" -- "$cur")); return 0 ;;
     --lang) COMPREPLY=($(compgen -W "auto en zh" -- "$cur")); return 0 ;;
@@ -26,6 +27,7 @@ _mdt() {
   case "$cur" in
     --gfx=*)      COMPREPLY=($(compgen -W "auto kitty iterm2 sixel none" -- "${cur#*=}" | sed 's/^/--gfx=/')); return 0 ;;
     --math=*)     COMPREPLY=($(compgen -W "katex unicode off" -- "${cur#*=}" | sed 's/^/--math=/')); return 0 ;;
+    --render=*)   COMPREPLY=($(compgen -W "text image" -- "${cur#*=}" | sed 's/^/--render=/')); return 0 ;;
     --theme=*)    COMPREPLY=($(compgen -W "dark light nord monochrome" -- "${cur#*=}" | sed 's/^/--theme=/')); return 0 ;;
     --encoding=*) COMPREPLY=($(compgen -W "auto utf-8 gbk gb18030 big5 cp1252 latin1 off" -- "${cur#*=}" | sed 's/^/--encoding=/')); return 0 ;;
     --lang=*) COMPREPLY=($(compgen -W "auto en zh" -- "${cur#*=}" | sed 's/^/--lang=/')); return 0 ;;

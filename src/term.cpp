@@ -1,5 +1,6 @@
 #include "term.h"
 
+#include "image.h"
 #include "platform.h"
 
 #include <algorithm>
@@ -571,6 +572,114 @@ void Terminal::drop_image_cache() { kitty_cache_.clear(); }
 void Terminal::clear_images() {
   if (caps.gfx == GfxProto::Kitty) wout("\x1b_Ga=d,d=A,q=2\x1b\\");  // placements + data
   kitty_cache_.clear();
+  // the page strips went with them (kitty), or are about to be repainted
+  page_cache_.clear();
+  reset_page();
+}
+
+// ------------------------------------------------------------ page mode ----
+void Terminal::reset_page() {
+  page_rows_.clear();
+  page_ids_.clear();
+}
+
+std::string Terminal::clear_page() {
+  std::string out;
+  if (caps.gfx == GfxProto::Kitty)
+    for (auto& e : page_cache_) out += fmt("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", e.second.id);
+  page_cache_.clear();
+  reset_page();
+  return out;
+}
+
+std::string Terminal::emit_page(const uint8_t* rgba, int w, int h, int cell_h, int rows) {
+  std::string out;
+  if (caps.gfx == GfxProto::None || w <= 0 || cell_h <= 0) return out;
+  rows = std::min(rows, h / cell_h);
+  if ((int)page_rows_.size() != rows) {
+    page_rows_.assign((size_t)rows, 0);
+    page_ids_.assign((size_t)rows, 0);
+  }
+  page_frame_++;
+  const size_t stride = (size_t)w * 4, strip = stride * (size_t)cell_h;
+  for (int y = 0; y < rows; y++) {
+    const uint8_t* p = rgba + strip * (size_t)y;
+    // FNV-1a over 64-bit words, mixed with the geometry; 0 means "unknown"
+    uint64_t hh = 1469598103934665603ull ^ ((uint64_t)w << 32) ^ (uint64_t)cell_h;
+    size_t words = strip / 8;
+    for (size_t i = 0; i < words; i++) {
+      uint64_t v;
+      memcpy(&v, p + i * 8, 8);
+      hh ^= v;
+      hh *= 1099511628211ull;
+      hh ^= hh >> 29;
+    }
+    hh ^= (uint64_t)caps.gfx;
+    if (!hh) hh = 1;
+    if (page_rows_[(size_t)y] == hh) continue;   // already on screen
+    auto it = page_cache_.find(hh);
+    bool fresh = it == page_cache_.end();
+    PageStrip& e = page_cache_[hh];
+    e.last_seen = page_frame_;
+    out += fmt("\x1b[%d;1H", y + 1);
+    switch (caps.gfx) {
+      case GfxProto::Kitty: {
+        if (fresh) {
+          e.id = next_img_id_++;
+          out += kitty_transmit(e.id, png_encode_fast(p, w, cell_h));
+          page_sent_++;
+        }
+        // one placement per row (p = row + 1): replacing a row is "delete the
+        // old row's placement, place the new strip"; C=1 keeps the cursor still
+        if (page_ids_[(size_t)y])
+          out += fmt("\x1b_Ga=d,d=i,i=%d,p=%d,q=2\x1b\\", page_ids_[(size_t)y], y + 1);
+        out += fmt("\x1b_Ga=p,i=%d,p=%d,C=1,z=0,q=2\x1b\\", e.id, y + 1);
+        page_ids_[(size_t)y] = e.id;
+        break;
+      }
+      case GfxProto::Iterm2: {
+        if (fresh) {
+          std::vector<uint8_t> png = png_encode_fast(p, w, cell_h);
+          e.payload = fmt("\x1b]1337;File=inline=1;size=%d;width=%dpx;height=%dpx;"
+                          "preserveAspectRatio=0;doNotMoveCursor=1:",
+                          (int)png.size(), w, cell_h) +
+                      base64_encode(png.data(), png.size()) + "\x07";
+          page_sent_++;
+        }
+        out += e.payload;
+        break;
+      }
+      case GfxProto::Sixel: {
+        if (fresh) {
+          // P2=1: pixels the image does not set stay as they are, so the
+          // bottom of the last six-pixel band does not paint the next row
+          e.payload = sixel_encode(p, w, cell_h, image_bg);
+          if (e.payload.compare(0, 3, "\x1bPq") == 0) e.payload.replace(0, 3, "\x1bP0;1q");
+          page_sent_++;
+        }
+        out += e.payload;
+        break;
+      }
+      default: break;
+    }
+    page_rows_[(size_t)y] = hh;
+  }
+  // Keep a few screens' worth of strips; the ones on screen are never evicted.
+  size_t cap = (size_t)std::max(64, rows * 6);
+  if (page_cache_.size() > cap) {
+    std::vector<std::pair<int, uint64_t>> age;
+    for (auto& kv : page_cache_) age.push_back({kv.second.last_seen, kv.first});
+    std::sort(age.begin(), age.end());
+    for (auto& a : age) {
+      if (page_cache_.size() <= cap) break;
+      if (std::find(page_rows_.begin(), page_rows_.end(), a.second) != page_rows_.end()) continue;
+      auto it = page_cache_.find(a.second);
+      if (caps.gfx == GfxProto::Kitty)
+        out += fmt("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", it->second.id);
+      page_cache_.erase(it);
+    }
+  }
+  return out;
 }
 std::string Terminal::kitty_transmit(int id, const std::vector<uint8_t>& png) {
   std::string out;

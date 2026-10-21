@@ -33,6 +33,7 @@ struct AppOptions {
   bool compat = false;             // --compat: plain output for terminals that misbehave
   bool watch = false;              // --watch: reload when the file changes on disk
   bool code_fit = false;           // --code-fit: code frames hug the code
+  std::string render = "text";     // text | image - --render=image: the page renderer
   std::string screenshot;          // write a PNG of the rendered screen
   bool list_caps = false;          // print terminal capabilities and exit
   bool version = false;

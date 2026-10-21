@@ -66,6 +66,7 @@ set(MDT_SRC
   src/svg.cpp
   src/math.cpp
   src/font.cpp
+  src/page.cpp
   src/util.cpp
   src/encoding.cpp
   src/i18n.cpp

@@ -49,6 +49,24 @@ struct Theme {
   double baseline = 0.76;  // font baseline as a fraction of the cell height
 };
 
+// Enlarged text for the page renderer (--render=image): a heading drawn with
+// glyphs `scale` times the cell size, so each character covers scale x scale
+// cells.  The cell grid underneath holds only the background; whoever turns
+// the frame into pixels draws these on top.
+struct BigText {
+  int x = 0, y = 0;       // top-left screen cell
+  int scale = 2;
+  struct Piece {
+    std::string text;
+    RGB fg{0, 0, 0};
+    uint8_t attr = 0;
+    int col = 0;          // in enlarged cells, from x
+  };
+  std::vector<Piece> pieces;
+  RGB bg{0, 0, 0};
+  int clip_y0 = 0, clip_y1 = 0;  // screen rows it may paint: [clip_y0, clip_y1)
+};
+
 // Minimal highlighter for common languages (keywords/strings/comments/numbers).
 struct CodeHighlight {
   std::vector<std::vector<RGB>> colors;  // per line, per code point (0,0,0 = default)
@@ -70,6 +88,9 @@ struct RenderOptions {
   bool lazy_metrics = true;     // typeset only formulas that are on screen
   int em_px_override = 0;       // 0 = derive from the cell size
   bool code_fit = false;        // code frames hug the code instead of the page
+  // Page renderer only: level 1-2 headings at twice the size (BigText).  A
+  // text terminal cannot draw them, so this stays off everywhere else.
+  bool big_headings = false;
 };
 
 class DocView {
@@ -141,6 +162,7 @@ class DocView {
   // Renders the visible part into `scr` and fills images() with placements.
   void draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row);
   const std::vector<PlacedImage>& images() const { return images_; }
+  const std::vector<BigText>& big_texts() const { return big_texts_; }
   // Downloads that finished since the last call; the event loop then relayouts
   // and redraws.  Never blocks.
   bool poll_images();
@@ -237,6 +259,9 @@ class DocView {
     int code_col = 0;           // byte offset of this segment inside the source line
     std::string marker;         // dimmed prefix drawn before the text (heading "#")
     int marker_w = 0;
+    // 2 = an enlarged heading line (RenderOptions::big_headings): run x and
+    // widths count enlarged cells, and the line covers rows = 2 screen rows.
+    int scale = 1;
   };
   struct BlockLayout {
     int block = 0;
@@ -281,6 +306,8 @@ class DocView {
   bool layout_dirty_ = false;
   std::vector<BlockLayout> layout_;
   std::vector<PlacedImage> images_;
+  std::vector<BigText> big_texts_;
+  int clip_y0_ = 0, clip_y1_ = 0;   // the rows draw() was asked to fill
   mutable RemoteImageLoader loader_;   // remote pictures, fetched off-thread
   // Keeps the cell-formula bitmaps alive while the frame is being emitted:
   // PlacedImage holds raw pointers into them.

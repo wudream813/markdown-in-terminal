@@ -1,4 +1,4 @@
-.TH MDT 1 "2026-10-17" "mdt 0.3.19" "User Commands"
+.TH MDT 1 "2026-10-21" "mdt 0.3.20" "User Commands"
 .SH NAME
 mdt \- read Markdown in the terminal, with images, tables and maths
 .SH SYNOPSIS
@@ -43,6 +43,8 @@ cycles the theme,
 toggles maths,
 .B e
 copies the document as text,
+.B p
+switches the page renderer (see \fB\-\-render\fR) on and off,
 .B r
 reloads the file (with \fB\-\-watch\fR this happens by itself),
 .B o
@@ -60,6 +62,18 @@ Graphics protocol.  The default probes the terminal at start\-up.
 .TP
 .B \-\-math=katex|unicode|off
 Typeset formulas as bitmaps (default), transcription only, or not at all.
+.TP
+.B \-\-render=text|image
+\fBimage\fR is the page renderer, experimental: mdt draws the whole screen
+itself \- text in a monospace font of its own, pictures and formulas at their
+exact pixel position, level 1 and 2 headings at twice the size \- and sends it
+through the graphics protocol, one strip per text row.  Only rows that changed
+are sent, and a row the terminal has seen recently is reused, so scrolling a
+line costs one new row.  It needs a graphics protocol and the cell size in
+pixels (\fB\-\-cell\fR when the terminal does not report it); without them mdt
+says so in the status bar and stays with text.  Behind a Windows console host
+(ConPTY) the strips do not survive, as with any picture.  \fB\-\-screenshot\fR
+honours it too.  The default is \fBtext\fR.
 .TP
 .B \-\-font\-px=N
 Override the derived formula font size.
@@ -165,7 +179,7 @@ Print the detected terminal capabilities and exit.
 .I ~/.config/mdt/config
 Defaults, one "key = value" per line: \fBtheme\fR, \fBgfx\fR, \fBmath\fR,
 \fBencoding\fR, \fBpanels\fR, \fBterminal_bg\fR, \fBscrollbar\fR,
-\fBline_numbers\fR, \fBsyntax\fR, \fBcode_fit\fR, \fBwatch\fR.  The command line overrides
+\fBline_numbers\fR, \fBsyntax\fR, \fBcode_fit\fR, \fBwatch\fR, \fBrender\fR.  The command line overrides
 the file.  On Windows the file is \fI%APPDATA%\\mdt\\config\fR; the environment
 variable \fBMDT_CONFIG\fR points somewhere else.
 .SH ENVIRONMENT

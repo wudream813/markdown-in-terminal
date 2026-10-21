@@ -28,6 +28,7 @@ bool is_remote_url(const std::string& s);
 bool is_svg(const std::string& path_or_data);
 
 std::vector<uint8_t> png_encode(const uint8_t* rgba, int w, int h);
+std::vector<uint8_t> png_encode_fast(const uint8_t* rgba, int w, int h);
 
 // ---------------------------------------------------------------------------
 // Remote images are downloaded on a worker thread: a document that links to a
