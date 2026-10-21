@@ -45,7 +45,9 @@ numbers are in the README ("Big documents").
 
 * `tools/big_doc_test.py` (in `tests/smoke.sh`): writes a Luogu-flavoured
   document at 1.5 and 6 MB and fails if four times the size takes much more
-  than four times as long (the old parser: x16.5).
+  than four times as long (the old parser: x16.5).  Under `MDT_TEST_SLOWDOWN`
+  (ASan, qemu) the documents are four times smaller and only the ratio counts:
+  the arm64 artefact under qemu on a CI runner needed 532 s for the 6 MB one.
 * `make refresh-check`: scrolls through a document with lazy formula metrics
   like the reader, folds every callout, and checks that the partial relayout
   ends exactly where a full relayout does.  CI runs it on every fixture, also

@@ -14,7 +14,11 @@ for a slow CI runner but far below what the quadratic version needed.
 
     python3 tools/big_doc_test.py ./build/mdt
 
-MDT_TEST_SLOWDOWN scales the ceiling for an instrumented (ASan/UBSan) build.
+MDT_TEST_SLOWDOWN (an instrumented ASan/UBSan build, or the arm64 artefact
+under qemu on a CI runner, where the 6 MB document took 532 s) makes the
+documents four times smaller, times each one once and drops the absolute
+ceiling - emulation speed says nothing about mdt.  The ratio test still
+catches the old parser there: x9 for four times the size.
 """
 import os
 import subprocess
@@ -64,19 +68,23 @@ def main():
     with tempfile.TemporaryDirectory() as d:
         small = os.path.join(d, "small.md")
         big = os.path.join(d, "big.md")
-        s_bytes = make_document(small, 4000)
-        b_bytes = make_document(big, 16000)
-        t_small = best_time(small)
-        t_big = best_time(big)
+        slow = SLOWDOWN > 1
+        s_bytes = make_document(small, 1000 if slow else 4000)
+        b_bytes = make_document(big, 4000 if slow else 16000)
+        runs = 1 if slow else 3
+        t_small = best_time(small, runs)
+        t_big = best_time(big, runs)
         ratio = t_big / max(t_small, 1e-3)
         print(f"  {s_bytes / 1e6:.1f} MB: {t_small:.2f} s, {b_bytes / 1e6:.1f} MB: {t_big:.2f} s "
               f"(x{b_bytes / s_bytes:.0f} the size, x{ratio:.1f} the time)")
-        # 4x the size: linear is ~4x; the quadratic parser was ~16x and more.
-        if ratio > 8.0:
+        # 4x the size: linear is 3-4x (start-up costs make the small run look
+        # slower); the quadratic parser was x16.5 at these sizes, x9 at the
+        # small ones.
+        if ratio > 6.5:
             print("FAIL: the time grows much faster than the document (quadratic step?)")
             return 1
-        ceiling = 15.0 * SLOWDOWN
-        if t_big > ceiling:
+        ceiling = 15.0
+        if not slow and t_big > ceiling:
             print(f"FAIL: {b_bytes / 1e6:.1f} MB took {t_big:.1f} s (ceiling {ceiling:.0f} s)")
             return 1
         print("  ok: opening time grows with the size of the document, not its square")
