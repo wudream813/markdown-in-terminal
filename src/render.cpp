@@ -1101,6 +1101,7 @@ int DocView::layout_range(size_t first, size_t last, int row, std::vector<BlockL
     BlockLayout bl;
     bl.block = (int)bi;
     bl.row = row;
+    bl.gen = theme_gen_;
 
     switch (b.type) {
       case Block::Heading: {
@@ -1307,9 +1308,9 @@ int DocView::layout_range(size_t first, size_t last, int row, std::vector<BlockL
             // do not line up in every font.  Brackets are always one cell.
             marker = checked ? "[x] " : "[ ] ";
             marker_color = checked ? RGB{140, 195, 140} : theme_.muted;
-          } else if (!b.marker.empty()) {
+          } else if (!b.x().marker.empty()) {
             // a definition list (": definition") keeps its own marker
-            marker = b.marker + " ";
+            marker = b.x().marker + " ";
           } else if (b.ordered) {
             marker = std::to_string(b.start_num + li) + ". ";
           } else {
@@ -1601,6 +1602,10 @@ void DocView::refresh_layout() {
     layout_range((size_t)bi, (size_t)bi + 1, top, one);
     if (one.size() != 1) { relayout(); return; }
     shift += one[0].rows - old.rows;
+    // The block's own entries in assets_ (one per occurrence) are not used by
+    // anyone else: drop their bitmaps instead of keeping them until the next
+    // full relayout.  The slots stay, so the other blocks' indices hold.
+    release_assets(old);
     old = std::move(one[0]);
     next = (size_t)bi + 1;
   }
@@ -1612,6 +1617,48 @@ void DocView::refresh_layout() {
   if (scroll_ < 0) scroll_ = 0;
 }
 
+void DocView::release_assets(const BlockLayout& bl) {
+  static const std::shared_ptr<ImageAsset> gone = [] {
+    auto a = std::make_shared<ImageAsset>();
+    a->failed = true;
+    a->err = "released";
+    return a;
+  }();
+  auto drop = [&](int i) {
+    if (i >= 0 && (size_t)i < assets_.size()) assets_[(size_t)i] = gone;
+  };
+  for (const Line& l : bl.lines) {
+    if (l.kind == Line::Image) drop(l.img);
+    for (const Run& r : l.runs) drop(r.img);
+  }
+}
+
+void DocView::recolour(const Theme& th) {
+  bool same_geometry = th.baseline == theme_.baseline && th.sprites == theme_.sprites;
+  theme_ = th;
+  theme_gen_++;
+  if (!same_geometry || layout_.size() != doc_.blocks.size()) {
+    relayout();
+    return;
+  }
+  // The bitmaps carry the old ink and page colours (issue #3): the cache goes,
+  // the blocks pick new ones up when draw() lays them out again.
+  asset_map_.clear();
+  clip_cache_.clear();
+}
+
+// Lays out again the blocks in rows [top, top + h) whose colours are from an
+// older theme (see recolour()).
+void DocView::refresh_stale(int top, int h) {
+  bool any = false;
+  for (const BlockLayout& bl : layout_) {
+    if (bl.row + bl.rows <= top) continue;
+    if (bl.row >= top + h) break;
+    if (bl.gen != theme_gen_) { dirty_blocks_.push_back(bl.block); any = true; }
+  }
+  if (any) refresh_layout();
+}
+
 // Debug/test aid: a text fingerprint of the layout (rows, lines, run texts).
 std::string DocView::layout_signature() const {
   std::string out;
@@ -1620,7 +1667,13 @@ std::string DocView::layout_signature() const {
     for (const Line& l : bl.lines) {
       out += fmt(" L%d k%d r%d x%d c%d %s|%s", l.row, (int)l.kind, l.rows, l.x, (int)l.cells.size(),
                  l.marker.c_str(), l.code_text.c_str());
-      for (const Run& r : l.runs) out += fmt("[%d,%d,%d:%s]", r.x, r.width, r.rows, r.text.c_str());
+      out += fmt(" bar%02x%02x%02x band%02x%02x%02x/%02x%02x%02x arrow%02x%02x%02x", l.bar_rgb.r,
+                 l.bar_rgb.g, l.bar_rgb.b, l.band_bg.r, l.band_bg.g, l.band_bg.b, l.band_hover.r,
+                 l.band_hover.g, l.band_hover.b, l.arrow_rgb.r, l.arrow_rgb.g, l.arrow_rgb.b);
+      for (const RGB& c : l.bar_rgbs) out += fmt(" %02x%02x%02x", c.r, c.g, c.b);
+      for (const Run& r : l.runs)
+        out += fmt("[%d,%d,%d,%d%02x%02x%02x:%s]", r.x, r.width, r.rows, r.style.has_color ? 1 : 0,
+                   r.style.color.r, r.style.color.g, r.style.color.b, r.text.c_str());
       for (const TCell& c : l.cells) out += fmt("{%d,%d:%s}", c.x, c.width, c.text.c_str());
       out += "\n";
     }
@@ -1724,12 +1777,12 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
                                const std::vector<int>& bars, const std::vector<RGB>& bar_cols,
                                bool custom, RGB bar_rgb) {
   if (b.dir_leaf) return;
-  bool callout = is_callout_name(b.dir_name);
-  RGB c = callout ? callout_color(b.dir_name) : bar_rgb;
+  bool callout = is_callout_name(b.x().dir_name);
+  RGB c = callout ? callout_color(b.x().dir_name) : bar_rgb;
   bool cu = custom || callout;
   // A titled Luogu callout is a folding box: collapsed unless {open} says so,
   // clicking the title band toggles it (DocView::toggle_box_at).
-  bool collapsible = callout && !b.dir_label.empty() && opt_.fold_ui;
+  bool collapsible = callout && !b.x().dir_label.empty() && opt_.fold_ui;
   bool expanded = true;
   if (collapsible) {
     auto it = box_open_.find(b.uid);
@@ -1741,10 +1794,10 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
   std::vector<int> own_bars = bars;
   std::vector<RGB> own_cols = bar_cols;
   if (callout) { own_bars.push_back(indent); own_cols.push_back(c); }
-  if (callout && !b.dir_label.empty()) {
+  if (callout && !b.x().dir_label.empty()) {
     // The title is ordinary inline markup - Luogu titles regularly carry
     // formulas (:::info[$x^2$ 标题]) - so parse and wrap it like a paragraph.
-    std::vector<Span> sp = inline_parser_.parse_inline(b.dir_label);
+    std::vector<Span> sp = inline_parser_.parse_inline(b.x().dir_label);
     Span base;
     base.bold = true;
     base.has_color = true;
@@ -1780,13 +1833,13 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
   int ind2 = indent;
   if (callout) ind2 = indent + 2;
 
-  std::string a = to_lower(b.dir_attrs);
+  std::string a = to_lower(b.x().dir_attrs);
   Align al = Align::Left;
   bool shift = false, epi = false;
-  if (b.dir_name == "align") {
+  if (b.x().dir_name == "align") {
     al = a == "center" ? Align::Center : a == "right" ? Align::Right : Align::Left;
     shift = al != Align::Left;
-  } else if (b.dir_name == "epigraph") {
+  } else if (b.x().dir_name == "epigraph") {
     al = Align::Right;
     shift = epi = true;
   }
@@ -1823,10 +1876,10 @@ void DocView::directive_layout(BlockLayout& bl, const Block& b, int& row, int in
       for (auto& r : bl.lines[k].runs) {
         if (!r.style.has_color) { r.style.has_color = true; r.style.color = theme_.quote_fg; }
       }
-    if (!b.dir_label.empty()) {
+    if (!b.x().dir_label.empty()) {
       Line l;
       Run r;
-      r.text = b.dir_label;
+      r.text = b.x().dir_label;
       r.width = str_width(r.text);
       r.x = std::max(1, content_w_ - 1 - r.width);
       r.style.has_color = true;
@@ -1935,7 +1988,7 @@ void DocView::directive_child_layout(BlockLayout& bl, const Block& sb, int& row,
         bool task = k < sb.item_is_task.size() && sb.item_is_task[k];
         bool checked = k < sb.item_checked.size() && sb.item_checked[k];
         std::string marker = task ? (checked ? "[x] " : "[ ] ")
-                           : !sb.marker.empty() ? sb.marker + " "
+                           : !sb.x().marker.empty() ? sb.x().marker + " "
                            : sb.ordered ? std::to_string(sb.start_num + li) + ". "
                                         : "\u2022 ";
         li++;

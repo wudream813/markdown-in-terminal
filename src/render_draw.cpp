@@ -106,11 +106,11 @@ void blocks_plain(const std::vector<Block>& v, std::string& out, const std::stri
         break;
       }
       case Block::Image:
-        out += pre + (b.img_alt.empty() ? b.img_src : b.img_alt) + "\n\n";
+        out += pre + (b.x().img_alt.empty() ? b.x().img_src : b.x().img_alt) + "\n\n";
         break;
       case Block::Directive:
         if (!b.dir_leaf) {  // folded or not: the export carries everything
-          if (!b.dir_label.empty()) out += pre + b.dir_label + "\n\n";
+          if (!b.x().dir_label.empty()) out += pre + b.x().dir_label + "\n\n";
           for (const auto& nest : b.items) blocks_plain(nest, out, pre);
         }
         break;
@@ -354,9 +354,9 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
     if (yy >= top + rows - 1) break;
     // Luogu "```cpp lines=5-6,11": the listed source lines get a warm tint
     RGB lbg = bg;
-    if (!b.hl_ranges.empty()) {
+    if (!b.x().hl_ranges.empty()) {
       int n1 = l.code_index + 1;
-      for (const auto& rg : b.hl_ranges)
+      for (const auto& rg : b.x().hl_ranges)
         if (n1 >= rg.first && n1 <= rg.second) {
           lbg = RGB{(uint8_t)std::min(255, bg.r + 26), (uint8_t)std::min(255, bg.g + 21),
                     (uint8_t)std::min(255, bg.b + 8)};
@@ -396,8 +396,8 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
   // Luogu cute-table styles: "three" = booktabs (heavy top/bottom, thin header
   // rule, no verticals), "tuack" = booktabs plus thin verticals and, with
   // tuack=N, a heavy vertical rule after column N (1-based).
-  const bool three = b.table_style == "three";
-  const bool tuack = b.table_style == "tuack";
+  const bool three = b.x().table_style == "three";
+  const bool tuack = b.x().table_style == "tuack";
   const int heavy = tuack ? b.table_style_arg : 0;
   auto border_run = [&](int x, int yy, int n, uint32_t cp) {
     for (int k = 0; k < n; k++) scr.put(x + k, yy, cp, theme_.table_border, theme_.bg);
@@ -599,6 +599,7 @@ std::shared_ptr<DocView::ImageAsset> DocView::resolve_asset(const ImageAsset& a)
 }
 
 void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
+  refresh_stale(scroll_row, h);  // blocks still in the previous theme's colours
   if (getenv("MDT_DEBUG_LAYOUT")) {
     for (auto& bl : layout_) {
       int imgs = 0;

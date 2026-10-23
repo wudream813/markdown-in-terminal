@@ -217,7 +217,7 @@ upgrade:
 
 ```sh
 # Debian, Ubuntu, Raspberry Pi OS ... (amd64 and arm64)
-V=0.3.21                                   # the table below lists both names
+V=0.3.22                                   # the table below lists both names
 curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/download/v$V/mdt_$V-1_amd64.deb
 sudo apt install ./mdt_$V-1_amd64.deb      # nothing to pull in: the binary is static
 
@@ -645,7 +645,9 @@ rasterised. If a deferred formula turns out to be bigger or smaller than the
 layout estimate, the blocks that showed it are laid out again and everything
 behind them moves (metrics are cached by then), so the final geometry is exact.
 Until 0.3.20 that was a relayout of the whole document - on a 10 MB file about
-a second per page that brought a new formula into view.  `make refresh-check`
+a second per page that brought a new formula into view.  A theme change (`t`) works
+the same way since 0.3.22: nothing is laid out when the key is pressed, the
+blocks are redone in the new colours as they come into view.  `make refresh-check`
 builds a tool that scrolls through a document and checks that the partial
 relayout ends where a full one does.
 
@@ -738,9 +740,9 @@ now lays the document out in slices and prints each one as it goes, which is
 where most of it went.  `mdt --diag file.md` prints what a document costs:
 
 ```
-  block struct    : 568 bytes (span 120, line 256, run 72, table cell 96)
-  layout          : 241941 rows, 165228 lines, 407169 runs, 59010 table cells
-  memory          : 268.6 MB peak RSS for the whole document
+  block struct    : 264 bytes (span 120, line 232, run 72, table cell 88)
+  layout          : 255913 rows, 199416 lines, 174300 runs, 121065 table cells
+  memory          : 206.6 MB peak RSS for the whole document
 ```
 
 `make mem-report && ./build/mem-report big.md` prints the same numbers with the
@@ -749,25 +751,32 @@ whoever is working on it, and `tests/smoke.sh` fails if a 3 MB document goes
 over its budget or if opening a document four times as big takes much more
 than four times as long.
 
-What 0.3.21 measured on two 11 MB files - prose with tables and code, and one
-made of the demo plus every test fixture 783 times over (formulas, Luogu
-callouts, nested quotes):
+Measured on two 11 MB files - prose with tables and code, and one made of the
+demo plus every test fixture 783 times over (formulas, Luogu callouts, nested
+quotes).  `python3 tools/make_big_docs.py /tmp/big` writes both and
+`python3 tools/big_bench.py ./build/mdt /tmp/big/mixed10.md` times the reader:
 
 | | prose, 11.7 MB | mixed, 11.4 MB |
 |:--|--:|--:|
-| parse | 0.5 s | 1.0 s (was 11.9 s) |
+| parse | 0.4 s | 0.8 s (0.3.20: 11.9 s) |
 | layout | 0.8 s | 0.8 s |
-| reader, first screen | 1.6 s | 2.2 s |
-| reader, peak memory | 253 MB | 420 MB (was 456 MB) |
-| `r` / `--watch` reload, peak memory | | 500 MB (was 690 MB) |
-| a page with new formulas (`j`, `g`) | | 1 ms (was 0.3-0.4 s) |
+| reader, first screen | 1.8 s | 2.2 s |
+| reader, peak memory | 184 MB (0.3.21: 210 MB) | 352 MB (0.3.21: 421 MB, 0.3.20: 456 MB) |
+| `r` / `--watch` reload, peak memory | 206 MB (0.3.21: 249 MB) | 377 MB (0.3.21: 478 MB, 0.3.20: 690 MB) |
+| `t` (next theme) | 2 ms (0.3.21: 0.8 s) | 2 ms (0.3.21: 0.9 s) |
+| a page with new formulas (`j`, `g`) | | 1 ms (0.3.20: 0.3-0.4 s) |
 | scrolling, `G`, search | ≤ 50 ms | ≤ 80 ms |
 
-The parse was quadratic in the number of Luogu leaf directives
-(`::cute-table{...}`): each one was erased from the block list where it stood.
-A reload now drops the old document before it parses the new one, the laid-out
-runs carry a 20-byte style instead of a whole span, and the layout moves lines
-instead of copying them.
+What changed, in order: the parse was quadratic in the number of Luogu leaf
+directives (`::cute-table{...}`, each one erased from the block list where it
+stood); a page with new formulas relaid out the whole document; a reload
+parsed the new file while the old one was still alive; and every theme change
+laid out everything again (now each block remembers the theme it was laid out
+in, and only the stale blocks that come into view are redone).  On the memory
+side the laid-out runs carry a 20-byte style instead of a whole span, the
+fields only directives, images and definition lists use moved out of `Block`
+(568 -> 264 bytes, 200,000 of them in the mixed file), `Line` and the table
+cells lost their padding, and the layout moves lines instead of copying them.
 
 ## The command line is checked
 

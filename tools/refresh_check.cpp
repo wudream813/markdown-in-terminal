@@ -101,10 +101,42 @@ int main(int argc, char** argv) {
       view.scroll_to(keep);
     }
   }
-  printf("%s: %d refreshes, %.1f ms total, %d toggles, %d rows, js=%d -> %s\n", argv[1], refreshes,
-         refresh_ms, toggles, view.total_rows(), math.has_js() ? 1 : 0,
-         inc == full && toggles_ok ? "same" : "DIFFERENT");
-  if (inc != full) {
+  // Another theme (the `t` key): recolour() lays nothing out, draw() redoes
+  // the stale blocks it shows.  After a pass over the whole document the
+  // colours must be what a full relayout in the new theme gives.
+  bool theme_ok = true;
+  double recolour_ms = 0;
+  if (inc == full && toggles_ok) {
+    Theme light;
+    light.bg = {252, 252, 250}; light.fg = {40, 44, 52}; light.muted = {120, 126, 136};
+    for (int i = 1; i <= 6; i++) light.heading[i] = {(uint8_t)(20 * i), 92, 171};
+    light.link = {28, 110, 200}; light.code_fg = {150, 80, 30}; light.quote_fg = {96, 102, 112};
+    light.quote_bar = {150, 170, 200}; light.bullet = {28, 111, 201}; light.math_fg = {41, 44, 52};
+    std::string before = view.layout_signature();
+    auto t = std::chrono::steady_clock::now();
+    view.recolour(light);
+    recolour_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+    for (int pass = 0; pass < 20; pass++) {
+      bool measured = false;
+      for (int top = 0; top < view.total_rows(); top += rows / 2) {
+        view.draw(scr, 0, 0, cols, rows, top);
+        if (view.layout_dirty()) { view.refresh_layout(); measured = true; }
+      }
+      if (!measured) break;
+    }
+    std::string a = view.layout_signature();
+    view.relayout();
+    std::string b = view.layout_signature();
+    if (a != b) { theme_ok = false; inc = a; full = b; }
+    if (before == a && view.total_rows() > 3) {
+      // nothing changed colour at all: the test would prove nothing
+      fprintf(stderr, "note: the theme change left the layout's colours as they were\n");
+    }
+  }
+  printf("%s: %d refreshes, %.1f ms total, %d toggles, recolour %.1f ms, %d rows, js=%d -> %s\n",
+         argv[1], refreshes, refresh_ms, toggles, recolour_ms, view.total_rows(),
+         math.has_js() ? 1 : 0, inc == full && toggles_ok && theme_ok ? "same" : "DIFFERENT");
+  if (inc != full || !toggles_ok || !theme_ok) {
     size_t i = 0;
     while (i < inc.size() && i < full.size() && inc[i] == full[i]) i++;
     size_t from = inc.rfind('\n', i);

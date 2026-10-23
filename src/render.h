@@ -113,6 +113,12 @@ class DocView {
     relayout();
   }
   int theme_gen() const { return theme_gen_; }
+  // Another colour theme for the same geometry (the `t` key).  Nothing is laid
+  // out here: every block remembers the theme it was laid out with, and draw()
+  // lays out again only the stale blocks it is about to show.  A full
+  // relayout of a 10 MB document took ~0.8 s per key press.  set_theme() stays
+  // the full rebuild (the cell size changed, the theme came with new options).
+  void recolour(const Theme& th);
   void set_options(const RenderOptions& o) { opt_ = o; lazy_metrics_ = o.lazy_metrics; }
   const RenderOptions& options() const { return opt_; }
   void set_document(MdDocument doc, const std::string& path, const std::string& base_dir);
@@ -218,19 +224,7 @@ class DocView {
     int rows = 1;
   };
   struct TCell {
-    int x = 0, width = 0;
     std::string text;
-    Align align = Align::Left;
-    bool header = false;
-    int merge = 0;   // Luogu cell merging: 1 "^" up, 2 "<" left, 3 ">" right
-    // a "^" sitting under a colspan group: the vertical separator to its
-    // right stays open like in the row above ("^|^" reads like "^|<")
-    bool hinherit = false;
-    int pad = 1;
-    // vertical merge: this slot shows line `v_lno` of the origin row `v_row`
-    // (-1 = empty slot of the span, -2 = not shifted); layout centres the
-    // origin's content in the display rows of the whole merged block
-    int v_row = -2, v_lno = -2;
     // Typeset formulas inside the cell.  The cell keeps showing the Unicode
     // transcription (so terminals without graphics, and sixel, still read),
     // and the bitmap - exactly as wide as that transcription and one cell
@@ -242,26 +236,36 @@ class DocView {
       bool display = false;
     };
     std::vector<Piece> pieces;
+    int x = 0, width = 0;
+    Align align = Align::Left;
+    int merge = 0;   // Luogu cell merging: 1 "^" up, 2 "<" left, 3 ">" right
+    int pad = 1;
+    // vertical merge: this slot shows line `v_lno` of the origin row `v_row`
+    // (-1 = empty slot of the span, -2 = not shifted); layout centres the
+    // origin's content in the display rows of the whole merged block
+    int v_row = -2, v_lno = -2;
+    bool header = false;
+    // a "^" sitting under a colspan group: the vertical separator to its
+    // right stays open like in the row above ("^|^" reads like "^|<")
+    bool hinherit = false;
   };
+  // Field order: the vectors and strings first, then the ints, then the
+  // bytes - one Line per screen row of the whole document, so the padding
+  // between mixed-size fields was 24 bytes a row.
   struct Line {
-    enum Kind { Text, Code, Rule, Table, Image } kind = Text;
     std::vector<Run> runs;
     std::vector<TCell> cells;   // kind == Table
-    int row = 0;                // row offset inside the block
     std::vector<int> bars;      // blockquote bar columns, outermost first
-    bool bars_custom = false;   // bars use bar_rgb instead of the quote colour
-    RGB bar_rgb{0, 0, 0};       // Luogu callouts colour their bar by severity
     std::vector<RGB> bar_rgbs;  // per-bar-column colours, parallel to bars;
                                 // empty falls back to bars_custom/quote colour
-    bool band = false;          // callout titles get a light background band
+    std::string code_text;      // wrapped code line (code blocks)
+    std::string marker;         // dimmed prefix drawn before the text (heading "#")
+    enum Kind { Text, Code, Rule, Table, Image } kind = Text;
+    int row = 0;                // row offset inside the block
     int toggle_uid = -1;        // callout title: clicking the band folds/unfolds
-    RGB band_hover{0, 0, 0};    // ... and a brighter wash while the pointer is on it
     // fold-state arrow in a fixed gutter BEFORE the title (it never takes part
     // in the title's line wrapping, so a LaTeX title cannot orphan it)
     int arrow_col = -1;
-    bool arrow_open = false;
-    RGB arrow_rgb{0, 0, 0};
-    RGB band_bg{0, 0, 0};       // ... in a tint of the callout colour
     int band_x0 = 0, band_x1 = 0;  // band span, content columns inclusive
     int img = -1;               // kind == Image
     int img_rows = 1;
@@ -272,18 +276,24 @@ class DocView {
     int rows = 1;
     int code_index = -1;        // source line index for code blocks
     int x = 0;                  // extra column offset (blocks inside list items)
-    std::string code_text;      // wrapped code line (code blocks)
     int code_col = 0;           // byte offset of this segment inside the source line
-    std::string marker;         // dimmed prefix drawn before the text (heading "#")
     int marker_w = 0;
     // 2 = an enlarged heading line (RenderOptions::big_headings): run x and
     // widths count enlarged cells, and the line covers rows = 2 screen rows.
     int scale = 1;
+    RGB bar_rgb{0, 0, 0};       // Luogu callouts colour their bar by severity
+    RGB band_hover{0, 0, 0};    // ... and a brighter wash while the pointer is on it
+    RGB arrow_rgb{0, 0, 0};
+    RGB band_bg{0, 0, 0};       // ... in a tint of the callout colour
+    bool bars_custom = false;   // bars use bar_rgb instead of the quote colour
+    bool band = false;          // callout titles get a light background band
+    bool arrow_open = false;
   };
   struct BlockLayout {
     int block = 0;
     int row = 0;
     int rows = 1;
+    int gen = 0;  // theme_gen_ the colours were laid out with (see recolour())
     std::vector<Line> lines;
   };
   struct ImageAsset {
@@ -355,6 +365,8 @@ class DocView {
 
   void layout_blocks();
   int layout_range(size_t first, size_t last, int row, std::vector<BlockLayout>& out);
+  void release_assets(const BlockLayout& bl);
+  void refresh_stale(int top, int h);
   // Lays a table out into bl, starting at column `indent` with `avail` columns
   // available.  Also used for tables nested in list items and quotes.
   void layout_table(const Block& b, int indent, int avail, BlockLayout& bl, int& row);

@@ -323,6 +323,9 @@ python3 tools/page_test.py "$BIN" || exit 1
 echo "== a theme change reaches the formulas (issue #3) =="
 python3 tools/theme_formula_test.py "$BIN" || exit 1
 
+echo "== the t key: next theme, same options, no full relayout =="
+python3 tools/theme_key_test.py "$BIN" || exit 1
+
 echo "== interrupted from the outside (SIGTERM) =="
 python3 tools/panic_test.py "$BIN"
 

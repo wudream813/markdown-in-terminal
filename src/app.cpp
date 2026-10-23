@@ -1055,10 +1055,20 @@ void App::run() {
       }
       case 't': {
         static const char* names[] = {"dark", "light", "nord", "monochrome"};
-        static int ti = 0;
+        // start from the theme the reader was opened with (--theme=light: the
+        // first `t` used to go to "light" again)
+        static int ti = -1;
+        if (ti < 0) {
+          ti = 0;
+          for (int k = 0; k < 4; k++)
+            if (to_lower(opt.theme) == names[k] || (k == 3 && to_lower(opt.theme) == "mono")) ti = k;
+        }
         ti = (ti + 1) % 4;
-        theme = theme_by_name(names[ti]);
-        view.set_theme(theme);                 // drops the old clipped assets
+        Theme next = theme_by_name(names[ti]);
+        next.syntax = theme.syntax;    // --no-syntax and --panels survive a theme
+        next.flat_bg = theme.flat_bg;  // change (they used to be reset by it)
+        theme = next;
+        view.recolour(theme);                  // drops the old clipped assets
         term.set_theme_cache(fmt("%s:%d", names[ti], view.theme_gen()));
         needs_frame = true;
         term.clear_images();                   // wipe the old theme's pictures

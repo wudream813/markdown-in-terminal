@@ -2,6 +2,7 @@
 //        including $...$/$$...$$ maths spans.
 #pragma once
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,43 @@ struct TableCell {
 
 struct Block;
 
+// A pointer with value semantics: copying the owner copies the pointee.  For
+// the parts of a struct that most instances do not have.
+template <class T>
+class ValuePtr {
+ public:
+  ValuePtr() = default;
+  ValuePtr(const ValuePtr& o) : p_(o.p_ ? new T(*o.p_) : nullptr) {}
+  ValuePtr(ValuePtr&&) noexcept = default;
+  ValuePtr& operator=(const ValuePtr& o) {
+    if (this != &o) p_.reset(o.p_ ? new T(*o.p_) : nullptr);
+    return *this;
+  }
+  ValuePtr& operator=(ValuePtr&&) noexcept = default;
+  const T* get() const { return p_.get(); }
+  T& make() {
+    if (!p_) p_.reset(new T());
+    return *p_;
+  }
+
+ private:
+  std::unique_ptr<T> p_;
+};
+
+// The fields only a few kinds of block use: Luogu directives, cute-table
+// styles, highlighted code lines, image blocks, definition-list bullets.
+// Inline they cost every block 250 bytes (a 10 MB document has 200,000
+// blocks); read them with Block::x(), write them with Block::ext().
+struct BlockExtra {
+  std::vector<std::pair<int, int>> hl_ranges;  // Luogu "```cpp lines=5-6,11" (1-based, inclusive)
+  // directive (Luogu): :::name[label]{attrs} / ::name[label]{attrs}
+  std::string dir_name, dir_label, dir_attrs;
+  // table style from a preceding "::cute-table{...}" leaf directive
+  std::string table_style;        // "", "three", "tuack"
+  std::string marker;             // bullet override (definition list: ":")
+  std::string img_src, img_alt;   // image block
+};
+
 struct Block {
   enum Type { Paragraph, Heading, CodeBlock, Quote, List, Table, Hr, Html, MathBlock, Image, Definition,
               // Luogu remark-directive block: :::name[label]{attrs} ... :::
@@ -45,33 +83,28 @@ struct Block {
   int level = 0;                  // heading level / quote nesting depth
   std::vector<Span> spans;        // paragraph, heading
   std::string code, lang;         // code block
-  bool code_is_math = false;
-  std::vector<std::pair<int, int>> hl_ranges;  // Luogu "```cpp lines=5-6,11" (1-based, inclusive)
-  // directive (Luogu): :::name[label]{attrs} / ::name[label]{attrs}
-  std::string dir_name, dir_label, dir_attrs;
-  bool dir_leaf = false;          // "::name" (exactly two colons, own line)
-  int dir_colons = 3;             // colon count of the opening fence
-  int uid = -1;                   // unique id among directive blocks (fold state)
-  bool dir_open = false;          // {open} attribute: start expanded
-  // table style from a preceding "::cute-table{...}" leaf directive
-  std::string table_style;        // "", "three", "tuack"
-  int table_style_arg = 0;        // tuack=N: the heavy vertical rule sits after column N
-  // list
-  bool ordered = false;
-  int start_num = 1;
-  int marker_width = 2;                // width of "- " / "1. " in source
-  std::string marker;                  // bullet override (definition list: ":")
-  std::vector<std::vector<Block>> items;
+  std::vector<std::vector<Block>> items;  // list items / quote and directive bodies
   std::vector<bool> item_checked;      // task lists (- [ ])
   std::vector<bool> item_is_task;
-  // table
-  std::vector<std::vector<TableCell>> rows;
-  bool has_header = false;
-  // image
-  std::string img_src, img_title, img_alt;
-  int img_w = 0, img_h = 0;
-  bool img_sized = false;
+  std::vector<std::vector<TableCell>> rows;  // table
+  ValuePtr<BlockExtra> extra;
+  int dir_colons = 3;             // colon count of the opening fence
+  int uid = -1;                   // unique id among directive blocks (fold state)
+  int table_style_arg = 0;        // tuack=N: the heavy vertical rule sits after column N
+  int start_num = 1;              // list
+  int marker_width = 2;           // width of "- " / "1. " in source
   int src_line = 0;
+  bool code_is_math = false;
+  bool dir_leaf = false;          // "::name" (exactly two colons, own line)
+  bool dir_open = false;          // {open} attribute: start expanded
+  bool ordered = false;           // list
+  bool has_header = false;        // table
+
+  const BlockExtra& x() const {
+    static const BlockExtra none;
+    return extra.get() ? *extra.get() : none;
+  }
+  BlockExtra& ext() { return extra.make(); }
 };
 
 struct LinkRef {

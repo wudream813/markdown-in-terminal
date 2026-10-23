@@ -1362,7 +1362,7 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
               size_t dash = part.find('-');
               int a = atoi(part.c_str());
               int z = dash == std::string::npos ? a : atoi(part.c_str() + dash + 1);
-              if (a > 0 && z >= a) b.hl_ranges.emplace_back(a, z);
+              if (a > 0 && z >= a) b.ext().hl_ranges.emplace_back(a, z);
             }
           }
         }
@@ -1484,24 +1484,24 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
         size_t p = cn;
         while (p < t.size() && (isalnum((unsigned char)t[p]) || t[p] == '-' || t[p] == '_')) p++;
         b.type = Block::Directive;
-        b.dir_name = to_lower(t.substr(cn, p - cn));
+        b.ext().dir_name = to_lower(t.substr(cn, p - cn));
         b.dir_colons = (int)cn;
         b.uid = doc_->uid_ctr++;
         std::string tail = t.substr(p);
         if (!tail.empty() && tail[0] == '[') {
           size_t close = tail.rfind(']');
           if (close != std::string::npos && close > 0) {
-            b.dir_label = tail.substr(1, close - 1);
+            b.ext().dir_label = tail.substr(1, close - 1);
             tail = tail.substr(close + 1);
           }
         }
         tail = trim(tail);
         if (!tail.empty() && tail[0] == '{') {
           size_t close = tail.rfind('}');
-          if (close != std::string::npos && close > 0) b.dir_attrs = trim(tail.substr(1, close - 1));
+          if (close != std::string::npos && close > 0) b.ext().dir_attrs = trim(tail.substr(1, close - 1));
         }
         {  // {open} (possibly among comma/space separated attrs): start unfolded
-          std::string at = to_lower(b.dir_attrs);
+          std::string at = to_lower(b.x().dir_attrs);
           for (size_t q = 0, p2 = 0; p2 <= at.size(); p2 = q + 1) {
             q = p2;
             while (q < at.size() && at[q] != ',' && !isspace((unsigned char)at[q])) q++;
@@ -1903,7 +1903,7 @@ bool MarkdownParser::try_definition_list(std::vector<Block>& blocks, int depth) 
 
   Block dl;
   dl.type = Block::List;
-  dl.marker = ":";
+  dl.ext().marker = ":";
   dl.start_num = 1;
   std::vector<std::string> def;
   auto flush_def = [&]() {
@@ -2185,12 +2185,12 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
           Block& b = blocks[i];
           if (b.type == Block::Directive && b.dir_leaf) {
             leaves = true;
-            if (b.dir_name == "cute-table" && i + 1 < blocks.size() &&
+            if (b.x().dir_name == "cute-table" && i + 1 < blocks.size() &&
                 blocks[i + 1].type == Block::Table) {
               Block& t = blocks[i + 1];
-              std::string a = b.dir_attrs;
+              std::string a = b.x().dir_attrs;
               size_t eq = a.find('=');
-              t.table_style = eq == std::string::npos ? a : trim(a.substr(0, eq));
+              t.ext().table_style = eq == std::string::npos ? a : trim(a.substr(0, eq));
               if (eq != std::string::npos) t.table_style_arg = atoi(a.c_str() + eq + 1);
             }
             continue;

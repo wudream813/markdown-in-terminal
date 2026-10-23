@@ -102,11 +102,11 @@ sudo install -m 0755 mdt /usr/local/bin/mdt
 
 ```sh
 # Debian / Ubuntu / 树莓派 OS（amd64 与 arm64）
-curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt_0.3.21-1_amd64.deb
-sudo apt install ./mdt_0.3.21-1_amd64.deb     # 静态二进制，apt 不会额外拉依赖
+curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt_0.3.22-1_amd64.deb
+sudo apt install ./mdt_0.3.22-1_amd64.deb     # 静态二进制，apt 不会额外拉依赖
 
 # Fedora / RHEL / openSUSE（x86_64 与 aarch64）
-sudo dnf install https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-0.3.21-1.x86_64.rpm
+sudo dnf install https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-0.3.22-1.x86_64.rpm
 ```
 
 包里带二进制、man page 和三个补全脚本；`curl` 与 `xdg-utils` 是**推荐**而非依赖
@@ -451,7 +451,7 @@ Windows 上的 Python 没有 `pty` 模块。
 估计的更大或更小，只把显示了它的那几个块重新排版，后面的内容整体平移（此时度量已有缓存），
 所以最终几何是精确的。0.3.20 及以前这里是整篇重排——10 MB 的文件上，每翻到一页新公式
 就要卡大约一秒。`make refresh-check` 会编出一个工具：把文档从头翻到尾，核对局部重排的
-结果与整篇重排完全一致。
+结果与整篇重排完全一致。0.3.22 起换主题（`t`）也是同样的思路：按键时什么都不排，块在进入视野时才按新颜色重排。
 
 ## 显示选项
 
@@ -533,31 +533,35 @@ GitHub 的 alert 语法（`> [!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`
 现在 `--dump` 按屏切片排版并边排边输出，这部分开销基本消失。`mdt --diag 文件.md` 会给出数字：
 
 ```
-  block struct    : 568 bytes (span 120, line 256, run 72, table cell 96)
-  layout          : 241941 rows, 165228 lines, 407169 runs, 59010 table cells
-  memory          : 268.6 MB peak RSS for the whole document
+  block struct    : 264 bytes (span 120, line 232, run 72, table cell 88)
+  layout          : 255913 rows, 199416 lines, 174300 runs, 121065 table cells
+  memory          : 206.6 MB peak RSS for the whole document
 ```
 
 `make mem-report && ./build/mem-report 大文件.md` 会按阶段（解析、排版的耗时，各自常驻多少内存）
 打印同样的数字，方便继续优化；`tests/smoke.sh` 里有两条断言：3 MB 文档的内存峰值不得超出预算；
 文档大四倍时打开耗时不能远超四倍。
 
-0.3.21 在两份 11 MB 文件上的实测——一份是带表格和代码的散文，另一份是 demo 加全部测试
-fixture 重复 783 遍（公式、洛谷提示框、嵌套引用都有）：
+在两份 11 MB 文件上的实测——一份是带表格和代码的散文，另一份是 demo 加全部测试 fixture
+重复 783 遍（公式、洛谷提示框、嵌套引用都有）。`python3 tools/make_big_docs.py /tmp/big` 生成这两份，
+`python3 tools/big_bench.py ./build/mdt /tmp/big/mixed10.md` 测阅读器：
 
 | | 散文 11.7 MB | 混合 11.4 MB |
 |:--|--:|--:|
-| 解析 | 0.5 s | 1.0 s（原 11.9 s） |
+| 解析 | 0.4 s | 0.8 s（0.3.20：11.9 s） |
 | 排版 | 0.8 s | 0.8 s |
-| 阅读器首屏 | 1.6 s | 2.2 s |
-| 阅读器内存峰值 | 253 MB | 420 MB（原 456 MB） |
-| `r` / `--watch` 重新载入时的峰值 | | 500 MB（原 690 MB） |
-| 翻到有新公式的一页（`j`、`g`） | | 1 ms（原 0.3–0.4 s） |
+| 阅读器首屏 | 1.8 s | 2.2 s |
+| 阅读器内存峰值 | 184 MB（0.3.21：210 MB） | 352 MB（0.3.21：421 MB，0.3.20：456 MB） |
+| `r` / `--watch` 重新载入时的峰值 | 206 MB（0.3.21：249 MB） | 377 MB（0.3.21：478 MB，0.3.20：690 MB） |
+| `t`（换主题） | 2 ms（0.3.21：0.8 s） | 2 ms（0.3.21：0.9 s） |
+| 翻到有新公式的一页（`j`、`g`） | | 1 ms（0.3.20：0.3–0.4 s） |
 | 滚动、`G`、搜索 | ≤ 50 ms | ≤ 80 ms |
 
-解析的耗时与洛谷叶子指令（`::cute-table{...}`）的个数成平方关系：每条指令都在块列表里
-原地删除，后面的块全部要挪一遍。现在重新载入会先释放旧文档再解析新文件；排版后的 run
-只带 20 字节的样式而不是整个 Span；排版时行是移动进去的，不再复制。
+依次改了这些：解析耗时与洛谷叶子指令（`::cute-table{...}`）个数成平方关系（每条都在块列表里
+原地删除）；翻到新公式的一页会整篇重排；重新载入时新旧文档同时在内存里；每次换主题都整篇
+重排（现在每个块记得自己是按哪个主题排的，只有进入视野的过期块才重排）。内存方面：排版后的
+run 只带 20 字节的样式；只有指令、图片、定义列表才用的字段移出了 `Block`（568 → 264 字节，
+混合文件里有 20 万个块）；`Line` 和表格单元格去掉了填充字节；排版时行是移动进去的，不再复制。
 
 ## 命令行参数会被检查
 

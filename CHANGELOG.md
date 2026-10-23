@@ -5,6 +5,45 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.22] — 2026-10-23
+
+The two cheap items left over from the big-document work, and two bugs of the
+`t` key found on the way.
+
+### Changed
+
+* **`t` (next theme) no longer lays the document out again.**  Every block
+  remembers the theme it was laid out in; the key only swaps the colours and
+  drops the formula bitmaps, and `draw()` redoes the stale blocks it is about
+  to show.  On an 11 MB file the key went from 0.8-0.9 s to 2 ms; blocks
+  further down are redone when they come into view.  `make refresh-check` now
+  also changes the theme, scrolls through the document and requires the
+  colours to be exactly those of a full relayout in the new theme.
+* **Smaller documents and layouts in memory.**  The fields only Luogu
+  directives, cute-table styles, highlighted code lines, image blocks and
+  definition lists use moved out of `Block` into a part that is allocated
+  when they are set (`Block` 568 -> 264 bytes; four of those fields were never
+  used at all and are gone).  `Line` (256 -> 232) and the table cells
+  (96 -> 88) lost their padding.  The reader holds 352 MB instead of 421 MB
+  for the mixed 11 MB file, 184 instead of 210 for the prose one; a reload
+  peaks at 377 instead of 478.
+* A block laid out again (a new formula, a fold, a theme) gives back the
+  bitmaps of its previous layout at once instead of at the next full relayout.
+
+### Fixed
+
+* `t` dropped `--panels` and `--no-syntax`: the new theme was built from its
+  name alone.
+* The `t` cycle always started at "dark", so with `--theme=light` the first
+  press went to "light" again and seemed to do nothing.
+
+### Added
+
+* `tools/theme_key_test.py` (in `tests/smoke.sh`) covers both `t` bugs.
+* `tools/make_big_docs.py` writes the two 11 MB documents the README's numbers
+  come from, `tools/big_bench.py` times the reader on them in a pty (first
+  screen, every key, peak memory).
+
 ## [0.3.21] — 2026-10-21
 
 Big documents: measured on two 11 MB files, three things were fixed and the
