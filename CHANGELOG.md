@@ -27,6 +27,11 @@ The reader no longer lays out a whole big document before it shows anything.
   1.4 s (prose) and 1.0 s instead of 1.8 s (mixed).
 * A frame starts at the first block on screen (binary search) instead of
   walking every block of the document from the top.
+* After `G` / End the end of the document stays in view through a resize (or
+  a reload, or a formula near the end that turns out taller): the view used
+  to keep the row number, which is no longer the end once the window is
+  shorter.  With the layout running between keys, a `G` could also be read
+  just before a resize was noticed and end up a few rows short.
 
 ### Added
 

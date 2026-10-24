@@ -182,6 +182,9 @@ class DocView {
   void scroll_home();
   void scroll_end();
   int scroll_top() const { return scroll_; }
+  // The last scroll was G / End: a resize or a reload that changes the height
+  // of the document keeps the end in view (App::render() calls scroll_end()).
+  bool at_end() const { return at_end_; }
   int view_rows() const { return view_rows_; }
   void set_view_rows(int r) { view_rows_ = r; }
 
@@ -385,6 +388,7 @@ class DocView {
   void ensure_rows(int row) { if (!layout_complete()) extend_layout(0, row, -1.0); }
   void update_total_rows();
   int next_row_ = 0;  // the row after the last laid-out block
+  bool at_end_ = false;
   int layout_range(size_t first, size_t last, int row, std::vector<BlockLayout>& out);
   void release_assets(const BlockLayout& bl);
   void refresh_stale(int top, int h);

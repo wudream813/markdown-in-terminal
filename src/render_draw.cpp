@@ -27,6 +27,7 @@ int DocView::row_of_block(int block) {
   return 0;
 }
 void DocView::scroll_to(int row) {
+  at_end_ = false;
   ensure_rows(row + std::max(1, view_rows_));  // the clamp below needs the real end
   int maxr = std::max(0, total_rows_ - std::max(1, view_rows_));
   scroll_ = std::max(0, std::min(row, maxr));
@@ -37,6 +38,7 @@ void DocView::scroll_home() { scroll_to(0); }
 void DocView::scroll_end() {
   finish_layout();
   scroll_to(total_rows_);
+  at_end_ = true;
 }
 
 namespace {

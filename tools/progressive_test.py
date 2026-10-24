@@ -10,7 +10,8 @@ the document is not laid out yet:
   * G shows the last line of the document (scroll_end lays out the rest);
   * g goes back to the top;
   * a search for a heading near the end jumps to it (row_of_block);
-  * a resize right after the first frame, then G: still the real end;
+  * a resize right after the first frame, then G: still the real end - also
+    when the key is read before the resize is noticed (G pins the end);
   * --watch: a reload keeps the reader where they were (the anchor block is
     laid out again before the view scrolls to it).
 
@@ -86,9 +87,20 @@ class Reader:
         return self.drain(quiet * SLOWDOWN, until=until)
 
     def quit(self):
+        # Keep reading until the reader is gone: one that is still busy (a slow
+        # emulated build finishing a layout) may have a frame to write first,
+        # and a reader blocked on a full pty never sees the q.
         os.write(self.fd, b"q")
-        self.drain(0.5, limit=5.0)
+        t0 = time.time()
+        while time.time() - t0 < 30.0 * SLOWDOWN:
+            pid, _ = os.waitpid(self.pid, os.WNOHANG)
+            if pid:
+                return True
+            self.drain(0.2, limit=1.0)
+        os.kill(self.pid, signal.SIGKILL)
         os.waitpid(self.pid, 0)
+        print("   FAIL the reader did not quit on q")
+        return False
 
 
 def write_doc(path, extra=""):
@@ -100,6 +112,9 @@ def write_doc(path, extra=""):
 
 
 def main():
+    # whatever goes wrong, the test must end: CI has no other way to say so
+    signal.signal(signal.SIGALRM, lambda *a: (print("   FAIL timed out"), os._exit(1)))
+    signal.alarm(int(600 * SLOWDOWN))
     ok = True
 
     def check(cond, msg):
@@ -120,7 +135,7 @@ def main():
         check("Part 0" in out, "g: back at the top")
         out = text(r.key(b"/Part 24990\r", until="match"))
         check("Part 24990" in out and "1 match" in out, "search near the end jumps there")
-        r.quit()
+        ok = r.quit() and ok
 
         r = Reader([], doc)
         r.first_frame()
@@ -128,7 +143,7 @@ def main():
         r.drain(0.1, limit=1.0)
         out = text(r.key(b"G", until="ZZEND-MARKER"))
         check("ZZEND-MARKER" in out, "resize right after the first frame, then G: the end")
-        r.quit()
+        ok = r.quit() and ok
 
         r = Reader(["--watch"], doc)
         r.first_frame()
@@ -142,7 +157,7 @@ def main():
         out = text(r.key(b"j"))
         check(re.search(r"Part 1200[01]\b", out) is not None,
               "after the reload the reader is still at Part 12000")
-        r.quit()
+        ok = r.quit() and ok
     print("progressive layout ok" if ok else "progressive layout FAILED")
     return 0 if ok else 1
 

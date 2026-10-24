@@ -338,9 +338,13 @@ void App::render() {
   scr.set_terminal_bg(terminal_bg);
   scr.clear();
 
+  // G and then a resize (or the two arriving together, while a big document
+  // is still being laid out): the end stays in view, whatever the new height.
+  bool pinned_end = view.at_end();
   view.set_width(vcols);
   view.set_view_rows(vrows);
-  view.scroll_to(view.scroll_top());
+  if (pinned_end) view.scroll_end();
+  else view.scroll_to(view.scroll_top());
 
   view.draw(scr, 0, 0, vcols, vrows, view.scroll_top());
 
