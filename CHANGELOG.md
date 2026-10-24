@@ -41,8 +41,11 @@ The reader no longer lays out a whole big document before it shows anything.
   (also under ASan/UBSan).
 * `tools/progressive_test.py` (in `tests/smoke.sh`): `G`, `g`, a search near
   the end and a resize, all pressed right after the first frame of a
-  50,000-block document, and a `--watch` reload in the middle that must keep
-  the reader in place.
+  50,000-block document (10,000 for a slow build), and a `--watch` reload in
+  the middle that must keep the reader in place.  It waits for the status bar
+  before the first key (a key sent while the reader probes the terminal can
+  be taken for part of an answer), reads until the reader has quit, and has
+  an overall timeout - the first v0.3.23 tag's arm64 (qemu) job hung in it.
 * `tools/big_bench.py` also prints when the first byte of each key's answer
   arrived.
 

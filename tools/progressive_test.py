@@ -32,7 +32,10 @@ import time
 BIN = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "./build/mdt")
 SLOWDOWN = float(os.environ.get("MDT_TEST_SLOWDOWN", "1") or 1)
 ESC = re.compile(rb"\x1b\[[0-9;?<=>]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)?|\x1b[@-Z\\-~]")
-SECTIONS = 25000
+# ~50,000 blocks; an emulated or instrumented build (MDT_TEST_SLOWDOWN) gets
+# a fifth of that - still far past the 2,000 blocks progressive layout starts
+# at, and on CI's qemu still slower to lay out than a native 50,000.
+SECTIONS = 25000 if SLOWDOWN <= 1 else 5000
 
 
 def text(b):
@@ -78,9 +81,12 @@ class Reader:
         return got
 
     def first_frame(self):
-        # just the first frame: short quiet time, so the keys come in while the
-        # rest of the document is still being laid out
-        return self.drain(0.15, need=2000)
+        # Just the first frame, recognised by its status bar: a key sent while
+        # the reader is still probing the terminal can be taken for part of an
+        # answer.  Then a short quiet time, so the keys come in while the rest
+        # of the document is still being laid out.
+        got = self.drain(0.15, until="for help")
+        return got + self.drain(0.15, limit=1.0)
 
     def key(self, k, until=None, quiet=0.6):
         os.write(self.fd, k)
@@ -133,8 +139,9 @@ def main():
         check("ZZEND-MARKER" in out, "G right away: the real end of the document")
         out = text(r.key(b"g", until="Part 1 "))
         check("Part 0" in out, "g: back at the top")
-        out = text(r.key(b"/Part 24990\r", until="match"))
-        check("Part 24990" in out and "1 match" in out, "search near the end jumps there")
+        near_end = SECTIONS - 10
+        out = text(r.key(b"/Part %d\r" % near_end, until="match"))
+        check(("Part %d" % near_end) in out and "1 match" in out, "search near the end jumps there")
         ok = r.quit() and ok
 
         r = Reader([], doc)
@@ -147,16 +154,17 @@ def main():
 
         r = Reader(["--watch"], doc)
         r.first_frame()
-        out = text(r.key(b"/Part 12000\r", until="match"))
-        check("Part 12000" in out, "search jumps to the middle")
+        mid = SECTIONS // 2
+        out = text(r.key(b"/Part %d\r" % mid, until="match"))
+        check(("Part %d" % mid) in out, "search jumps to the middle")
         r.drain(0.5, limit=3.0)
         with open(doc, "a") as f:
             f.write("\nOne more line at the end.\n")
         out = text(r.drain(1.5 * SLOWDOWN, until="reloaded", limit=15.0 * SLOWDOWN))
         check("reloaded" in out, "--watch reloaded the file")
         out = text(r.key(b"j"))
-        check(re.search(r"Part 1200[01]\b", out) is not None,
-              "after the reload the reader is still at Part 12000")
+        check(re.search(r"Part (%d|%d)\b" % (mid, mid + 1), out) is not None,
+              "after the reload the reader is still at Part %d" % mid)
         ok = r.quit() and ok
     print("progressive layout ok" if ok else "progressive layout FAILED")
     return 0 if ok else 1
