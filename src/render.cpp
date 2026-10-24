@@ -4,6 +4,7 @@
 #include "platform.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
@@ -223,6 +224,7 @@ void DocView::release() {
   asset_map_.clear();
   images_.clear();
   total_rows_ = 0;
+  next_row_ = 0;
 }
 
 void DocView::set_width(int cols) {
@@ -1083,9 +1085,60 @@ RGB callout_color(const std::string& n) {
 
 void DocView::layout_blocks() {
   content_w_ = std::max(20, cols_ - 2 * opt_.content_margin);
-  int row = layout_range(0, doc_.blocks.size(), 0, layout_);
-  layout_.shrink_to_fit();
-  total_rows_ = std::max(1, row + 1);
+  layout_.reserve(doc_.blocks.size());  // one entry per block: no slack, no moves
+  next_row_ = 0;
+  if (!opt_.progressive_layout || doc_.blocks.size() < (size_t)std::max(0, opt_.progressive_min_blocks)) {
+    extend_layout(doc_.blocks.size(), -1, -1.0);
+    return;
+  }
+  // The first screen (and the next one, for a page-down) right away, then
+  // whatever fits in a few tens of milliseconds; layout_step() does the rest.
+  extend_layout(0, scroll_ + 2 * std::max(1, view_rows_), -1.0);
+  if (opt_.progressive_first_ms > 0) extend_layout(doc_.blocks.size(), -1, opt_.progressive_first_ms);
+}
+
+void DocView::extend_layout(size_t upto_block, int upto_row, double budget_ms) {
+  size_t n = doc_.blocks.size();
+  if (layout_.size() >= n) return;
+  auto t0 = std::chrono::steady_clock::now();
+  bool added = false;
+  while (layout_.size() < n) {
+    bool need = layout_.size() < upto_block || (upto_row >= 0 && next_row_ <= upto_row);
+    if (!need) break;
+    if (budget_ms >= 0 && added) {
+      double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                      .count();
+      if (ms >= budget_ms) break;
+    }
+    // Chunks keep the clock reads rare; a block costs ~4 us on average.
+    size_t first = layout_.size();
+    size_t last = std::min(n, first + 256);
+    if (upto_row >= 0 && layout_.size() >= upto_block) last = std::min(last, first + 64);
+    next_row_ = layout_range(first, last, next_row_, layout_);
+    added = true;
+  }
+  if (added || layout_.size() >= n) update_total_rows();
+}
+
+bool DocView::layout_step(double budget_ms) {
+  if (layout_complete()) return false;
+  size_t before = layout_.size();
+  extend_layout(doc_.blocks.size(), -1, budget_ms);
+  return layout_.size() != before;
+}
+
+void DocView::update_total_rows() {
+  size_t n = doc_.blocks.size(), done = layout_.size();
+  if (done >= n || done == 0) {
+    total_rows_ = std::max(1, next_row_ + 1);
+  } else {
+    double per_block = (double)next_row_ / (double)done;
+    total_rows_ = std::max(1, next_row_ + 1 + (int)std::lround(per_block * (double)(n - done)));
+  }
+  if (done >= n) {
+    int maxr = std::max(0, total_rows_ - std::max(1, view_rows_));
+    scroll_ = std::max(0, std::min(scroll_, maxr));
+  }
 }
 
 // Lays out blocks [first, last) starting at screen row `row` and appends them
@@ -1584,7 +1637,7 @@ void DocView::refresh_layout() {
   dirty.swap(dirty_blocks_);
   std::sort(dirty.begin(), dirty.end());
   dirty.erase(std::unique(dirty.begin(), dirty.end()), dirty.end());
-  if (dirty.empty() || layout_.size() != doc_.blocks.size()) {
+  if (dirty.empty() || layout_.size() > doc_.blocks.size()) {
     relayout();
     return;
   }
@@ -1610,7 +1663,8 @@ void DocView::refresh_layout() {
     next = (size_t)bi + 1;
   }
   for (; next < layout_.size(); next++) layout_[next].row += shift;
-  total_rows_ = std::max(1, total_rows_ + shift);
+  next_row_ += shift;
+  update_total_rows();
   clip_cache_.clear();
   int maxr = std::max(0, total_rows_ - std::max(1, view_rows_));
   scroll_ = std::min(scroll_, maxr);
@@ -1637,7 +1691,7 @@ void DocView::recolour(const Theme& th) {
   bool same_geometry = th.baseline == theme_.baseline && th.sprites == theme_.sprites;
   theme_ = th;
   theme_gen_++;
-  if (!same_geometry || layout_.size() != doc_.blocks.size()) {
+  if (!same_geometry || layout_.size() > doc_.blocks.size()) {
     relayout();
     return;
   }

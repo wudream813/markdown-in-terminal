@@ -88,7 +88,8 @@ def check_script(label, script, targets, problems):
     r = subprocess.run(["sh", "-n"], input=probe, text=True, capture_output=True)
     if r.returncode != 0:
         problems.append("%s: shell syntax: %s" % (label, r.stderr.strip()))
-    for cmd in re.findall(r"\bmake[^\n]*", script):
+    # `make` the command, not tools/make_big_docs.py
+    for cmd in re.findall(r"(?<![\w/.-])make(?![\w.-])[^\n]*", script):
         # cut the command at the first command substitution: what is inside
         # $(...) is not a make argument
         cmd = re.sub(r"\$\([^)]*\)", "", cmd)

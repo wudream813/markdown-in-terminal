@@ -17,18 +17,27 @@ int DocView::block_at_row(int row) const {
   }
   return layout_[(size_t)lo].block;
 }
-int DocView::row_of_block(int block) const {
+int DocView::row_of_block(int block) {
+  if (block < 0) return 0;
+  if (!layout_complete()) extend_layout((size_t)block + 1, -1, -1.0);
+  // one entry per block, in order
+  if ((size_t)block < layout_.size() && layout_[(size_t)block].block == block)
+    return layout_[(size_t)block].row;
   for (auto& bl : layout_) if (bl.block == block) return bl.row;
   return 0;
 }
 void DocView::scroll_to(int row) {
+  ensure_rows(row + std::max(1, view_rows_));  // the clamp below needs the real end
   int maxr = std::max(0, total_rows_ - std::max(1, view_rows_));
   scroll_ = std::max(0, std::min(row, maxr));
 }
 void DocView::scroll_by(int dy) { scroll_to(scroll_ + dy); }
 void DocView::scroll_page(int dir) { scroll_to(scroll_ + dir * std::max(1, view_rows_ - 2)); }
 void DocView::scroll_home() { scroll_to(0); }
-void DocView::scroll_end() { scroll_to(total_rows_); }
+void DocView::scroll_end() {
+  finish_layout();
+  scroll_to(total_rows_);
+}
 
 namespace {
 // prefix every line of `body` with `pre` (quotes and list continuations)
@@ -599,6 +608,7 @@ std::shared_ptr<DocView::ImageAsset> DocView::resolve_asset(const ImageAsset& a)
 }
 
 void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
+  ensure_rows(scroll_row + h);   // progressive layout: what this frame shows
   refresh_stale(scroll_row, h);  // blocks still in the previous theme's colours
   if (getenv("MDT_DEBUG_LAYOUT")) {
     for (auto& bl : layout_) {
@@ -627,7 +637,15 @@ void DocView::draw(Screen& scr, int x0, int y0, int w, int h, int scroll_row) {
   cell_assets_.clear();  // rebuilt with the frame (see place_cell_math)
   scr.fill_rect(x0, y0, w, h, theme_.bg);
   int chh = std::max(1, cell_h());
-  for (const BlockLayout& bl : layout_) {
+  // Start at the first block on screen instead of walking 200,000 of them.
+  int first_bi = std::max(0, block_at_row(scroll_row));
+  if ((size_t)first_bi >= layout_.size() || layout_[(size_t)first_bi].block != first_bi) first_bi = 0;
+  // an empty block keeps one row without moving the next one down: both
+  // start on the same row, and the earlier one still counts as on screen
+  while (first_bi > 0 && layout_[(size_t)first_bi - 1].row + layout_[(size_t)first_bi - 1].rows > scroll_row)
+    first_bi--;
+  for (size_t li = (size_t)first_bi; li < layout_.size(); li++) {
+    const BlockLayout& bl = layout_[li];
     if (bl.row + bl.rows <= scroll_row) continue;
     if (bl.row >= scroll_row + h) break;
     const Block& b = doc_.blocks[(size_t)bl.block];

@@ -316,6 +316,7 @@ void App::jump_to_next_hit(int dir) {
   for (size_t i = 0; i < search_hits.size(); i++) {
     int r = view.row_of_block(search_hits[i].block);
     if (r <= cur_row + 1) cur = (int)i;
+    else break;  // hits are in document order: no need to lay out up to the last one
   }
   int next;
   if (dir > 0) next = (cur + 1) % (int)search_hits.size();
@@ -899,7 +900,16 @@ void App::run() {
       else set_status(tr("images loaded", "图片加载完成"), 1.5);
       needs_frame = true;
     }
-    Terminal::KeyEvent e = term.read_event(120);
+    // Progressive layout: the rest of a big document in slices short enough
+    // that a key pressed meanwhile is still answered at once.  One frame when
+    // it is done (the scrollbar and the percentage were estimates until then).
+    int wait_ms = 120;
+    if (!view.layout_complete()) {
+      view.layout_step(12.0);
+      if (view.layout_complete()) needs_frame = true;
+      else wait_ms = 0;
+    }
+    Terminal::KeyEvent e = term.read_event(wait_ms);
     if (e.type == Terminal::KeyEvent::None) continue;
     if (e.type == Terminal::KeyEvent::Mouse) {
       // Drain everything the terminal has queued: a drag reports one event per
@@ -1250,6 +1260,7 @@ int run_app(const AppOptions& opts) {
   ro.lazy_metrics = true;  // only typeset formulas that come into view
   ro.code_fit = opts.code_fit;
   ro.async_images = true;  // never block the reader on the network
+  ro.progressive_layout = true;  // first screen first, the rest while idle
   if (!app.term.caps.can_show_images()) {
     ro.text_math = true;  // no graphics protocol: formulas would be invisible
     ro.inline_images = false;

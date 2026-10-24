@@ -1,7 +1,11 @@
 // dev/test tool: does refresh_layout() (only the blocks that showed a newly
 // measured formula are laid out again) end up where a full relayout() does?
 //
-//   make refresh-check && ./build/refresh-check file.md [width]
+//   make refresh-check && ./build/refresh-check file.md [width] [progressive]
+//
+// "progressive": the reader's progressive layout (only what is drawn is laid
+// out, plus small idle slices), so formulas get measured, folds toggled and
+// the theme changed while the layout is still incomplete.
 //
 // Scrolls through the document page by page with lazy formula metrics, the
 // way the reader does, calling refresh_layout() whenever a draw measured
@@ -25,6 +29,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   int cols = argc > 2 ? atoi(argv[2]) : 90, rows = 40;
+  bool progressive = argc > 3 && std::string(argv[3]) == "progressive";
   std::string text;
   if (!read_file(argv[1], text)) {
     fprintf(stderr, "cannot read %s\n", argv[1]);
@@ -51,19 +56,31 @@ int main(int argc, char** argv) {
   ro.lazy_metrics = true;
   ro.inline_images = false;
   ro.remote_images = false;
+  ro.progressive_layout = progressive;
+  ro.progressive_min_blocks = 0;
+  ro.progressive_first_ms = 0;  // nothing beyond what the first page needs
   view.set_options(ro);
   view.set_width(cols);
   view.set_view_rows(rows);
   view.set_document(std::move(doc), argv[1], ".");
 
+  // progressive: the signatures need the whole document laid out
+  auto sig = [&]() { view.finish_layout(); return view.layout_signature(); };
+  int idle = 0;
+  auto idle_slice = [&]() {  // what the reader does while waiting for a key
+    if (progressive && ++idle % 7 == 0) view.layout_step(0.0);
+  };
   Screen scr;
   scr.init(cols, rows, RGB{200, 200, 200}, RGB{0, 0, 0});
+  int laid_before = -1;  // blocks laid out when the first page was drawn
   int refreshes = 0;
   double refresh_ms = 0;
   for (int pass = 0; pass < 20; pass++) {
     bool measured = false;
     for (int top = 0; top < view.total_rows(); top += rows / 2) {
       view.draw(scr, 0, 0, cols, rows, top);
+      if (laid_before < 0) laid_before = view.laid_blocks();
+      idle_slice();
       if (view.layout_dirty()) {
         auto t = std::chrono::steady_clock::now();
         view.refresh_layout();
@@ -74,9 +91,9 @@ int main(int argc, char** argv) {
     }
     if (!measured) break;
   }
-  std::string inc = view.layout_signature();
+  std::string inc = sig();
   view.relayout();
-  std::string full = view.layout_signature();
+  std::string full = sig();
   // Folding a callout open/closed lays out that one block again, too.
   int toggles = 0;
   bool toggles_ok = true;
@@ -89,13 +106,14 @@ int main(int argc, char** argv) {
       if (mx >= cols) continue;
       view.toggle_box_at(mx, 0);
       toggles++;
-      std::string a = view.layout_signature();
+      std::string a = sig();
       int keep = view.scroll_top();
       view.relayout();
-      if (a != view.layout_signature()) {
+      std::string b = sig();
+      if (a != b) {
         toggles_ok = false;
         inc = a;
-        full = view.layout_signature();
+        full = b;
         break;
       }
       view.scroll_to(keep);
@@ -112,7 +130,8 @@ int main(int argc, char** argv) {
     for (int i = 1; i <= 6; i++) light.heading[i] = {(uint8_t)(20 * i), 92, 171};
     light.link = {28, 110, 200}; light.code_fg = {150, 80, 30}; light.quote_fg = {96, 102, 112};
     light.quote_bar = {150, 170, 200}; light.bullet = {28, 111, 201}; light.math_fg = {41, 44, 52};
-    std::string before = view.layout_signature();
+    std::string before = sig();
+    if (progressive) { view.relayout(); view.scroll_to(0); }  // change it while incomplete
     auto t = std::chrono::steady_clock::now();
     view.recolour(light);
     recolour_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
@@ -120,19 +139,23 @@ int main(int argc, char** argv) {
       bool measured = false;
       for (int top = 0; top < view.total_rows(); top += rows / 2) {
         view.draw(scr, 0, 0, cols, rows, top);
+        idle_slice();
         if (view.layout_dirty()) { view.refresh_layout(); measured = true; }
       }
       if (!measured) break;
     }
-    std::string a = view.layout_signature();
+    std::string a = sig();
     view.relayout();
-    std::string b = view.layout_signature();
+    std::string b = sig();
     if (a != b) { theme_ok = false; inc = a; full = b; }
     if (before == a && view.total_rows() > 3) {
       // nothing changed colour at all: the test would prove nothing
       fprintf(stderr, "note: the theme change left the layout's colours as they were\n");
     }
   }
+  if (progressive)
+    printf("progressive: %d of %d blocks were laid out after the first page\n", laid_before,
+           view.block_count());
   printf("%s: %d refreshes, %.1f ms total, %d toggles, recolour %.1f ms, %d rows, js=%d -> %s\n",
          argv[1], refreshes, refresh_ms, toggles, recolour_ms, view.total_rows(),
          math.has_js() ? 1 : 0, inc == full && toggles_ok && theme_ok ? "same" : "DIFFERENT");

@@ -5,6 +5,46 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.23] — 2026-10-24
+
+The reader no longer lays out a whole big document before it shows anything.
+
+### Changed
+
+* **Progressive layout.**  The interactive reader lays out the first two
+  screens, draws them, and does the rest of the document in 12 ms slices
+  while it waits for keys, so a key pressed meanwhile is answered at once.
+  Everything that needs a row further down lays out up to it first: `G`,
+  search hits, heading and outline jumps, scrollbar drags, and a reload or a
+  resize that keeps the reading position.  Until the layout is complete the
+  scrollbar and the percentage are estimates (the average block height times
+  the blocks still to do), and one frame corrects them at the end.
+  Documents under 2,000 blocks, `--dump`, `--screenshot` and `--diag` are
+  laid out at once as before.  On the
+  two 11 MB benchmark files the first screen comes 0.6-0.8 s sooner (prose
+  1.8 -> 1.0 s, mixed 2.2 -> 1.5 s, both including ~0.5 s of pty probe
+  timeouts), and `r` / `--watch` brings the page back in 0.5 s instead of
+  1.4 s (prose) and 1.0 s instead of 1.8 s (mixed).
+* A frame starts at the first block on screen (binary search) instead of
+  walking every block of the document from the top.
+
+### Added
+
+* `refresh-check file.md WIDTH progressive` runs the whole check - formulas
+  measured, folds toggled, theme changed - while the document is still laid
+  out piecemeal; CI runs it on the fixtures and on a 7,500-block document
+  (also under ASan/UBSan).
+* `tools/progressive_test.py` (in `tests/smoke.sh`): `G`, `g`, a search near
+  the end and a resize, all pressed right after the first frame of a
+  50,000-block document, and a `--watch` reload in the middle that must keep
+  the reader in place.
+* `tools/big_bench.py` also prints when the first byte of each key's answer
+  arrived.
+
+### Fixed
+
+* `tools/workflow_lint.py` took `tools/make_big_docs.py` for a `make` call.
+
 ## [0.3.22] — 2026-10-23
 
 The two cheap items left over from the big-document work, and two bugs of the

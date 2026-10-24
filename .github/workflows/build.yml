@@ -60,6 +60,13 @@ jobs:
         run: |
           make refresh-check
           for f in demo/demo.md tests/fixtures/*.md; do build/refresh-check "$f"; done
+          # progressive layout (the reader): a document big enough to be laid
+          # out piecemeal while formulas are measured and folds toggled
+          python3 tools/make_big_docs.py /tmp/big
+          for f in demo/demo.md tests/fixtures/*.md /tmp/big/m40.md; do
+            build/refresh-check "$f" 90 progressive
+          done
+          build/refresh-check /tmp/big/m40.md 50 progressive
       - name: Tests (static build)
         run: BIN=./build-static/mdt sh tests/smoke.sh
       - uses: actions/upload-artifact@v4
@@ -91,6 +98,8 @@ jobs:
           make BUILD=build-asan \
                OPT="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" refresh-check
           for f in demo/demo.md tests/fixtures/*.md; do build-asan/refresh-check "$f"; done
+          python3 tools/make_big_docs.py /tmp/big
+          build-asan/refresh-check /tmp/big/m40.md 90 progressive
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1

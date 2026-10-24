@@ -102,11 +102,11 @@ sudo install -m 0755 mdt /usr/local/bin/mdt
 
 ```sh
 # Debian / Ubuntu / 树莓派 OS（amd64 与 arm64）
-curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt_0.3.22-1_amd64.deb
-sudo apt install ./mdt_0.3.22-1_amd64.deb     # 静态二进制，apt 不会额外拉依赖
+curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt_0.3.23-1_amd64.deb
+sudo apt install ./mdt_0.3.23-1_amd64.deb     # 静态二进制，apt 不会额外拉依赖
 
 # Fedora / RHEL / openSUSE（x86_64 与 aarch64）
-sudo dnf install https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-0.3.22-1.x86_64.rpm
+sudo dnf install https://github.com/wudream813/markdown-in-terminal/releases/latest/download/mdt-0.3.23-1.x86_64.rpm
 ```
 
 包里带二进制、man page 和三个补全脚本；`curl` 与 `xdg-utils` 是**推荐**而非依赖
@@ -452,6 +452,7 @@ Windows 上的 Python 没有 `pty` 模块。
 所以最终几何是精确的。0.3.20 及以前这里是整篇重排——10 MB 的文件上，每翻到一页新公式
 就要卡大约一秒。`make refresh-check` 会编出一个工具：把文档从头翻到尾，核对局部重排的
 结果与整篇重排完全一致。0.3.22 起换主题（`t`）也是同样的思路：按键时什么都不排，块在进入视野时才按新颜色重排。
+`refresh-check 文件.md 90 progressive` 则在文档还没排完、边看边排（0.3.23 起阅读器的做法）的情况下做同样的核对。
 
 ## 显示选项
 
@@ -550,16 +551,23 @@ GitHub 的 alert 语法（`> [!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`
 |:--|--:|--:|
 | 解析 | 0.4 s | 0.8 s（0.3.20：11.9 s） |
 | 排版 | 0.8 s | 0.8 s |
-| 阅读器首屏 | 1.8 s | 2.2 s |
+| 阅读器首屏 | 1.0 s（0.3.22：1.8 s） | 1.5 s（0.3.22：2.2 s） |
 | 阅读器内存峰值 | 184 MB（0.3.21：210 MB） | 352 MB（0.3.21：421 MB，0.3.20：456 MB） |
 | `r` / `--watch` 重新载入时的峰值 | 206 MB（0.3.21：249 MB） | 377 MB（0.3.21：478 MB，0.3.20：690 MB） |
 | `t`（换主题） | 2 ms（0.3.21：0.8 s） | 2 ms（0.3.21：0.9 s） |
 | 翻到有新公式的一页（`j`、`g`） | | 1 ms（0.3.20：0.3–0.4 s） |
 | 滚动、`G`、搜索 | ≤ 50 ms | ≤ 80 ms |
+| `r` / `--watch` 重新载入到页面回来 | 0.5 s（0.3.22：1.4 s） | 1.0 s（0.3.22：1.8 s） |
+
+首屏时间里有大约半秒是阅读器在 pty 里等终端回应探测（pty 不会回应；同样的测法下小文件也要 0.5 s），
+在真终端里散文文件大约半秒就能打开，大部分时间花在解析上。0.3.23 起阅读器只先排前两屏就画出来，
+其余部分在两次按键之间以 12 ms 为一片接着排（这两份文件大约还要 0.8 s）；`G`、搜索、按标题跳转、
+需要落在后面位置的重新载入，都会先排到那里再跳。整篇排完之前，滚动条和百分比是估计值。
+`--dump`、`--screenshot`、`--diag` 仍然一次排完。
 
 依次改了这些：解析耗时与洛谷叶子指令（`::cute-table{...}`）个数成平方关系（每条都在块列表里
 原地删除）；翻到新公式的一页会整篇重排；重新载入时新旧文档同时在内存里；每次换主题都整篇
-重排（现在每个块记得自己是按哪个主题排的，只有进入视野的过期块才重排）。内存方面：排版后的
+重排（现在每个块记得自己是按哪个主题排的，只有进入视野的过期块才重排）；阅读器要把整篇排完才显示首屏。内存方面：排版后的
 run 只带 20 字节的样式；只有指令、图片、定义列表才用的字段移出了 `Block`（568 → 264 字节，
 混合文件里有 20 万个块）；`Line` 和表格单元格去掉了填充字节；排版时行是移动进去的，不再复制。
 

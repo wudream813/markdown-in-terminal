@@ -91,6 +91,13 @@ struct RenderOptions {
   // Page renderer only: level 1-2 headings at twice the size (BigText).  A
   // text terminal cannot draw them, so this stays off everywhere else.
   bool big_headings = false;
+  // Interactive reader: lay out only what the first screen needs and the rest
+  // in idle moments (layout_step()).  Everything that needs a row further
+  // down (row_of_block, scroll_to, scroll_end, draw) lays out up to it first.
+  // Off for --dump/--screenshot and the tools: they want the whole layout.
+  bool progressive_layout = false;
+  int progressive_min_blocks = 2000;  // smaller documents are laid out at once
+  double progressive_first_ms = 40.0; // laid out beyond the first screen up front
 };
 
 class DocView {
@@ -144,7 +151,15 @@ class DocView {
   int cell_w() const;
   int cell_h() const;
 
+  // While the layout is still incomplete (progressive_layout) this is an
+  // estimate: the laid-out rows plus the average block height times the
+  // blocks still to do.  Exact once layout_complete().
   int total_rows() const { return total_rows_; }
+  bool layout_complete() const { return layout_.size() >= doc_.blocks.size(); }
+  // Lays out more blocks for about `budget_ms`; true when anything was added.
+  bool layout_step(double budget_ms);
+  void finish_layout() { extend_layout(doc_.blocks.size(), -1, -1.0); }
+  int laid_blocks() const { return (int)layout_.size(); }
   int block_count() const { return (int)doc_.blocks.size(); }
 
   // Introspection for --diag and tools/mem_report.cpp: what the laid-out
@@ -158,7 +173,7 @@ class DocView {
   LayoutStats layout_stats() const;
   static void struct_sizes(size_t* block, size_t* span, size_t* line, size_t* run, size_t* cell);
   int block_at_row(int row) const;
-  int row_of_block(int block) const;
+  int row_of_block(int block);  // lays out up to the block first
   const Block& block(int i) const { return doc_.blocks[(size_t)i]; }
 
   void scroll_to(int row);
@@ -364,6 +379,12 @@ class DocView {
   int theme_gen_ = 0;
 
   void layout_blocks();
+  // Appends blocks until `upto_block` blocks are laid out and the layout
+  // reaches past row `upto_row`, or `budget_ms` ran out (<0: no limit).
+  void extend_layout(size_t upto_block, int upto_row, double budget_ms);
+  void ensure_rows(int row) { if (!layout_complete()) extend_layout(0, row, -1.0); }
+  void update_total_rows();
+  int next_row_ = 0;  // the row after the last laid-out block
   int layout_range(size_t first, size_t last, int row, std::vector<BlockLayout>& out);
   void release_assets(const BlockLayout& bl);
   void refresh_stale(int top, int h);

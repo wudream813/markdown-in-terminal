@@ -217,7 +217,7 @@ upgrade:
 
 ```sh
 # Debian, Ubuntu, Raspberry Pi OS ... (amd64 and arm64)
-V=0.3.22                                   # the table below lists both names
+V=0.3.23                                   # the table below lists both names
 curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/download/v$V/mdt_$V-1_amd64.deb
 sudo apt install ./mdt_$V-1_amd64.deb      # nothing to pull in: the binary is static
 
@@ -649,7 +649,9 @@ a second per page that brought a new formula into view.  A theme change (`t`) wo
 the same way since 0.3.22: nothing is laid out when the key is pressed, the
 blocks are redone in the new colours as they come into view.  `make refresh-check`
 builds a tool that scrolls through a document and checks that the partial
-relayout ends where a full one does.
+relayout ends where a full one does; `refresh-check file.md 90 progressive`
+does the same while the document is still being laid out piecemeal, the way
+the reader does it since 0.3.23.
 
 ## Display options
 
@@ -760,19 +762,31 @@ quotes).  `python3 tools/make_big_docs.py /tmp/big` writes both and
 |:--|--:|--:|
 | parse | 0.4 s | 0.8 s (0.3.20: 11.9 s) |
 | layout | 0.8 s | 0.8 s |
-| reader, first screen | 1.8 s | 2.2 s |
+| reader, first screen | 1.0 s (0.3.22: 1.8 s) | 1.5 s (0.3.22: 2.2 s) |
 | reader, peak memory | 184 MB (0.3.21: 210 MB) | 352 MB (0.3.21: 421 MB, 0.3.20: 456 MB) |
 | `r` / `--watch` reload, peak memory | 206 MB (0.3.21: 249 MB) | 377 MB (0.3.21: 478 MB, 0.3.20: 690 MB) |
 | `t` (next theme) | 2 ms (0.3.21: 0.8 s) | 2 ms (0.3.21: 0.9 s) |
 | a page with new formulas (`j`, `g`) | | 1 ms (0.3.20: 0.3-0.4 s) |
 | scrolling, `G`, search | ≤ 50 ms | ≤ 80 ms |
+| `r` / `--watch` reload, until the page is back | 0.5 s (0.3.22: 1.4 s) | 1.0 s (0.3.22: 1.8 s) |
+
+The first-screen times include about half a second in which the reader waits
+for a terminal in a pty that never answers its probes (a small file takes
+0.5 s in the same harness); in a real terminal the prose file opens in about
+half a second, most of it parsing.  Since 0.3.23 the reader lays out only the
+first two screens before it draws and does the rest in 12 ms slices between
+keys (about 0.8 s more for these files); `G`, a search, a heading jump or a
+reload that has to land further down lays out up to there first, and the
+scrollbar and the percentage are estimates until the layout is complete.
+`--dump`, `--screenshot` and `--diag` still lay out everything at once.
 
 What changed, in order: the parse was quadratic in the number of Luogu leaf
 directives (`::cute-table{...}`, each one erased from the block list where it
 stood); a page with new formulas relaid out the whole document; a reload
 parsed the new file while the old one was still alive; and every theme change
 laid out everything again (now each block remembers the theme it was laid out
-in, and only the stale blocks that come into view are redone).  On the memory
+in, and only the stale blocks that come into view are redone); and the reader
+laid the whole document out before it showed the first screen.  On the memory
 side the laid-out runs carry a 20-byte style instead of a whole span, the
 fields only directives, images and definition lists use moved out of `Block`
 (568 -> 264 bytes, 200,000 of them in the mixed file), `Line` and the table
