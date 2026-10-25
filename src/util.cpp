@@ -267,7 +267,10 @@ void for_each_line(const std::string& s, const std::function<void(const std::str
 // line: 56 ms for an 11 MB document, before the parser even started.
 std::vector<std::string> split_lines(const std::string& s) {
   std::vector<std::string> out;
-  out.reserve((size_t)std::count(s.begin(), s.end(), '\n') + 1);
+  size_t lines = 1;  // memchr, not std::count: 7 instructions a byte at -O2
+  for (const char *p = s.data(), *end = p + s.size(); (p = (const char*)memchr(p, '\n', (size_t)(end - p))) != nullptr; p++)
+    lines++;
+  out.reserve(lines);
   size_t b = 0;
   for (;;) {
     const char* nl = (const char*)memchr(s.data() + b, '\n', s.size() - b);

@@ -147,30 +147,35 @@ bool convert_named(const std::string& in, const std::string& enc, bool /*strict*
 
 bool is_valid_utf8(const std::string& s, int* bad) { return utf8_ok(s, bad); }
 
-DecodedText decode_text(const std::string& raw, const std::string& want) {
+// `raw` by value: a caller that is done with its bytes moves them in, and an
+// 11 MB file that is already UTF-8 (nearly all of them) is not copied.
+DecodedText decode_text(std::string raw, const std::string& want) {
   DecodedText r;
-  r.text = raw;
   r.encoding = "utf-8";
-  if (raw.empty() || want == "off") return r;
+  auto keep = [&]() -> DecodedText {
+    r.text = std::move(raw);
+    return std::move(r);
+  };
+  if (raw.empty() || want == "off") return keep();
   // A BOM is authoritative.
   if (raw.size() >= 3 && (unsigned char)raw[0] == 0xEF && (unsigned char)raw[1] == 0xBB &&
       (unsigned char)raw[2] == 0xBF) {
-    return r;
+    return keep();
   }
   if (raw.size() >= 2 && (((unsigned char)raw[0] == 0xFF && (unsigned char)raw[1] == 0xFE) ||
                           ((unsigned char)raw[0] == 0xFE && (unsigned char)raw[1] == 0xFF))) {
     r.note = tr("utf-16: not supported, save the file as UTF-8",
                 "utf-16：不支持，请把文件另存为 UTF-8");
-    return r;
+    return keep();
   }
   bool valid = utf8_ok(raw, nullptr);
   if (want == "utf-8") {
     if (!valid)
       r.note = tr("not valid utf-8 (use --encoding=gbk, big5 or cp1252)",
                   "不是合法的 UTF-8（可用 --encoding=gbk、big5 或 cp1252）");
-    return r;
+    return keep();
   }
-  if (valid) return r;   // nothing to do: it already is UTF-8
+  if (valid) return keep();   // nothing to do: it already is UTF-8
 
   // Auto-detection has to make one guess: "GBK first" is the right one for a
   // Chinese Windows file, and GB18030's byte space is a superset of Big5's, so
@@ -194,7 +199,7 @@ DecodedText decode_text(const std::string& raw, const std::string& want) {
   }
   r.note = tr("not valid utf-8 and no conversion worked (try --encoding=gbk, big5 or cp1252)",
               "不是合法的 UTF-8，且自动转码没有成功（试试 --encoding=gbk、big5 或 cp1252）");
-  return r;
+  return keep();
 }
 
 }  // namespace mdt

@@ -249,19 +249,33 @@ bool App::load_file(const std::string& path, std::string* err) {
   return true;
 }
 
+// The headings, in the order collect_visits() would list them, without a
+// Visit for each of the 200,000 blocks of a big document.
+static void collect_headings(const std::vector<Block>& v, int top, std::vector<int>& path,
+                             std::vector<OutlineItem>* out) {
+  for (size_t i = 0; i < v.size(); i++) {
+    const Block& b = v[i];
+    int my_top = top >= 0 ? top : (int)i;
+    if (b.type == Block::Heading) {
+      OutlineItem it;
+      it.block = my_top;
+      it.level = b.level;
+      it.text = spans_plain_text(b.spans);
+      it.path = path;
+      out->push_back(std::move(it));
+    }
+    if (b.items.empty()) continue;
+    bool box = b.type == Block::Directive && !b.dir_leaf && b.uid >= 0;
+    if (box) path.push_back(b.uid);
+    for (const auto& nest : b.items) collect_headings(nest, my_top, path, out);
+    if (box) path.pop_back();
+  }
+}
+
 void App::build_outline() {
   outline.clear();
-  std::vector<Visit> visits;
-  collect_visits(view.doc().blocks, -1, {}, &visits);
-  for (const Visit& v : visits) {
-    if (v.b->type != Block::Heading) continue;
-    OutlineItem it;
-    it.block = v.top;
-    it.level = v.b->level;
-    it.text = spans_plain_text(v.b->spans);
-    it.path = v.path;
-    outline.push_back(it);
-  }
+  std::vector<int> path;
+  collect_headings(view.doc().blocks, -1, path, &outline);
   toc_sel = 0;
 }
 
@@ -1172,7 +1186,7 @@ static bool read_source(const std::string& path, const std::string& want_encodin
                         std::string& out, std::string* err, DecodedText* info) {
   std::string raw;
   if (!read_raw(path, raw, err)) return false;
-  DecodedText dec = decode_text(raw, want_encoding);
+  DecodedText dec = decode_text(std::move(raw), want_encoding);
   out = std::move(dec.text);
   if (info) *info = dec;
   return true;

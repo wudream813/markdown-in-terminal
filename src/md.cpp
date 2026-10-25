@@ -49,8 +49,15 @@ std::string decode_entities(const std::string& s) {
     {"&lceil;", "\u2308"}, {"&rceil;", "\u2309"}, {"&lfloor;", "\u230a"}, {"&rfloor;", "\u230b"},
   };
   std::string out;
+  out.reserve(s.size());
   size_t i = 0;
   while (i < s.size()) {
+    {  // copy up to the next '&' in one go
+      size_t amp = s.find('&', i);
+      if (amp == std::string::npos) { out.append(s, i, std::string::npos); break; }
+      out.append(s, i, amp - i);
+      i = amp;
+    }
     if (s[i] == '&') {
       size_t semi = s.find(';', i);
       if (semi != std::string::npos && semi - i <= 12) {
@@ -64,7 +71,7 @@ std::string decode_entities(const std::string& s) {
         bool next_is_newline = after < s.size() && (s[after] == '\n' || s[after] == '\r');
         bool done = false;
         for (auto& e : kEnt) {
-          if (ent != e.ent) continue;
+          if (ent[1] != e.ent[1] || ent != e.ent) continue;  // most entries differ in the first letter
           if (e.rep[0] == '\n' && next_is_newline) { i = after; done = true; break; }
           out += e.rep;
           i = after;
@@ -123,6 +130,17 @@ std::string strip_invisible(const std::string& s, int* removed) {
   int n = 0;
   for (size_t i = first; i < s.size();) {
     unsigned char c = (unsigned char)s[i];
+    if (c != 0xEF && c != 0xC2 && c != 0xE2) {  // copy a run of bytes that start nothing
+      size_t j = i + 1;
+      while (j < s.size()) {
+        unsigned char d = (unsigned char)s[j];
+        if (d == 0xEF || d == 0xC2 || d == 0xE2) break;
+        j++;
+      }
+      o.append(s, i, j - i);
+      i = j;
+      continue;
+    }
     if (c == 0xEF && i + 2 < s.size() && (unsigned char)s[i + 1] == 0xBB &&
         (unsigned char)s[i + 2] == 0xBF) {  // U+FEFF byte order mark
       i += 3;
@@ -160,66 +178,91 @@ std::string strip_invisible(const std::string& s, int* removed) {
 // every matrix into a single row.
 std::string mask_math_and_code(const std::string& s) {
   std::string m = s;
-  auto blank = [&](size_t from, size_t to) {
-    for (size_t k = from; k < to && k < m.size(); k++)
-      if (m[k] != '\n') m[k] = ' ';
+  auto blank = [&](size_t from, size_t to) {  // spaces over [from, to), newlines kept
+    if (to > m.size()) to = m.size();
+    while (from < to) {
+      const char* nl = (const char*)memchr(m.data() + from, '\n', to - from);
+      size_t stop = nl ? (size_t)(nl - m.data()) : to;
+      memset(&m[from], ' ', stop - from);
+      from = stop + 1;
+    }
   };
+  // The bytes the scan has to stop at; everything else is skipped in a tight
+  // loop (this pass used to test every byte for a line start first).
+  static const struct Stops {
+    bool t[256] = {};
+    Stops() { t[(unsigned char)'\n'] = t[(unsigned char)'`'] = t[(unsigned char)'$'] = t[(unsigned char)'\\'] = true; }
+  } stops;
   // Once a closing delimiter is not found from some position it is not found
   // from any later one either: remember that, so a document with many
   // unmatched backticks / dollars is not scanned to its end again and again.
   bool no_bt[17] = {};
   bool no_d1 = false, no_d2 = false, no_paren = false, no_brack = false;
+  const size_t n_s = s.size();
   size_t i = 0;
   bool fence = false;
   char fence_ch = 0;
   size_t fence_len = 0;
-  while (i < s.size()) {
+  bool line_start = true;  // i is the first byte of a line
+  while (i < n_s) {
     // at the start of a line: a fence opens or closes a code block
-    if (i == 0 || s[i - 1] == '\n') {
-      size_t line_start = i;
+    if (line_start) {
+      line_start = false;
+      size_t ls = i;
       size_t indent = 0;
-      while (line_start + indent < s.size() && s[line_start + indent] == ' ' && indent < 4) indent++;
-      size_t f = line_start + indent;
+      while (ls + indent < n_s && s[ls + indent] == ' ' && indent < 4) indent++;
+      size_t f = ls + indent;
       size_t run = 0;
-      while (f + run < s.size() && (s[f + run] == '`' || s[f + run] == '~')) run++;
+      while (f + run < n_s && (s[f + run] == '`' || s[f + run] == '~')) run++;
       if (run >= 3 && (s[f] == '`' || s[f] == '~') && !fence) {
         fence = true;
         fence_ch = s[f];
         fence_len = run;
         size_t eol = s.find('\n', f);
-        blank(f, eol == std::string::npos ? s.size() : eol);
-        i = eol == std::string::npos ? s.size() : eol + 1;
+        blank(f, eol == std::string::npos ? n_s : eol);
+        i = eol == std::string::npos ? n_s : eol + 1;
+        line_start = true;
         continue;
       }
       if (fence) {
         if (run >= fence_len && s[f] == fence_ch) {
           size_t eol = s.find('\n', f);
-          blank(f, eol == std::string::npos ? s.size() : eol);
-          i = eol == std::string::npos ? s.size() : eol + 1;
+          blank(f, eol == std::string::npos ? n_s : eol);
+          i = eol == std::string::npos ? n_s : eol + 1;
           fence = false;
+          line_start = true;
           continue;
         }
-        size_t eol = s.find('\n', line_start);
-        blank(line_start, eol == std::string::npos ? s.size() : eol);
-        i = eol == std::string::npos ? s.size() : eol + 1;
+        size_t eol = s.find('\n', ls);
+        blank(ls, eol == std::string::npos ? n_s : eol);
+        i = eol == std::string::npos ? n_s : eol + 1;
+        line_start = true;
         continue;
       }
     }
+    while (i < n_s && !stops.t[(unsigned char)s[i]]) i++;
+    if (i >= n_s) break;
     char c = s[i];
+    if (c == '\n') {
+      i++;
+      line_start = true;
+      continue;
+    }
     if (c == '`') {  // inline code: to the matching run of backticks
       size_t n = 0;
-      while (i + n < s.size() && s[i + n] == '`') n++;
+      while (i + n < n_s && s[i + n] == '`') n++;
       bool* none = n < 17 ? &no_bt[n] : nullptr;
       size_t close = (none && *none) ? std::string::npos : s.find(std::string(n, '`'), i + n);
       if (close == std::string::npos && none) *none = true;
       size_t end = close == std::string::npos ? i + n : close + n;
       blank(i, end);
       i = end;
+      line_start = i < n_s && s[i - 1] == '\n';  // "$$$...$$" ends one byte past the "$$"
       continue;
     }
     if (c == '$') {
       size_t n = 0;
-      while (i + n < s.size() && s[i + n] == '$') n++;
+      while (i + n < n_s && s[i + n] == '$') n++;
       bool& none = n >= 2 ? no_d2 : no_d1;
       const char* delim = n >= 2 ? "$$" : "$";
       size_t close = none ? std::string::npos : s.find(delim, i + n);
@@ -229,9 +272,10 @@ std::string mask_math_and_code(const std::string& s) {
       size_t end = close == std::string::npos ? i + n : close + n;
       blank(i, end);
       i = end;
+      line_start = i < n_s && s[i - 1] == '\n';  // "$$$...$$" ends one byte past the "$$"
       continue;
     }
-    if (c == '\\' && i + 1 < s.size() && (s[i + 1] == '(' || s[i + 1] == '[')) {
+    if (c == '\\' && i + 1 < n_s && (s[i + 1] == '(' || s[i + 1] == '[')) {
       bool paren = s[i + 1] == '(';
       bool& none = paren ? no_paren : no_brack;
       size_t close = none ? std::string::npos : s.find(paren ? "\\)" : "\\]", i + 2);
@@ -239,6 +283,7 @@ std::string mask_math_and_code(const std::string& s) {
       size_t end = close == std::string::npos ? i + 2 : close + 2;
       blank(i, end);
       i = end;
+      line_start = i < n_s && s[i - 1] == '\n';  // "$$$...$$" ends one byte past the "$$"
       continue;
     }
     i++;
@@ -251,7 +296,9 @@ std::string mask_math_and_code(const std::string& s) {
 // paragraph of punctuation-spotted prose, which is what the reader then shows.
 // Escaped markdown examples exist in the wild too, so the test is deliberately
 // conservative and can be switched off with --escapes=off.
-bool looks_backslash_escaped(const std::string& raw) {
+// `mask_out` receives the masked text when the test got as far as computing
+// it, so unescape_backslashes() need not mask the whole file a second time.
+bool looks_backslash_escaped(const std::string& raw, std::string* mask_out = nullptr) {
   static const std::string kPunct = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
   static const std::string kSyntax = "#-*+>|`_[]()!~.";
   // No backslash in front of punctuation at all: nothing is escaped, and the
@@ -262,22 +309,30 @@ bool looks_backslash_escaped(const std::string& raw) {
     if (p[1] != '\\' && kPunct.find(p[1]) != std::string::npos) { any = true; break; }
   }
   if (!any) return false;
-  const std::string text = mask_math_and_code(raw);  // maths and code are not prose
+  std::string masked = mask_math_and_code(raw);  // maths and code are not prose
+  const std::string& text = masked;
   int total = 0, syntax = 0, block = 0, lines_with = 0, nonblank = 0;
   auto space = [](char c) {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
   };
-  for_each_line(text, [&](const std::string& ln) {
-    size_t tb = 0, te = ln.size();  // trim(ln), as indices
+  // One line, as split_lines() would give it.  `block` and `syntax` only
+  // grow, so the walk can stop as soon as either verdict is reached.
+  auto line = [&](const char* ln, size_t n, bool last) {
+    size_t tb = 0, te = n;  // trim(ln), as indices
     while (tb < te && space(ln[tb])) tb++;
     while (te > tb && space(ln[te - 1])) te--;
-    if (tb == te) return;
+    if (tb == te) {
+      // split_lines() turns two or more trailing spaces into a hard-break
+      // mark, so such a line was not blank to this test
+      if (!last && n >= 2 && ln[n - 1] == ' ') nonblank++;
+      return;
+    }
     nonblank++;
     bool has = false;
-    for (size_t i = 0; i + 1 < ln.size(); i++) {
-      const void* bs = memchr(ln.data() + i, '\\', ln.size() - 1 - i);
+    for (size_t i = 0; i + 1 < n; i++) {
+      const void* bs = memchr(ln + i, '\\', n - 1 - i);
       if (!bs) break;
-      i = (size_t)((const char*)bs - ln.data());
+      i = (size_t)((const char*)bs - ln);
       if (ln[i + 1] == '\\') { i++; continue; }  // "\\" is a line break, not an escape
       if (kPunct.find(ln[i + 1]) == std::string::npos) continue;
       total++;
@@ -286,7 +341,7 @@ bool looks_backslash_escaped(const std::string& raw) {
       i++;
     }
     if (has) lines_with++;
-    const char* t = ln.data() + tb;
+    const char* t = ln + tb;
     size_t tn = te - tb;
     if (tn >= 2 && t[0] == '\\' && std::strchr("#-*+>", t[1]) != nullptr && t[1] != 0) {
       block++;  // an escaped heading marker or bullet at the start of a line
@@ -295,32 +350,58 @@ bool looks_backslash_escaped(const std::string& raw) {
       while (d < tn && isdigit((unsigned char)t[d])) d++;
       if (d > 0 && d + 1 < tn && t[d] == '\\' && t[d + 1] == '.') block++;  // "1\. item"
     }
-  });
-  if (block >= 2) return true;   // headings/bullets are escaped: structure is lost
-  if (syntax >= 6) return true;  // plenty of escaped syntax characters
-  if (total >= 12 && lines_with * 2 >= nonblank) return true;  // escaped line by line
-  return false;
+  };
+  bool verdict = false;
+  std::string tmp;
+  for (size_t b = 0;;) {
+    const char* nl = (const char*)memchr(text.data() + b, '\n', text.size() - b);
+    size_t e = nl ? (size_t)(nl - text.data()) : text.size();
+    // The raw line works as well as split_lines()' trimmed one (the trimmed
+    // tail holds no backslash), unless a '\r' inside it has to go first.
+    if (memchr(text.data() + b, '\r', e - b)) {
+      tmp.assign(text, b, e - b);
+      tmp.erase(std::remove(tmp.begin(), tmp.end(), '\r'), tmp.end());
+      line(tmp.data(), tmp.size(), nl == nullptr);
+    } else {
+      line(text.data() + b, e - b, nl == nullptr);
+    }
+    if (block >= 2 || syntax >= 6) { verdict = true; break; }
+    if (!nl) break;
+    b = e + 1;
+  }
+  if (!verdict && total >= 12 && lines_with * 2 >= nonblank) verdict = true;  // escaped line by line
+  if (verdict && mask_out) *mask_out = std::move(masked);
+  return verdict;
 }
 
 // Remove the backslashes of markdown escapes (CommonMark: a backslash escapes
 // ASCII punctuation).  "\a" or a Windows path "C:\Users" is left alone.
-std::string unescape_backslashes(const std::string& s, int* removed) {
+// `premask` is mask_math_and_code(s) if the caller has it already.
+std::string unescape_backslashes(const std::string& s, int* removed, std::string* premask = nullptr) {
   static const std::string kPunct = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-  const std::string mask = mask_math_and_code(s);  // ' ' where maths/code lives
+  const bool have = premask && premask->size() == s.size();
+  const std::string own = have ? std::string() : mask_math_and_code(s);
+  const std::string& mask = have ? *premask : own;  // ' ' where maths/code lives
   std::string o;
   o.reserve(s.size());
   int n = 0;
-  for (size_t i = 0; i < s.size(); i++) {
+  size_t done = 0;  // s[0, done) is in `o`
+  for (size_t i = 0; i < s.size();) {
+    const char* bs = (const char*)memchr(s.data() + i, '\\', s.size() - i);
+    if (!bs) break;
+    i = (size_t)(bs - s.data());
     bool safe = i < mask.size() && mask[i] == s[i];
-    if (safe && s[i] == '\\' && i + 1 < s.size() && s[i + 1] != '\\' &&
-        kPunct.find(s[i + 1]) != std::string::npos) {
-      i++;
-      o += s[i];
+    if (safe && i + 1 < s.size() && s[i + 1] != '\\' && kPunct.find(s[i + 1]) != std::string::npos) {
+      o.append(s, done, i - done);  // drop the backslash, keep what it escaped
+      o += s[i + 1];
+      i += 2;
+      done = i;
       n++;
       continue;
     }
-    o += s[i];
+    i++;
   }
+  o.append(s, done, std::string::npos);
   if (removed) *removed = n;
   return o;
 }
@@ -702,7 +783,8 @@ struct InlineParser {
                MdDocument* d = nullptr)
       : s(str), allow_math(math), line(ln), out(o), doc(d) {}
 
-  void text(const std::string& t, const Span& proto) {
+  void text(const std::string& t, const Span& proto) { text(std::string(t), proto); }
+  void text(std::string&& t, const Span& proto) {
     if (t.empty()) return;
     if (!out->empty() && out->back().kind == Span::Text && !out->back().is_link &&
         out->back().bold == proto.bold && out->back().italic == proto.italic &&
@@ -714,8 +796,8 @@ struct InlineParser {
     }
     Span sp = proto;
     sp.kind = Span::Text;
-    sp.text = t;
-    out->push_back(sp);
+    sp.text = std::move(t);
+    out->push_back(std::move(sp));
   }
 
   // find matching closing run of `ch` of the same length, respecting escapes
@@ -762,13 +844,27 @@ struct InlineParser {
     std::string buf;
     auto flush = [&]() {
       if (!buf.empty()) {
-        text(decode_entities(buf), base);
+        if (buf.find('&') == std::string::npos) text(std::move(buf), base);
+        else text(decode_entities(buf), base);
         buf.clear();
       }
     };
+    // The characters that can start something; a run of any others goes into
+    // `buf` in one piece instead of one byte at a time past every test below.
+    static const struct Special {
+      bool t[256] = {};
+      Special() { for (const char* p = "\\\n`$![<*_~"; *p; p++) t[(unsigned char)*p] = true; }
+    } special;
     while (i < s.size() && i < limit) {
       char c = s[i];
       if (stop_ch && c == stop_ch) break;
+      if (!special.t[(unsigned char)c]) {
+        size_t end = std::min(s.size(), limit), j = i + 1;
+        while (j < end && !special.t[(unsigned char)s[j]] && !(stop_ch && s[j] == stop_ch)) j++;
+        buf.append(s, i, j - i);
+        i = j;
+        continue;
+      }
       // ---------------------------------------------------------- escapes --
       if (c == '\\' && i + 1 < s.size() && strchr("\\`*_{}[]()#+-.!~>|$&#^", s[i + 1])) {
         buf += s[i + 1];
@@ -779,7 +875,7 @@ struct InlineParser {
         flush();
         Span br = base;
         br.kind = Span::LineBreak;
-        out->push_back(br);
+        out->push_back(std::move(br));
         i += 2;
         continue;
       }
@@ -795,7 +891,7 @@ struct InlineParser {
           sp.kind = Span::Math;
           sp.tex = tex;
           sp.display_math = open == '[';
-          out->push_back(sp);
+          out->push_back(std::move(sp));
           i = e + close.size();
           continue;
         }
@@ -805,7 +901,7 @@ struct InlineParser {
         flush();
         Span br = base;
         br.kind = Span::LineBreak;
-        out->push_back(br);
+        out->push_back(std::move(br));
         i += 2;
         while (i < s.size() && s[i] == ' ') i++;
         continue;
@@ -816,7 +912,7 @@ struct InlineParser {
         flush();
         Span br = base;
         br.kind = Span::LineBreak;
-        if (hard) out->push_back(br);
+        if (hard) out->push_back(std::move(br));
         else {
           // soft break: keep a space so wrapped text stays readable
           text(" ", base);
@@ -842,7 +938,7 @@ struct InlineParser {
             Span sp = base;
             sp.kind = Span::Code;
             sp.text = code;
-            out->push_back(sp);
+            out->push_back(std::move(sp));
             i = e + ticks;
             continue;
           }
@@ -880,7 +976,7 @@ struct InlineParser {
               sp.kind = Span::Math;
               sp.tex = tex;
               sp.display_math = display;
-              out->push_back(sp);
+              out->push_back(std::move(sp));
               i = e + delim.size();
               continue;
             }
@@ -912,7 +1008,7 @@ struct InlineParser {
             sp.link = decode_entities(dest);
             sp.is_link = true;
             if (!title.empty()) sp.tex = title;  // reuse tex for the title
-            out->push_back(sp);
+            out->push_back(std::move(sp));
             i = parend + 1;
             continue;
           }
@@ -930,7 +1026,7 @@ struct InlineParser {
             Span fn = base;
             fn.footnote = true;
             fn.text = "[" + std::to_string(footnote_number(doc, label)) + "]";
-            out->push_back(fn);
+            out->push_back(std::move(fn));
             i = close + 1;
             continue;
           }
@@ -1588,13 +1684,13 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
           if (c2 >= cn && c2 == l2.size() && c2 >= 3) { li_++; break; }  // closing fence
           std::string lit = lines_[li_];
           if (!lit.empty() && lit.back() == '\x01') { lit.pop_back(); lit += "  "; }
-          inner.push_back(lit);
+          inner.push_back(std::move(lit));
           li_++;
         }
         MarkdownParser sub;
         sub.opt_ = opt_;
         sub.loose_markers_ = loose_markers_;
-        sub.lines_ = inner;
+        sub.lines_ = std::move(inner);
         sub.src_ = src_;
         sub.doc_ = doc_;
         sub.li_ = 0;
@@ -1651,7 +1747,7 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
       MarkdownParser sub;
       sub.opt_ = opt_;
       sub.loose_markers_ = loose_markers_;
-      sub.lines_ = inner;
+      sub.lines_ = std::move(inner);
       sub.src_ = src_;
       sub.doc_ = doc_;
       sub.li_ = 0;
@@ -1744,7 +1840,7 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
             }
             MarkdownParser sub;
             sub.opt_ = opt_;
-            sub.lines_ = item_lines;
+            sub.lines_ = std::move(item_lines);
             sub.src_ = src_;
             sub.doc_ = doc_;
             sub.li_ = 0;
@@ -2087,8 +2183,12 @@ void MarkdownParser::extract_definitions() {
   size_t fence_len = 0;
   for (size_t k = 0; k < lines_.size(); k++) {
     std::string& L = lines_[k];
-    std::string t = ltrim(L);
-    size_t ind = L.size() - t.size();
+    size_t ind = 0;  // ltrim(L), without copying all 800,000 lines of a big file
+    while (ind < L.size() && (L[ind] == ' ' || L[ind] == '\t' || L[ind] == '\r' || L[ind] == '\n' ||
+                              L[ind] == '\f' || L[ind] == '\v'))
+      ind++;
+    if (ind >= L.size() || (L[ind] != '`' && L[ind] != '~' && L[ind] != '[')) continue;  // neither fence nor definition
+    std::string t = L.substr(ind);
     if (ind <= 3 && t.size() >= 3 && (t[0] == '`' || t[0] == '~')) {
       char ch = t[0];
       size_t n = 0;
@@ -2191,12 +2291,14 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
     if (invisible_removed > 0) replace_src(std::move(next));
   }
   int backslashes_removed = 0;
+  std::string mask;  // shared by the escape test and the repair
   if (opt_.escapes != MdOptions::EscOff &&
-      (opt_.escapes == MdOptions::EscForce || looks_backslash_escaped(*srcp))) {
+      (opt_.escapes == MdOptions::EscForce || looks_backslash_escaped(*srcp, &mask))) {
     int removed = 0;
-    std::string next = unescape_backslashes(*srcp, &removed);
+    std::string next = unescape_backslashes(*srcp, &removed, &mask);
     if (removed > 0) { replace_src(std::move(next)); backslashes_removed = removed; }
   }
+  std::string().swap(mask);  // 11 MB for an 11 MB file: not kept through the parse
   MdDocument doc;
   doc_ = &doc;
   (void)doc_;

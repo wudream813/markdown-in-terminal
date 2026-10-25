@@ -5,6 +5,36 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.26] — 2026-10-25
+
+Parsing takes a fifth less time, a reload a fifth less until the page is back.
+
+### Changed
+
+* **Faster parse.**  On the two 11 MB benchmark files the parser now runs
+  half as many instructions, and the parse went from 0.18 to 0.14 s (prose)
+  and from 0.59 to 0.49 s (mixed):
+  * the inline parser sent every plain character through a dozen tests and
+    appended it to the text on its own; a run of characters that cannot start
+    anything is now copied in one piece, and the finished text is moved into
+    its span instead of copied;
+  * the entity decoder, the invisible-character repair and the backslash
+    repair copied the text a byte at a time, and the decoder compared every
+    `&...;` with all 80 known entities in full;
+  * the test for a backslash-escaped file masked maths and code, and the
+    repair then masked the whole file again; the mask is now made once, the
+    test stops as soon as its verdict is certain, and its line walk no longer
+    copies every line;
+  * the masking pass itself skipped to the next byte that matters instead of
+    testing every byte for the start of a line;
+  * looking for `[label]: url` definitions copied every line of the file.
+* **Faster reload.**  The encoding check copied the whole file before
+  looking at it (5 MB less reload peak for the prose file), and the outline
+  was collected through a record per block (200,000 of them in the mixed
+  file).  With the faster parse, `r` / `--watch` brings the page back in
+  0.31 s instead of 0.36 s (prose) and 0.66 s instead of 0.80 s (mixed), and
+  the first screen comes after 0.28 s (0.34 s) and 0.67 s (0.81 s).
+
 ## [0.3.25] — 2026-10-25
 
 A small file opens in 0.04 s instead of half a second, and laying out a big

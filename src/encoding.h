@@ -18,7 +18,7 @@ struct DecodedText {
 
 // want: "auto" | "utf-8" | "gbk" | "gb18030" | "big5" | "cp1252" | "latin1"
 //       | "off" ("off" and "utf-8" never convert, they only report).
-DecodedText decode_text(const std::string& raw, const std::string& want);
+DecodedText decode_text(std::string raw, const std::string& want);
 
 // True when the whole buffer is valid UTF-8 (a truncated sequence counts as
 // invalid; "bad" receives the number of broken characters found, up to 200000
