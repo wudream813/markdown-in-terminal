@@ -1,7 +1,7 @@
 class Mdt < Formula
   desc "Terminal Markdown reader: typeset maths, images, syntax highlighting"
   homepage "https://github.com/wudream813/markdown-in-terminal"
-  version "0.3.24"
+  version "0.3.25"
   license "MIT"
 
   # Prebuilt, self-contained binaries: Apple silicon on macOS, and fully
@@ -9,39 +9,39 @@ class Mdt < Formula
   # satisfy either way).
   on_macos do
     on_arm do
-      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.24/mdt-macos-arm64"
-      sha256 "187de41e22e7e6c02f03b67445295bf44d0b548d100645bd1d61219f0d5d5610"
+      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.25/mdt-macos-arm64"
+      sha256 "47ed19f9dc2f770b4a02edd872e50e3f08436b736dd965835c3060d5b7e4c7c6"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.24/mdt-linux-amd64"
-      sha256 "b27e731192cb886d5194cc20db466d88af7e2ba3743710e02036bb3918b8d59d"
+      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.25/mdt-linux-amd64"
+      sha256 "18e40cae297de6320774a2c6e6324117a61cecda2ab3ee0ee6cf9c887dfd7687"
     end
     on_arm do
-      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.24/mdt-linux-arm64"
-      sha256 "210a6ddfea1b87f0baf78275056f23dc3a70481b024737ebb1c03c4b6f10f4a3"
+      url "https://github.com/wudream813/markdown-in-terminal/releases/download/v0.3.25/mdt-linux-arm64"
+      sha256 "435755d2160f805a295a4fc6fe008e41079ade7e5becfb0e3f3dec58de908ad5"
     end
   end
 
   resource "man" do
-    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.24/docs/mdt.1"
+    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.25/docs/mdt.1"
     sha256 "252465a4f466dad5f45cfa79da4039e078c6c712b08b42ee3cbb007e41ec633b"
   end
 
   resource "completion-bash" do
-    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.24/completions/mdt.bash"
+    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.25/completions/mdt.bash"
     sha256 "459f234d014740b9175043a080336dcf1a1fc3d6151c5c7b7dceab7e055902c4"
   end
 
   resource "completion-zsh" do
-    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.24/completions/_mdt"
+    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.25/completions/_mdt"
     sha256 "c2ee2264f689290180842b9d67425ccde66c7e684fe32e38fe1f78d662196e46"
   end
 
   resource "completion-fish" do
-    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.24/completions/mdt.fish"
+    url "https://raw.githubusercontent.com/wudream813/markdown-in-terminal/v0.3.25/completions/mdt.fish"
     sha256 "86d01a45e83e42a9539b0a16b82da7253c9080f9805e5c355c435ed9e0175e64"
   end
 
