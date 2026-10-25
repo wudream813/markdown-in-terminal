@@ -5,6 +5,44 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.24] — 2026-10-25
+
+Parsing a big document takes a third less time, and a reload of one keeps less
+memory.
+
+### Changed
+
+* **Faster parse.**  The check for a backslash-escaped document (one that went
+  through a generator escaping every `#`, `-` and `*`) split the whole file
+  into lines and copied every line twice, even in files without a single
+  backslash: 110-200 ms of an 11 MB file.  One `memchr` pass now settles it
+  for most files, and the line walk works on indices.  Splitting into lines,
+  `trim`, the blank / rule / fence / `$$` tests at the start of every line
+  and entity decoding of text without a `&` no longer allocate, and the
+  source is copied only when a pre-pass actually changed it.  On the two
+  11 MB benchmark files the parse went from 0.39 to 0.20 s (prose) and from
+  0.84 to 0.59 s (mixed); the first screen comes 0.15-0.25 s sooner and
+  `r` / `--watch` brings the page back in 0.35 s instead of 0.7 s (prose)
+  and 0.8 s instead of 1.0 s (mixed).
+* **Less memory on reload.**  glibc raises its mmap threshold each time a
+  large block is freed, so after the first parse the next document's big
+  allocations went to the brk heap and stayed there as fragments.  mdt fixes
+  the threshold at 128 KB (Linux only): the reload peak of the mixed file
+  dropped from 357 to 338 MB, prose from 194 to 183 MB, at no cost in speed.
+
+### Fixed
+
+* A file with many unclosed `\(`, `\[`, `$` or backtick runs took quadratic
+  time: the masking pass that keeps maths and code out of the escape check
+  searched for the closing delimiter to the end of the file from every
+  opening one.  1 MB of such lines took 6.4 s, now 0.6 s.  A failed search
+  is remembered, and `tools/big_doc_test.py` (smoke) now checks this case too.
+* That masking pass took a ```` ``` ```` in the middle of a line for the start
+  of a code fence and so kept the rest of the file out of the escape check;
+  fences are now recognised only at the start of a line, as in CommonMark.
+  Documents without such a line render exactly as before (all fixtures and
+  both benchmark files were compared byte for byte against 0.3.23).
+
 ## [0.3.23] — 2026-10-24
 
 The reader no longer lays out a whole big document before it shows anything.

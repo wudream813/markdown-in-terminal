@@ -29,8 +29,8 @@ aur/{PKGBUILD,.SRCINFO} AUR 的 mdt-bin（x86_64 与 aarch64 静态二进制，�
 ## .deb 与 .rpm
 
 ```sh
-python3 packaging/pkgs.py v0.3.23                     # 下载发布产物再打包
-python3 packaging/pkgs.py v0.3.23 --from dist --out dist   # 用已有文件（CI 就是这么调的）
+python3 packaging/pkgs.py v0.3.24                     # 下载发布产物再打包
+python3 packaging/pkgs.py v0.3.24 --from dist --out dist   # 用已有文件（CI 就是这么调的）
 ```
 
 一次出四个：`mdt_<版本>-1_amd64.deb`、`mdt_<版本>-1_arm64.deb`、

@@ -1,6 +1,7 @@
 // mdt - markdown-terminal
 // util.h : UTF-8 helpers, display width, small string utilities.
 #pragma once
+#include <functional>
 #include <cstdarg>
 #include <cstdint>
 #include <string>
@@ -39,6 +40,8 @@ std::string to_lower(std::string s);
 std::string replace_all(std::string s, const std::string& from, const std::string& to);
 std::vector<std::string> split(const std::string& s, char sep);
 std::vector<std::string> split_lines(const std::string& s);
+// The lines split_lines() would return, one at a time in a reused buffer.
+void for_each_line(const std::string& s, const std::function<void(const std::string&)>& fn);
 std::string join(const std::vector<std::string>& v, const std::string& sep);
 std::string fmt(const char* f, ...) __attribute__((format(printf, 1, 2)));
 // Collapse runs of whitespace into single spaces (for word wrapping input).

@@ -209,7 +209,12 @@ bool ends_with(const std::string& s, const std::string& p) {
 static bool is_space_c(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v'; }
 std::string rtrim(const std::string& s) { size_t e = s.size(); while (e > 0 && is_space_c(s[e - 1])) e--; return s.substr(0, e); }
 std::string ltrim(const std::string& s) { size_t b = 0; while (b < s.size() && is_space_c(s[b])) b++; return s.substr(b); }
-std::string trim(const std::string& s) { return rtrim(ltrim(s)); }
+std::string trim(const std::string& s) {
+  size_t b = 0, e = s.size();
+  while (b < e && is_space_c(s[b])) b++;
+  while (e > b && is_space_c(s[e - 1])) e--;
+  return s.substr(b, e - b);
+}
 std::string to_lower(std::string s) { for (auto& c : s) c = (char)tolower((unsigned char)c); return s; }
 std::string replace_all(std::string s, const std::string& from, const std::string& to) {
   if (from.empty()) return s;
@@ -222,22 +227,50 @@ std::vector<std::string> split(const std::string& s, char sep) {
   for (char c : s) { if (c == sep) { out.push_back(cur); cur.clear(); } else cur += c; }
   out.push_back(cur); return out;
 }
-std::vector<std::string> split_lines(const std::string& s) {
-  std::vector<std::string> out; std::string cur;
-  for (size_t i = 0; i < s.size(); i++) {
-    if (s[i] == '\n') {
-      std::string t = rtrim(cur);
-      // CommonMark hard break: two trailing spaces.  They must survive the
-      // rtrim, so a sentinel stands in for them until inline parsing.
-      if (t.size() < cur.size() && cur.size() - t.size() >= 2 &&
-          cur[cur.size() - 1] == ' ')
-        t += '\x01';
-      out.push_back(t);
-      cur.clear();
-    }
-    else if (s[i] != '\r') cur += s[i];
+// One line of split_lines(): [b, e) of `s` without its '\r's, right-trimmed
+// unless it is the last one, with a 0x01 standing in for a CommonMark hard
+// break (two or more trailing spaces) - they must survive the trim until
+// inline parsing.
+static void split_line_into(const std::string& s, size_t b, size_t e, bool last, std::string& out) {
+  out.assign(s, b, e - b);
+  if (memchr(out.data(), '\r', out.size()))
+    out.erase(std::remove(out.begin(), out.end(), '\r'), out.end());
+  if (last) return;
+  size_t n = out.size(), t = n;
+  while (t > 0 && is_space_c(out[t - 1])) t--;
+  if (t == n) return;
+  bool hard_break = n - t >= 2 && out[n - 1] == ' ';
+  out.resize(t);
+  if (hard_break) out += '\x01';
+}
+
+void for_each_line(const std::string& s, const std::function<void(const std::string&)>& fn) {
+  std::string line;
+  size_t b = 0;
+  for (;;) {
+    const char* nl = (const char*)memchr(s.data() + b, '\n', s.size() - b);
+    size_t e = nl ? (size_t)(nl - s.data()) : s.size();
+    split_line_into(s, b, e, nl == nullptr, line);
+    fn(line);
+    if (!nl) break;
+    b = e + 1;
   }
-  out.push_back(cur);
+}
+
+// Every caller used to pay for a char-by-char copy and a trimmed copy of each
+// line: 56 ms for an 11 MB document, before the parser even started.
+std::vector<std::string> split_lines(const std::string& s) {
+  std::vector<std::string> out;
+  out.reserve((size_t)std::count(s.begin(), s.end(), '\n') + 1);
+  size_t b = 0;
+  for (;;) {
+    const char* nl = (const char*)memchr(s.data() + b, '\n', s.size() - b);
+    size_t e = nl ? (size_t)(nl - s.data()) : s.size();
+    out.emplace_back();
+    split_line_into(s, b, e, nl == nullptr, out.back());
+    if (!nl) break;
+    b = e + 1;
+  }
   return out;
 }
 std::string join(const std::vector<std::string>& v, const std::string& sep) {

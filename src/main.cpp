@@ -7,6 +7,9 @@
 #include <initializer_list>
 #include <string>
 #include <vector>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 #include "app.h"
 #include "i18n.h"
@@ -226,6 +229,15 @@ int main(int argc, char** argv) {
   // an ordinary write error at the very end of the dump: mdt exits 0 quietly,
   // the way a filter that was read from should.
   signal(SIGPIPE, SIG_IGN);
+#endif
+#if defined(__GLIBC__)
+  // glibc raises its mmap threshold every time a large block is freed (up to
+  // 32 MB).  Parsing a 10 MB file frees several source-sized strings, so the
+  // next document's big allocations land in the brk heap instead and a reload
+  // keeps the fragments: 375 MB peak instead of 338 MB for an 11 MB file.  A
+  // fixed threshold turns the adjustment off - big blocks go back to the
+  // system when freed, at no measurable cost in speed.
+  mallopt(M_MMAP_THRESHOLD, 128 * 1024);
 #endif
   plat::console_init();  // UTF-8 console, so Chinese file names print correctly
   // Windows hands us argv in the ANSI code page; take it from the wide command

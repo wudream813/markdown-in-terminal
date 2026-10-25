@@ -19,6 +19,12 @@ under qemu on a CI runner, where the 6 MB document took 532 s) makes the
 documents four times smaller, times each one once and drops the absolute
 ceiling - emulation speed says nothing about mdt.  The ratio test still
 catches the old parser there: x9 for four times the size.
+
+0.3.24 found a second one: the masking pass that keeps maths and code out of
+the backslash-escape heuristic looked for the closing "\\)" (or backtick run,
+or dollar) from every opening one, to the end of the file each time.  A file
+of escaped prose where "\\(" is never closed - 20,000 lines, 1 MB - took
+6.4 s.  The second document below is made of such lines.
 """
 import os
 import subprocess
@@ -50,6 +56,13 @@ def make_document(path, sections):
     return os.path.getsize(path)
 
 
+def make_unclosed(path, lines):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("".join(f"line {n} with an escaped \\* star and an unclosed \\( paren\n"
+                        for n in range(lines)))
+    return os.path.getsize(path)
+
+
 def best_time(path, runs=3):
     best = None
     for _ in range(runs):
@@ -64,18 +77,18 @@ def best_time(path, runs=3):
     return best
 
 
-def main():
+def check(name, make, small_n, big_n):
     with tempfile.TemporaryDirectory() as d:
         small = os.path.join(d, "small.md")
         big = os.path.join(d, "big.md")
         slow = SLOWDOWN > 1
-        s_bytes = make_document(small, 1000 if slow else 4000)
-        b_bytes = make_document(big, 4000 if slow else 16000)
+        s_bytes = make(small, small_n // 4 if slow else small_n)
+        b_bytes = make(big, big_n // 4 if slow else big_n)
         runs = 1 if slow else 3
         t_small = best_time(small, runs)
         t_big = best_time(big, runs)
         ratio = t_big / max(t_small, 1e-3)
-        print(f"  {s_bytes / 1e6:.1f} MB: {t_small:.2f} s, {b_bytes / 1e6:.1f} MB: {t_big:.2f} s "
+        print(f"  {name}: {s_bytes / 1e6:.1f} MB: {t_small:.2f} s, {b_bytes / 1e6:.1f} MB: {t_big:.2f} s "
               f"(x{b_bytes / s_bytes:.0f} the size, x{ratio:.1f} the time)")
         # 4x the size: linear is 3-4x (start-up costs make the small run look
         # slower); the quadratic parser was x16.5 at these sizes, x9 at the
@@ -87,7 +100,15 @@ def main():
         if not slow and t_big > ceiling:
             print(f"FAIL: {b_bytes / 1e6:.1f} MB took {t_big:.1f} s (ceiling {ceiling:.0f} s)")
             return 1
-        print("  ok: opening time grows with the size of the document, not its square")
+    return 0
+
+
+def main():
+    if check("Luogu directives", make_document, 4000, 16000):
+        return 1
+    if check("unclosed \\(", make_unclosed, 5000, 20000):
+        return 1
+    print("  ok: opening time grows with the size of the document, not its square")
     return 0
 
 

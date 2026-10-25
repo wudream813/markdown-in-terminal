@@ -13,7 +13,11 @@ namespace mdt {
 
 namespace {
 
-bool is_blank(const std::string& s) { return trim(s).empty(); }
+bool is_blank(const std::string& s) {  // trim(s).empty(), without the copy
+  for (char c : s)
+    if (!(c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v')) return false;
+  return true;
+}
 
 size_t indent_of(const std::string& s) {
   size_t i = 0;
@@ -22,6 +26,7 @@ size_t indent_of(const std::string& s) {
 }
 
 std::string decode_entities(const std::string& s) {
+  if (s.find('&') == std::string::npos) return s;
   static const struct { const char* ent; const char* rep; } kEnt[] = {
     {"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&apos;", "'"},
     {"&nbsp;", "\u00a0"}, {"&mdash;", "\u2014"}, {"&ndash;", "\u2013"}, {"&hellip;", "\u2026"},
@@ -93,11 +98,30 @@ std::string decode_entities(const std::string& s) {
 // breaking spaces.  They make the first character of a line look eaten (the
 // glyph is there but zero cells wide), and they stop "#" or "-" from being
 // recognised as a marker because the line does not start with them any more.
+// Returns "" and *removed == 0 when there is nothing to drop: the caller keeps
+// its text then, and an 11 MB document is not copied byte by byte for nothing.
+static bool invisible_at(const std::string& s, size_t i) {
+  unsigned char c = (unsigned char)s[i];
+  if (c == 0xEF) return i + 2 < s.size() && (unsigned char)s[i + 1] == 0xBB && (unsigned char)s[i + 2] == 0xBF;
+  if (c == 0xC2) return i + 1 < s.size() && (unsigned char)s[i + 1] == 0xA0;
+  if (c == 0xE2 && i + 2 < s.size() && (unsigned char)s[i + 1] == 0x80) {
+    unsigned char t = (unsigned char)s[i + 2];
+    return t == 0x8B || t == 0x8C || t == 0x8D || (t >= 0x8E && t <= 0x8F) || (t >= 0xAA && t <= 0xAE);
+  }
+  return false;
+}
+
 std::string strip_invisible(const std::string& s, int* removed) {
-  std::string o;
+  size_t first = 0;
+  while (first < s.size() && !invisible_at(s, first)) first++;
+  if (first >= s.size()) {
+    if (removed) *removed = 0;
+    return std::string();
+  }
+  std::string o(s, 0, first);
   o.reserve(s.size());
   int n = 0;
-  for (size_t i = 0; i < s.size();) {
+  for (size_t i = first; i < s.size();) {
     unsigned char c = (unsigned char)s[i];
     if (c == 0xEF && i + 2 < s.size() && (unsigned char)s[i + 1] == 0xBB &&
         (unsigned char)s[i + 2] == 0xBF) {  // U+FEFF byte order mark
@@ -140,45 +164,54 @@ std::string mask_math_and_code(const std::string& s) {
     for (size_t k = from; k < to && k < m.size(); k++)
       if (m[k] != '\n') m[k] = ' ';
   };
+  // Once a closing delimiter is not found from some position it is not found
+  // from any later one either: remember that, so a document with many
+  // unmatched backticks / dollars is not scanned to its end again and again.
+  bool no_bt[17] = {};
+  bool no_d1 = false, no_d2 = false, no_paren = false, no_brack = false;
   size_t i = 0;
   bool fence = false;
   char fence_ch = 0;
   size_t fence_len = 0;
   while (i < s.size()) {
     // at the start of a line: a fence opens or closes a code block
-    size_t line_start = i;
-    size_t indent = 0;
-    while (line_start + indent < s.size() && s[line_start + indent] == ' ' && indent < 4) indent++;
-    size_t f = line_start + indent;
-    size_t run = 0;
-    while (f + run < s.size() && (s[f + run] == '`' || s[f + run] == '~')) run++;
-    if (run >= 3 && (s[f] == '`' || s[f] == '~') && !fence) {
-      fence = true;
-      fence_ch = s[f];
-      fence_len = run;
-      size_t eol = s.find('\n', f);
-      blank(f, eol == std::string::npos ? s.size() : eol);
-      i = eol == std::string::npos ? s.size() : eol + 1;
-      continue;
-    }
-    if (fence) {
-      if (run >= fence_len && s[f] == fence_ch) {
+    if (i == 0 || s[i - 1] == '\n') {
+      size_t line_start = i;
+      size_t indent = 0;
+      while (line_start + indent < s.size() && s[line_start + indent] == ' ' && indent < 4) indent++;
+      size_t f = line_start + indent;
+      size_t run = 0;
+      while (f + run < s.size() && (s[f + run] == '`' || s[f + run] == '~')) run++;
+      if (run >= 3 && (s[f] == '`' || s[f] == '~') && !fence) {
+        fence = true;
+        fence_ch = s[f];
+        fence_len = run;
         size_t eol = s.find('\n', f);
         blank(f, eol == std::string::npos ? s.size() : eol);
         i = eol == std::string::npos ? s.size() : eol + 1;
-        fence = false;
         continue;
       }
-      size_t eol = s.find('\n', line_start);
-      blank(line_start, eol == std::string::npos ? s.size() : eol);
-      i = eol == std::string::npos ? s.size() : eol + 1;
-      continue;
+      if (fence) {
+        if (run >= fence_len && s[f] == fence_ch) {
+          size_t eol = s.find('\n', f);
+          blank(f, eol == std::string::npos ? s.size() : eol);
+          i = eol == std::string::npos ? s.size() : eol + 1;
+          fence = false;
+          continue;
+        }
+        size_t eol = s.find('\n', line_start);
+        blank(line_start, eol == std::string::npos ? s.size() : eol);
+        i = eol == std::string::npos ? s.size() : eol + 1;
+        continue;
+      }
     }
     char c = s[i];
     if (c == '`') {  // inline code: to the matching run of backticks
       size_t n = 0;
       while (i + n < s.size() && s[i + n] == '`') n++;
-      size_t close = s.find(std::string(n, '`'), i + n);
+      bool* none = n < 17 ? &no_bt[n] : nullptr;
+      size_t close = (none && *none) ? std::string::npos : s.find(std::string(n, '`'), i + n);
+      if (close == std::string::npos && none) *none = true;
       size_t end = close == std::string::npos ? i + n : close + n;
       blank(i, end);
       i = end;
@@ -187,18 +220,22 @@ std::string mask_math_and_code(const std::string& s) {
     if (c == '$') {
       size_t n = 0;
       while (i + n < s.size() && s[i + n] == '$') n++;
-      std::string delim = n >= 2 ? "$$" : "$";
-      size_t close = s.find(delim, i + n);
+      bool& none = n >= 2 ? no_d2 : no_d1;
+      const char* delim = n >= 2 ? "$$" : "$";
+      size_t close = none ? std::string::npos : s.find(delim, i + n);
       while (close != std::string::npos && s[close - 1] == '\\')  // escaped dollar
         close = s.find(delim, close + 1);
+      if (close == std::string::npos) none = true;
       size_t end = close == std::string::npos ? i + n : close + n;
       blank(i, end);
       i = end;
       continue;
     }
     if (c == '\\' && i + 1 < s.size() && (s[i + 1] == '(' || s[i + 1] == '[')) {
-      char close_ch = s[i + 1] == '(' ? ')' : ']';
-      size_t close = s.find(std::string("\\") + close_ch, i + 2);
+      bool paren = s[i + 1] == '(';
+      bool& none = paren ? no_paren : no_brack;
+      size_t close = none ? std::string::npos : s.find(paren ? "\\)" : "\\]", i + 2);
+      if (close == std::string::npos) none = true;
       size_t end = close == std::string::npos ? i + 2 : close + 2;
       blank(i, end);
       i = end;
@@ -217,14 +254,30 @@ std::string mask_math_and_code(const std::string& s) {
 bool looks_backslash_escaped(const std::string& raw) {
   static const std::string kPunct = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
   static const std::string kSyntax = "#-*+>|`_[]()!~.";
+  // No backslash in front of punctuation at all: nothing is escaped, and the
+  // masking and line walk below need not run (most documents).
+  bool any = false;
+  for (const char* p = raw.data(), *end = p + raw.size();
+       (p = (const char*)memchr(p, '\\', (size_t)(end - p))) != nullptr && p + 1 < end; p += 2) {
+    if (p[1] != '\\' && kPunct.find(p[1]) != std::string::npos) { any = true; break; }
+  }
+  if (!any) return false;
   const std::string text = mask_math_and_code(raw);  // maths and code are not prose
   int total = 0, syntax = 0, block = 0, lines_with = 0, nonblank = 0;
-  for (const std::string& ln : split_lines(text)) {
-    if (trim(ln).empty()) continue;
+  auto space = [](char c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
+  };
+  for_each_line(text, [&](const std::string& ln) {
+    size_t tb = 0, te = ln.size();  // trim(ln), as indices
+    while (tb < te && space(ln[tb])) tb++;
+    while (te > tb && space(ln[te - 1])) te--;
+    if (tb == te) return;
     nonblank++;
     bool has = false;
     for (size_t i = 0; i + 1 < ln.size(); i++) {
-      if (ln[i] != '\\') continue;
+      const void* bs = memchr(ln.data() + i, '\\', ln.size() - 1 - i);
+      if (!bs) break;
+      i = (size_t)((const char*)bs - ln.data());
       if (ln[i + 1] == '\\') { i++; continue; }  // "\\" is a line break, not an escape
       if (kPunct.find(ln[i + 1]) == std::string::npos) continue;
       total++;
@@ -233,15 +286,16 @@ bool looks_backslash_escaped(const std::string& raw) {
       i++;
     }
     if (has) lines_with++;
-    std::string t = trim(ln);
-    if (t.size() >= 2 && t[0] == '\\' && std::string("#-*+>").find(t[1]) != std::string::npos) {
+    const char* t = ln.data() + tb;
+    size_t tn = te - tb;
+    if (tn >= 2 && t[0] == '\\' && std::strchr("#-*+>", t[1]) != nullptr && t[1] != 0) {
       block++;  // an escaped heading marker or bullet at the start of a line
     } else {
       size_t d = 0;
-      while (d < t.size() && isdigit((unsigned char)t[d])) d++;
-      if (d > 0 && d + 1 < t.size() && t[d] == '\\' && t[d + 1] == '.') block++;  // "1\. item"
+      while (d < tn && isdigit((unsigned char)t[d])) d++;
+      if (d > 0 && d + 1 < tn && t[d] == '\\' && t[d + 1] == '.') block++;  // "1\. item"
     }
-  }
+  });
   if (block >= 2) return true;   // headings/bullets are escaped: structure is lost
   if (syntax >= 6) return true;  // plenty of escaped syntax characters
   if (total >= 12 && lines_with * 2 >= nonblank) return true;  // escaped line by line
@@ -1137,12 +1191,18 @@ std::vector<Span> MarkdownParser::parse_inline(const std::string& text, int line
 // ======================================================= block parser ======
 namespace {
 bool is_hr_line(const std::string& line) {
-  std::string t = trim(line);
-  if (t.size() < 3) return false;
-  char c = t[0];
+  auto space = [](char x) {
+    return x == ' ' || x == '\t' || x == '\r' || x == '\n' || x == '\f' || x == '\v';
+  };
+  size_t b = 0, e = line.size();  // trim(line), as indices
+  while (b < e && space(line[b])) b++;
+  while (e > b && space(line[e - 1])) e--;
+  if (e - b < 3) return false;
+  char c = line[b];
   if (c != '-' && c != '*' && c != '_') return false;
   int count = 0;
-  for (char x : t) {
+  for (size_t k = b; k < e; k++) {
+    char x = line[k];
     if (x == c) count++;
     else if (x != ' ' && x != '\t') return false;
   }
@@ -1331,10 +1391,14 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
     b.src_line = (int)li_ + 1;
 
     // ------------------------------------------------------------- fences --
+    size_t lb = 0;  // where ltrim(line) starts
+    while (lb < line.size() && (line[lb] == ' ' || line[lb] == '\t' || line[lb] == '\r' ||
+                                line[lb] == '\n' || line[lb] == '\f' || line[lb] == '\v'))
+      lb++;
     {
-      std::string t = ltrim(line);
       size_t ind = indent_of(line);
-      if (ind <= 3 && (t.rfind("```", 0) == 0 || t.rfind("~~~", 0) == 0)) {
+      if (ind <= 3 && (line.compare(lb, 3, "```") == 0 || line.compare(lb, 3, "~~~") == 0)) {
+        std::string t = line.substr(lb);
         char fence = t[0];
         size_t flen = 0;
         while (flen < t.size() && t[flen] == fence) flen++;
@@ -1395,9 +1459,9 @@ std::vector<Block> MarkdownParser::parse_blocks(int depth) {
     }
 
     // ------------------------------------------------------- math $$ block -
-    if (opt_.math) {
+    if (opt_.math && line.compare(lb, 2, "$$") == 0) {
       std::string t = trim(line);
-      if (t.rfind("$$", 0) == 0) {
+      {
         std::string rest = trim(t.substr(2));
         std::string tex;
         if (rest.size() >= 2 && rest.substr(rest.size() - 2) == "$$") {
@@ -2100,15 +2164,20 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
   // reader asks for it (--entities=force).  Guessing was removed: the escaping
   // is a property of how the text was pasted, not of the document, and a wrong
   // guess silently rewrites maths and code.
-  std::string src = text;
+  // The repairs below work on a copy only once one of them changes something;
+  // until then `src` is the caller's text (an 11 MB document used to be
+  // copied three times before the parser started).
+  std::string own;
+  const std::string* srcp = &text;
+  auto replace_src = [&](std::string&& next) { own = std::move(next); srcp = &own; };
   bool unescaped = false;
   if (opt_.entities == MdOptions::EntForce) {
     // Decode repeatedly: content that was escaped twice (&amp;#35;) needs two
     // passes.  Bounded so a pathological file cannot loop.
     for (int pass = 0; pass < 3; pass++) {
-      std::string next = decode_entities(src);
-      if (next == src) break;
-      src = next;
+      std::string next = decode_entities(*srcp);
+      if (next == *srcp) break;
+      replace_src(std::move(next));
       unescaped = true;
     }
   }
@@ -2118,15 +2187,15 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
   // with literal "_" and "#" in it.
   int invisible_removed = 0;
   {
-    std::string next = strip_invisible(src, &invisible_removed);
-    if (invisible_removed > 0) src = next;
+    std::string next = strip_invisible(*srcp, &invisible_removed);
+    if (invisible_removed > 0) replace_src(std::move(next));
   }
   int backslashes_removed = 0;
   if (opt_.escapes != MdOptions::EscOff &&
-      (opt_.escapes == MdOptions::EscForce || looks_backslash_escaped(src))) {
+      (opt_.escapes == MdOptions::EscForce || looks_backslash_escaped(*srcp))) {
     int removed = 0;
-    std::string next = unescape_backslashes(src, &removed);
-    if (removed > 0) { src = next; backslashes_removed = removed; }
+    std::string next = unescape_backslashes(*srcp, &removed);
+    if (removed > 0) { replace_src(std::move(next)); backslashes_removed = removed; }
   }
   MdDocument doc;
   doc_ = &doc;
@@ -2136,15 +2205,19 @@ MdDocument MarkdownParser::parse(const std::string& text, const MdOptions& opt) 
   doc.invisible_removed = invisible_removed;
   doc.code_gaps_collapsed = code_gaps_collapsed_;
   doc.code_refs_decoded = code_refs_decoded_;
-  // normalise line endings and expand tabs
-  std::string norm;
-  norm.reserve(src.size());
-  for (size_t i = 0; i < src.size(); i++) {
-    if (src[i] == '\r') continue;
-    if (src[i] == '\t') { norm += "    "; continue; }
-    norm += src[i];
+  const std::string& src = *srcp;
+  // expand tabs (split_lines drops the '\r's of CRLF line endings)
+  if (memchr(src.data(), '\t', src.size())) {
+    std::string norm;
+    norm.reserve(src.size() + 64);
+    for (char c : src) {
+      if (c == '\t') norm += "    ";
+      else norm += c;
+    }
+    lines_ = split_lines(norm);
+  } else {
+    lines_ = split_lines(src);
   }
-  lines_ = split_lines(norm);
   lines_.push_back("");  // sentinel
   li_ = 0;
   extract_definitions();  // front matter + "[label]: url" definitions
