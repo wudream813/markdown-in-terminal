@@ -95,6 +95,15 @@ int main(int argc, char** argv) {
   auto t_layout = std::chrono::steady_clock::now();
   view.set_document(std::move(doc), argv[1], ".");   // lays the document out
   double layout_ms = ms_since(t_layout);
+  if (const char* sig = getenv("MDT_LAYOUT_SIG")) {  // equivalence checks: the whole layout as text
+    view.finish_layout();
+    FILE* f = fopen(sig, "wb");
+    if (f) {
+      std::string s = view.layout_signature();
+      fwrite(s.data(), 1, s.size(), f);
+      fclose(f);
+    }
+  }
 
   DocView::LayoutStats st = view.layout_stats();
   printf("layout              : %d rows total, %zu lines, %zu runs, %zu table cells, %.1f MB of run text, "

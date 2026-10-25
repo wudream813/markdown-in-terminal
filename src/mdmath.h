@@ -42,7 +42,17 @@ struct MathMetrics {
 class MathRenderer {
  public:
   void init(bool enable_js, std::string* err = nullptr);
-  bool has_js() const { return js_ok_; }
+  // Like init(), but the JS engine (about 130 ms: QuickJS compiles the whole
+  // MathJax bundle) starts the first time a formula is typeset or has_js() is
+  // asked - a document without maths never pays for it.  A failure is kept
+  // for take_js_error().
+  void init_lazy(bool enable_js) { js_wanted_ = enable_js; }
+  bool has_js() const { start_js(); return js_ok_; }
+  // has_js() without starting the engine: true while it is running or yet to
+  // be started (for the status bar, which must not cost a first frame 130 ms).
+  bool js_expected() const { return js_ok_ || js_wanted_; }
+  // The engine failed to start since the last call: true once, with the reason.
+  bool take_js_error(std::string* err);
 
   // Metrics (fonts/geometry) for `tex`; `em_px` is the pixel size of 1em.
   MathMetrics metrics(const std::string& tex, bool display, double em_px);
@@ -64,8 +74,12 @@ class MathRenderer {
   size_t cache_entries() const { return raster_cache_.size() + metrics_cache_.size(); }
 
  private:
-  JsMathEngine js_;
-  bool js_ok_ = false;
+  void start_js() const;
+  mutable JsMathEngine js_;
+  mutable bool js_ok_ = false;
+  mutable bool js_wanted_ = false;  // init_lazy(true) and not started yet
+  mutable std::string js_err_;
+  mutable bool js_err_new_ = false;
   std::map<std::string, std::shared_ptr<MathMetrics>> metrics_cache_;
   std::map<std::string, std::shared_ptr<Image>> raster_cache_;
   size_t limit_ = 512;

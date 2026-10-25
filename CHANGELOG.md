@@ -5,6 +5,51 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [0.3.25] — 2026-10-25
+
+A small file opens in 0.04 s instead of half a second, and laying out a big
+one takes half the time.
+
+### Changed
+
+* **Start-up no longer waits out the terminal probe.**  At start mdt asks the
+  terminal for its cell size, window size, primary device attributes and
+  kitty graphics support, and then waited the whole 350 ms timeout even when
+  every answer had long arrived.  The device-attributes query now goes last:
+  every terminal answers it, in order, so once its answer is in nothing else
+  is coming and the wait ends 10 ms later.  A terminal that does not answer
+  it still gets the full timeout.  Not on Windows, where the console host
+  answers that query itself ahead of the terminal behind ConPTY.  `--diag`
+  uses the same probe and returns sooner too.
+* **The maths engine starts when the first formula needs it.**  QuickJS and
+  KaTeX took 0.13 s to start before the first frame, also for files without
+  a formula, in a terminal without graphics (where formulas are drawn as
+  Unicode text anyway) and for `--dump`.  `--dump` of a small file now takes
+  7 ms instead of 0.14 s.  If the engine fails to start, the status bar says
+  so for 8 s and the formulas fall back to Unicode, as before (the warning
+  used to go to stderr before the screen was set up).
+* **Layout in half the time.**  Every word carried a full copy of its span
+  (text, link and all) while it was wrapped, was measured again after it had
+  been cut out, and was copied once more into the line; ASCII text now also
+  skips the width table.  Laying out the 11 MB prose file went from 0.8 to
+  0.35 s, the mixed one from 0.8 to 0.5 s; `G` straight after the first
+  screen (which lays out up to the end first) is instant, `--dump` of the
+  prose file takes 1.4 s instead of 2.5 s, and the peak memory of the reader
+  and of a reload both dropped by about 11 MB.
+* Together: in a terminal that answers its probes the first screen of the
+  prose file comes after 0.35 s (0.85 s), of the mixed file after 0.8 s
+  (1.3 s); with kitty graphics the demo shows in 0.25 s instead of 0.6 s.
+
+### Developer
+
+* `tools/big_bench.py` answers the start-up probes like a terminal without
+  graphics (`BENCH_SILENT=1` for the old silent pty) and times the first
+  frame by the status bar, not by the last byte before the output goes quiet,
+  which counted the frame the background layout draws when it finishes.
+* `tools/mem_report.cpp` writes the layout signature to the file named by
+  `MDT_LAYOUT_SIG`, and the signature now includes every style field of a
+  run, so the layout changes were checked to give byte-identical results.
+
 ## [0.3.24] — 2026-10-25
 
 Parsing a big document takes a third less time, and a reload of one keeps less

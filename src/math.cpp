@@ -110,11 +110,27 @@ bool JsMathEngine::render_svg(const std::string& tex, bool display, std::string&
 
 // ======================================================= math renderer ======
 void MathRenderer::init(bool enable_js, std::string* err) {
-  if (enable_js) {
-    std::string jerr;
-    js_ok_ = js_.init(&jerr);
-    if (!js_ok_ && err) *err = jerr;
+  js_wanted_ = enable_js;
+  start_js();
+  if (enable_js && !js_ok_ && err) *err = js_err_;
+}
+
+void MathRenderer::start_js() const {
+  if (!js_wanted_) return;
+  js_wanted_ = false;
+  std::string jerr;
+  js_ok_ = js_.init(&jerr);
+  if (!js_ok_) {
+    js_err_ = jerr;
+    js_err_new_ = true;
   }
+}
+
+bool MathRenderer::take_js_error(std::string* err) {
+  if (!js_err_new_) return false;
+  js_err_new_ = false;
+  if (err) *err = js_err_;
+  return true;
 }
 
 static std::string metrics_key(const std::string& tex, bool display, double em_px) {
@@ -138,6 +154,7 @@ MathMetrics MathRenderer::metrics(const std::string& tex, bool display, double e
 
   auto m = std::make_shared<MathMetrics>();
   m->text = latex_to_unicode(tex, display);
+  start_js();
   if (js_ok_) {
     std::string svg, jerr2;
     bool rendered = js_.render_svg(tex, display, svg, &jerr2);

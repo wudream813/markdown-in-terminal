@@ -347,6 +347,14 @@ void App::render() {
   else view.scroll_to(view.scroll_top());
 
   view.draw(scr, 0, 0, vcols, vrows, view.scroll_top());
+  {
+    // The maths engine starts with the first formula (MathRenderer::init_lazy):
+    // a failure shows up here, in the status bar, rather than on stderr.
+    std::string jerr;
+    if (math.take_js_error(&jerr))
+      set_status(fmt(tr("maths engine unavailable (%s), using unicode",
+                        "公式引擎不可用（%s），改用 Unicode"), jerr.c_str()), 8.0);
+  }
 
   // ---- scrollbar ----------------------------------------------------------
   // It lives in the right margin (content_margin is 1), so it never covers text.
@@ -492,7 +500,7 @@ void App::render() {
   int block = view.block_at_row(view.scroll_top());
   int src_line = 0;
   if (block >= 0 && block < (int)view.doc().blocks.size()) src_line = view.doc().blocks[(size_t)block].src_line;
-  std::string engine = math.has_js() ? "katex" : "unicode";
+  std::string engine = math.js_expected() ? "katex" : "unicode";
   if (view.doc().entities_unescaped) engine += " +entities";
   if (view.doc().backslashes_removed > 0) engine += " +escapes";
   if (view.doc().loose_markers) engine += " +loose";
@@ -1232,11 +1240,9 @@ int run_app(const AppOptions& opts) {
   app.terminal_bg = opts.terminal_bg;
   std::string err;
 
-  app.math.init(opts.math == "katex", &err);
-  if (opts.math == "katex" && !app.math.has_js())
-    fprintf(stderr, tr("mdt: maths engine unavailable (%s), using unicode\n",
-                       "mdt: 公式引擎不可用（%s），改用 Unicode\n"),
-            err.c_str());
+  // Started by the first formula: 130 ms less before the first screen of a
+  // document without maths (a failure is reported in the status bar).
+  app.math.init_lazy(opts.math == "katex");
 
   mdt::set_compat_mode(opts.compat);
   if (!app.term.init(opts.compat ? "none" : opts.gfx)) return 1;
@@ -1511,7 +1517,7 @@ static bool render_dump(const AppOptions& opt, std::string* err) {
   caps.cell_w = 8; caps.cell_h = 16; caps.gfx = GfxProto::None;
   Terminal term;
   MathRenderer math;
-  math.init(opt.math == "katex", nullptr);
+  math.init_lazy(opt.math == "katex");
   DocView view;
   view.set_math(&math);
   view.set_theme(theme_by_name(opt.theme));
@@ -1591,7 +1597,7 @@ static bool render_screenshot(App* placeholder, const AppOptions& opt, std::stri
   MdDocument doc = parser.parse(text, mo);
 
   MathRenderer math;
-  math.init(opt.math == "katex", nullptr);
+  math.init_lazy(opt.math == "katex");
   Terminal term;
   term.caps.cols = cols;
   term.caps.rows = rows;

@@ -171,6 +171,7 @@ bool in_ranges(const Range* r, size_t n, uint32_t cp) {
 int cp_width(uint32_t cp) {
   if (cp == 0) return 0;
   if (cp < 32 || (cp >= 0x7F && cp < 0xA0)) return 0;  // control
+  if (cp < 0x300) return 1;  // Latin: below the first zero-width and wide range
   if (in_ranges(kZero, sizeof(kZero) / sizeof(kZero[0]), cp)) return 0;
   if (cp < 0x1100) return 1;
   if (in_ranges(kWide, sizeof(kWide) / sizeof(kWide[0]), cp)) return 2;
@@ -179,7 +180,12 @@ int cp_width(uint32_t cp) {
 
 int str_width(const std::string& s) {
   int w = 0; size_t i = 0;
-  while (i < s.size()) w += cp_width(utf8_next(s, i));
+  const size_t n = s.size();
+  while (i < n) {
+    unsigned char c = (unsigned char)s[i];
+    if (c >= 0x20 && c < 0x7F) { w++; i++; continue; }  // printable ASCII: one cell
+    w += cp_width(utf8_next(s, i));
+  }
   return w;
 }
 

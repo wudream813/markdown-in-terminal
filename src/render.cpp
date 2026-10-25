@@ -1726,8 +1726,10 @@ std::string DocView::layout_signature() const {
                  l.band_hover.g, l.band_hover.b, l.arrow_rgb.r, l.arrow_rgb.g, l.arrow_rgb.b);
       for (const RGB& c : l.bar_rgbs) out += fmt(" %02x%02x%02x", c.r, c.g, c.b);
       for (const Run& r : l.runs)
-        out += fmt("[%d,%d,%d,%d%02x%02x%02x:%s]", r.x, r.width, r.rows, r.style.has_color ? 1 : 0,
-                   r.style.color.r, r.style.color.g, r.style.color.b, r.text.c_str());
+        out += fmt("[%d,%d,%d,%d%02x%02x%02x k%d %d%d%d%d%d%d i%d %s:%s]", r.x, r.width, r.rows,
+                   r.style.has_color ? 1 : 0, r.style.color.r, r.style.color.g, r.style.color.b,
+                   (int)r.style.kind, r.style.bold, r.style.italic, r.style.strike, r.style.underline,
+                   r.style.dim, r.style.is_link, r.img >= 0 ? 1 : 0, r.style.link().c_str(), r.text.c_str());
       for (const TCell& c : l.cells) out += fmt("{%d,%d:%s}", c.x, c.width, c.text.c_str());
       out += "\n";
     }
@@ -2087,7 +2089,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
   int cw = std::max(1, cell_w()), chh = std::max(1, cell_h());
   struct Atom {
     std::string text;
-    Span style;
+    RunStyle style;  // converted once per span (a link is looked up once, not per word)
     int w = 0;
     bool space = false;
     bool brk = false;     // line may break after this atom
@@ -2100,6 +2102,11 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
     bool is_image = false;
   };
   std::vector<Atom> atoms;
+  {
+    size_t guess = 1;  // about one atom per word and one per space
+    for (const Span& sp : spans) guess += 1 + sp.text.size() / 3;
+    atoms.reserve(guess);
+  }
   for (const Span& sp : spans) {
     Span style = base;
     if (sp.bold) style.bold = true;
@@ -2118,23 +2125,33 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
       style.link = sp.link;
     }
     if (sp.has_color) { style.has_color = true; style.color = sp.color; }
+    const RunStyle rstyle(style);
     switch (sp.kind) {
       case Span::Text: {
-        std::string t = sp.text;
+        const std::string& t = sp.text;
         size_t i = 0;
         std::string cur;
+        int cur_w = 0;
         auto flush_word = [&]() {
           if (!cur.empty()) {
             Atom a;
             a.text = cur;
-            a.style = style;
-            a.w = str_width(cur);
+            a.style = rstyle;
+            a.w = cur_w;
             a.brk = true;
-            atoms.push_back(a);
+            atoms.push_back(std::move(a));
             cur.clear();
+            cur_w = 0;
           }
         };
         while (i < t.size()) {
+          unsigned char c0 = (unsigned char)t[i];
+          if (c0 > ' ' && c0 < 0x7F) {  // printable ASCII, not a space: part of a word
+            cur += (char)c0;
+            cur_w++;
+            i++;
+            continue;
+          }
           size_t save = i;
           uint32_t cp = utf8_next(t, i);
           int cwid = cp_width(cp);
@@ -2148,21 +2165,22 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
             a.space = true;
             a.w = 1;
             a.brk = true;
-            a.style = style;
-            atoms.push_back(a);
+            a.style = rstyle;
+            atoms.push_back(std::move(a));
             continue;
           }
           if (cwid == 2) {  // CJK: breakable between characters
             flush_word();
             Atom a;
-            a.text = t.substr(save, i - save);
-            a.style = style;
+            a.text.assign(t, save, i - save);
+            a.style = rstyle;
             a.w = 2;
             a.brk = true;
-            atoms.push_back(a);
+            atoms.push_back(std::move(a));
             continue;
           }
-          cur += t.substr(save, i - save);
+          cur.append(t, save, i - save);
+          cur_w += cwid;
         }
         flush_word();
         break;
@@ -2170,10 +2188,10 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
       case Span::Code: {
         Atom a;
         a.text = " " + sp.text + " ";
-        a.style = style;
+        a.style = rstyle;
         a.w = str_width(a.text);
         a.brk = true;
-        atoms.push_back(a);
+        atoms.push_back(std::move(a));
         break;
       }
       case Span::Math: {
@@ -2181,11 +2199,11 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
         a.is_math = true;
         a.tex = sp.tex;
         a.is_display = sp.display_math;
-        a.style = style;
+        a.style = rstyle;
         a.brk = true;
         if (sp.display_math) {
           a.img = -2;  // display maths inside a paragraph: own line
-          atoms.push_back(a);
+          atoms.push_back(std::move(a));
           break;
         }
         int maxw = std::min((width)*cw, 40 * cw);
@@ -2196,7 +2214,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
           a.w = str_width(a.text);
           a.style.has_color = true;
           a.style.color = theme_.math_fg;
-          atoms.push_back(a);
+          atoms.push_back(std::move(a));
         } else {
           a.img = (int)assets_.size();
           assets_.push_back(asset);
@@ -2204,7 +2222,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
           a.px_h = asset->px_h;
           a.baseline = asset->baseline_px;
           a.w = std::max(1, (int)std::ceil((double)asset->px_w / cw));
-          atoms.push_back(a);
+          atoms.push_back(std::move(a));
         }
         break;
       }
@@ -2215,13 +2233,13 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
           a.style.has_color = true;
           a.style.color = theme_.link;
           a.w = str_width(a.text);
-          atoms.push_back(a);
+          atoms.push_back(std::move(a));
           break;
         }
         Atom a;
         a.is_image = true;
         a.src = sp.link;
-        a.style = style;
+        a.style = rstyle;
         a.brk = true;
         int maxh = chh * 2;
         int maxw = std::min(width * cw, 24 * cw);
@@ -2231,14 +2249,14 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
           a.style.has_color = true;
           a.style.color = theme_.muted;
           a.w = str_width(a.text);
-          atoms.push_back(a);
+          atoms.push_back(std::move(a));
         } else {
           a.img = (int)assets_.size();
           assets_.push_back(asset);
           a.px_w = asset->px_w;
           a.px_h = asset->px_h;
           a.w = std::max(1, (int)std::ceil((double)asset->px_w / cw));
-          atoms.push_back(a);
+          atoms.push_back(std::move(a));
         }
         break;
       }
@@ -2247,10 +2265,10 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
         a.text = "";
         a.w = 0;
         a.brk = false;
-        a.style = style;
+        a.style = rstyle;
         // hard break marker
         a.text = "\n";
-        atoms.push_back(a);
+        atoms.push_back(std::move(a));
         break;
       }
       default: break;
@@ -2258,6 +2276,11 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
   }
   // greedy wrap
   std::vector<Line> lines;
+  {
+    long total_w = 0;
+    for (const Atom& a : atoms) total_w += a.w;
+    lines.reserve((size_t)(total_w / width) + 2);
+  }
   Line cur;
   int x = 0;
   auto start_line = [&]() {
@@ -2266,12 +2289,11 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
     x = 0;
   };
   size_t i = 0;
-  auto emit_text = [&](const Atom& a, bool as_space) {
-    std::string t = as_space ? "" : a.text;
-    if (t.empty() && !as_space && a.img < 0) return;
+  auto emit_text = [&](Atom& a, bool as_space) {  // the atom is not used again: its text moves
+    if (!as_space && a.text.empty() && a.img < 0) return;
     if (!as_space) {
       Run r;
-      r.text = t;
+      r.text = std::move(a.text);
       r.style = a.style;
       r.x = x;
       r.width = a.w;
@@ -2293,7 +2315,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
         cur.runs.back().text += r.text;
         cur.runs.back().width += r.width;
       } else {
-        cur.runs.push_back(r);
+        cur.runs.push_back(std::move(r));
       }
       x += a.w;
     } else {
@@ -2307,7 +2329,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
         cur.runs.back().text += " ";
         cur.runs.back().width += 1;
       } else {
-        cur.runs.push_back(r);
+        cur.runs.push_back(std::move(r));
       }
       x += 1;
     }
@@ -2325,7 +2347,7 @@ void DocView::build_lines(const std::vector<Span>& spans, int indent, int width,
     }
   };
   while (i < atoms.size()) {
-    const Atom& a = atoms[i];
+    Atom& a = atoms[i];
     if (a.text == "\n" && a.img < 0) {  // hard break
       trim_line();
       cur.row = (int)lines.size();

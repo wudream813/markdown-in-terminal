@@ -217,7 +217,7 @@ upgrade:
 
 ```sh
 # Debian, Ubuntu, Raspberry Pi OS ... (amd64 and arm64)
-V=0.3.24                                   # the table below lists both names
+V=0.3.25                                   # the table below lists both names
 curl -fLO https://github.com/wudream813/markdown-in-terminal/releases/download/v$V/mdt_$V-1_amd64.deb
 sudo apt install ./mdt_$V-1_amd64.deb      # nothing to pull in: the binary is static
 
@@ -761,19 +761,21 @@ quotes).  `python3 tools/make_big_docs.py /tmp/big` writes both and
 | | prose, 11.7 MB | mixed, 11.4 MB |
 |:--|--:|--:|
 | parse | 0.2 s (0.3.23: 0.4 s) | 0.6 s (0.3.23: 0.8 s, 0.3.20: 11.9 s) |
-| layout | 0.8 s | 0.8 s |
-| reader, first screen | 0.85 s (0.3.23: 1.0 s, 0.3.22: 1.8 s) | 1.25 s (0.3.23: 1.5 s, 0.3.22: 2.2 s) |
-| reader, peak memory | 166 MB (0.3.21: 210 MB) | 316 MB (0.3.21: 421 MB, 0.3.20: 456 MB) |
-| `r` / `--watch` reload, peak memory | 183 MB (0.3.23: 194 MB, 0.3.21: 249 MB) | 338 MB (0.3.23: 357 MB, 0.3.21: 478 MB, 0.3.20: 690 MB) |
+| layout | 0.35 s (0.3.24: 0.8 s) | 0.5 s (0.3.24: 0.8 s) |
+| reader, first screen | 0.35 s (0.3.24: 0.85 s, 0.3.22: 1.8 s) | 0.8 s (0.3.24: 1.3 s, 0.3.22: 2.2 s) |
+| reader, peak memory | 150 MB (0.3.24: 161 MB, 0.3.21: 210 MB) | 294 MB (0.3.24: 306 MB, 0.3.21: 421 MB, 0.3.20: 456 MB) |
+| `r` / `--watch` reload, peak memory | 172 MB (0.3.24: 183 MB, 0.3.21: 249 MB) | 327 MB (0.3.24: 339 MB, 0.3.21: 478 MB, 0.3.20: 690 MB) |
 | `t` (next theme) | 2 ms (0.3.21: 0.8 s) | 2 ms (0.3.21: 0.9 s) |
 | a page with new formulas (`j`, `g`) | | 1 ms (0.3.20: 0.3-0.4 s) |
 | scrolling, `G`, search | ≤ 50 ms | ≤ 80 ms |
 | `r` / `--watch` reload, until the page is back | 0.35 s (0.3.23: 0.7 s, 0.3.22: 1.4 s) | 0.8 s (0.3.23: 1.0 s, 0.3.22: 1.8 s) |
 
-The first-screen times include about half a second in which the reader waits
-for a terminal in a pty that never answers its probes (a small file takes
-0.5 s in the same harness); in a real terminal the prose file opens in about
-a third of a second, most of it parsing.  Since 0.3.23 the reader lays out only the
+The pty in `big_bench.py` answers the start-up probes like a terminal without
+graphics (0.3.25 changed this; the older numbers were taken in a pty that never
+answered, and include the 0.35 s the reader then waits for it).  A small file
+shows its first screen in 0.04 s (0.3.24: 0.5 s): the reader used to wait out
+the probe timeout even when every answer was in, and started the maths engine
+(0.13 s) before the first frame whether or not the page had a formula.  Since 0.3.23 the reader lays out only the
 first two screens before it draws and does the rest in 12 ms slices between
 keys (about 0.8 s more for these files); `G`, a search, a heading jump or a
 reload that has to land further down lays out up to there first, and the
@@ -789,7 +791,10 @@ in, and only the stale blocks that come into view are redone); and the reader
 laid the whole document out before it showed the first screen.  0.3.24 took
 a third off the parse: the check for a backslash-escaped file copied every
 line twice even when the file had no backslash at all, and the per-line
-tests allocated a trimmed copy of the line.  On the memory
+tests allocated a trimmed copy of the line.  0.3.25 halved the layout: every
+word carried a full copy of its span (text, link and all) while it was being
+wrapped, was measured a second time after it had been cut out, and was copied
+again into the line instead of moved.  On the memory
 side the laid-out runs carry a 20-byte style instead of a whole span, the
 fields only directives, images and definition lists use moved out of `Block`
 (568 -> 264 bytes, 200,000 of them in the mixed file), `Line` and the table

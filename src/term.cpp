@@ -4,6 +4,7 @@
 #include "platform.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -277,14 +278,36 @@ bool Terminal::init(const std::string& gfx_override) {
   return true;
 }
 
+#ifndef _WIN32
+// A complete primary DA answer, CSI ? <digits and ;> c, somewhere in `resp`.
+static bool da1_answered(const std::string& resp) {
+  for (size_t p = resp.find("\x1b[?"); p != std::string::npos; p = resp.find("\x1b[?", p + 1)) {
+    size_t e = p + 3;
+    while (e < resp.size() && (isdigit((unsigned char)resp[e]) || resp[e] == ';')) e++;
+    if (e < resp.size() && resp[e] == 'c') return true;
+  }
+  return false;
+}
+#endif
+
 void Terminal::query_capabilities(int timeout_ms) {
   if (g_compat) return;  // probing upsets some terminals, and we do not need it
   // Ask for cell size (16t), window size (14t), DA1 (c), kitty graphics support (a=q).
   std::string q;
   q += "\x1b[16t";        // cell size in pixels  -> CSI 6 ; h ; w t
   q += "\x1b[14t";        // window size in px    -> CSI 4 ; h ; w t
+#ifdef _WIN32
   q += "\x1b[c";          // primary DA           -> CSI ? ... c
   q += "\x1b_Gi=31,s=1,v=1,a=q,f=24,t=d;AAAA\x1b\\";  // kitty graphics probe
+#else
+  // Primary DA goes last: every terminal answers it, and in order, so its
+  // answer means the others have arrived (or will never come) and the wait
+  // can end there - a few ms instead of the whole timeout on every start.
+  // Not on Windows: the console host answers DA itself, ahead of what the
+  // real terminal behind ConPTY still has to say.
+  q += "\x1b_Gi=31,s=1,v=1,a=q,f=24,t=d;AAAA\x1b\\";  // kitty graphics probe
+  q += "\x1b[c";          // primary DA           -> CSI ? ... c
+#endif
   wout(q);
   std::string resp;
   double deadline = now_ms() + timeout_ms;
@@ -294,6 +317,12 @@ void Terminal::query_capabilities(int timeout_ms) {
     int n = plat::read_input(buf, sizeof(buf));
     if (n <= 0) break;
     resp.append(buf, (size_t)n);
+#ifndef _WIN32
+    if (da1_answered(resp)) {
+      if (now_ms() + 10 < deadline) deadline = now_ms() + 10;  // stragglers of a split write
+      continue;
+    }
+#endif
     if (resp.find("\x1b\\") != std::string::npos && resp.find('c') != std::string::npos) {
       // keep reading a little in case several answers are still in flight
       if (now_ms() + 40 > deadline) deadline = now_ms() + 40;
