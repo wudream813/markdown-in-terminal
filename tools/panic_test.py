@@ -53,13 +53,27 @@ def run(argv, env_extra, timeout=20.0):
                 break
             out += chunk
         if b"\x1b[?1049l" in out:
-            time.sleep(0.4)
             break
-    # the pty line discipline reflects the slave termios: raw mode must be gone
-    try:
-        after = termios.tcgetattr(fd)
-    except OSError:
-        after = baseline
+    # the pty line discipline reflects the slave termios: raw mode must be gone.
+    # mdt puts termios back right after its last write, so on a busy machine
+    # (the macOS runners) a fixed pause can look too early - poll for a while.
+    after = baseline
+    t1 = time.time()
+    while time.time() - t1 < 3.0:
+        try:
+            after = termios.tcgetattr(fd)
+        except OSError:
+            after = baseline
+            break
+        if (after[3] & termios.ICANON) and (after[3] & termios.ECHO):
+            break
+        r, _, _ = select.select([fd], [], [], 0.05)
+        if r:
+            try:
+                chunk = os.read(fd, 1 << 20)
+            except OSError:
+                chunk = b""
+            out += chunk
     try:
         os.close(fd)
     except OSError:
