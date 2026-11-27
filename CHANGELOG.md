@@ -13,7 +13,9 @@ where a full line lost its tail.  Every one has a strict regression check in
 fixed four more bugs - two of them in the graphics layer - each with a new
 regression test under `tools/` that fails on the old behaviour.  Two build
 warnings (an unused static on Windows, a `WIN32_LEAN_AND_MEAN` redefinition)
-are gone as well.
+are gone as well.  A third pass, prompted by Windows Terminal 1.25, fixed the
+dead Esc on kitty-keyboard terminals and `--gfx=auto` reporting "none" on a
+terminal that renders sixel.
 
 ### Fixed
 
@@ -73,6 +75,23 @@ are gone as well.
   stale result back into the just-cleared cache**, so the screen showed the old
   image again until the fresh download replaced it.  A download started before
   a reload is now dropped (`tools/remote_stale_test.py` B).
+* **Esc was dead on terminals that honour the kitty keyboard protocol**
+  (kitty, ghostty, Windows Terminal 1.25+): mdt pushes `ESC[>1u` at startup,
+  which makes those terminals encode Esc as `CSI 27 u`, and the key table
+  mapped only `CSI 13 u` (Enter) and dropped the rest.  The protocol codes for
+  Esc/Enter/Tab/Backspace are decoded now, and mdt pops the flags on exit
+  (`ESC[<1u`) so the shell keeps a working Esc too
+  (`tools/kitty_key_test.py`).
+* **`--gfx=auto` reported "none" on Windows Terminal although it renders
+  sixel.**  Two halves: the capability probe stopped reading at the first
+  zero-byte read (the Windows record reader says "nothing right now" that way
+  whenever the queued records produce no bytes, e.g. key releases), and a
+  still-incomplete reply was dropped at that moment - and ConPTY is known to
+  split DA answers across reads.  The probe now waits out its timeout and its
+  fragments, recognises a DA answer whose leading ESC the console host ate,
+  and honours the README promise ("sixel: Windows Terminal 1.22+") when the
+  host is Windows Terminal itself and its answer omitted the sixel token
+  (`tools/da1_sixel_test.py`).
 
 ## [0.3.26] — 2026-10-25
 

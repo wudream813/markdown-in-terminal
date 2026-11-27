@@ -260,6 +260,17 @@ bool Terminal::init(const std::string& gfx_override) {
     // ConPTY, and pictures work there).
     if (kitty_ok_) caps.gfx = GfxProto::Kitty;
     else if (caps.sixel) caps.gfx = GfxProto::Sixel;
+    else if (da1_seen_ && getenv("WT_SESSION")) {
+      // Windows Terminal (1.22+) renders sixel and its ConPTY passes the DCS
+      // through, but the console host answers DA1 with its own identity - which
+      // does not have to carry the sixel token (4) even when the terminal
+      // behind it draws the pictures (the packaged OpenConsole forwards the
+      // real identity, the inbox conhost does not).  When the host is Windows
+      // Terminal itself and *something* answered the probe, honour the README
+      // promise ("sixel: Windows Terminal 1.22+") instead of silently falling
+      // back to text formulas.
+      caps.gfx = GfxProto::Sixel;
+    }
     else caps.gfx = GfxProto::None;
 #else
     bool env_kitty = caps.term_name.find("kitty") != std::string::npos || getenv("KITTY_WINDOW_ID") ||
@@ -290,6 +301,20 @@ static bool da1_answered(const std::string& resp) {
 }
 #endif
 
+// A primary DA answer body (CSI ? ... c): record that one arrived and whether
+// it advertises sixel (capability token 4).
+static void note_da1(const std::string& body, bool& sixel, bool& seen) {
+  seen = true;
+  if (body.find(";4") != std::string::npos || body.find("?4;") != std::string::npos ||
+      (body.size() > 1 && body[1] == '4')) sixel = true;
+  // note: xterm reports ";4" among capabilities
+  if (body.find("4") != std::string::npos) {
+    // conservative: only treat as sixel if 4 appears as a capability token
+    auto toks = split(body, ';');
+    for (auto& t : toks) { std::string tt = t; if (!tt.empty() && tt[0] == '?') tt = tt.substr(1); if (tt == "4") sixel = true; }
+  }
+}
+
 void Terminal::query_capabilities(int timeout_ms) {
   if (g_compat) return;  // probing upsets some terminals, and we do not need it
   // Ask for cell size (16t), window size (14t), DA1 (c), kitty graphics support (a=q).
@@ -315,8 +340,33 @@ void Terminal::query_capabilities(int timeout_ms) {
     if (!plat::wait_input(30)) continue;
     char buf[1024];
     int n = plat::read_input(buf, sizeof(buf));
-    if (n <= 0) break;
+    if (n < 0) break;       // EOF / unusable console
+    if (n == 0) continue;   // "nothing right now" - the Windows record reader
+                            // says this whenever the queued records produced no
+                            // bytes (key releases, focus events); ending the
+                            // probe here lost the answers that were still on
+                            // their way and Windows always came up with
+                            // graphics "none"
     resp.append(buf, (size_t)n);
+    // A reply can reach a ConPTY host split across reads (microsoft/terminal
+    // #19282), so if we are standing in the middle of an escape sequence, give
+    // its tail a moment to arrive instead of stopping here.
+    {
+      size_t lesc = resp.rfind('\x1b');
+      if (lesc != std::string::npos) {
+        bool unfinished = false;
+        if (lesc + 1 >= resp.size()) {
+          unfinished = true;  // lone ESC tail
+        } else if (resp[lesc + 1] == '[' || resp[lesc + 1] == 'O') {
+          size_t i = lesc + 2;
+          while (i < resp.size() && (unsigned char)resp[i] < 0x40) i++;
+          unfinished = i >= resp.size();
+        } else if (resp[lesc + 1] == '_' || resp[lesc + 1] == 'P') {
+          unfinished = resp.find("\x1b\\", lesc) == std::string::npos;
+        }
+        if (unfinished && now_ms() + 150 > deadline) deadline = now_ms() + 150;
+      }
+    }
 #ifndef _WIN32
     if (da1_answered(resp)) {
       if (now_ms() + 10 < deadline) deadline = now_ms() + 10;  // stragglers of a split write
@@ -333,6 +383,19 @@ void Terminal::query_capabilities(int timeout_ms) {
   while (pos < resp.size()) {
     size_t esc = resp.find('\x1b', pos);
     if (esc == std::string::npos) {
+      // Some console hosts eat the ESC of a reply before the application sees
+      // it (the mangling that already costs mouse reports theirs).  A tail
+      // that is exactly a DA answer without its leading ESC is still the
+      // answer, not user input.
+      if (pos < resp.size() && resp[pos] == '[' && pos + 1 < resp.size() &&
+          resp[pos + 1] == '?') {
+        size_t e = pos + 2;
+        while (e < resp.size() && (isdigit((unsigned char)resp[e]) || resp[e] == ';')) e++;
+        if (e + 1 == resp.size() && resp[e] == 'c') {
+          note_da1(resp.substr(pos + 2, e - pos - 2), caps.sixel, da1_seen_);
+          break;
+        }
+      }
       inbuf_.append(resp, pos, std::string::npos);  // leftover user input
       break;
     }
@@ -359,14 +422,7 @@ void Terminal::query_capabilities(int timeout_ms) {
         auto parts = split(body, ';');
         if (parts.size() >= 3) { caps.win_h = atoi(parts[1].c_str()); caps.win_w = atoi(parts[2].c_str()); }
       } else if (final == 'c') {
-        if (body.find(";4") != std::string::npos || body.find("?4;") != std::string::npos ||
-            (body.size() > 1 && body[1] == '4')) caps.sixel = true;
-        // note: xterm reports ";4" among capabilities
-        if (body.find("4") != std::string::npos) {
-          // conservative: only treat as sixel if 4 appears as a capability token
-          auto toks = split(body, ';');
-          for (auto& t : toks) { std::string tt = t; if (!tt.empty() && tt[0] == '?') tt = tt.substr(1); if (tt == "4") caps.sixel = true; }
-        }
+        note_da1(body, caps.sixel, da1_seen_);
       }
       pos = end + 1;
       continue;
@@ -378,9 +434,11 @@ void Terminal::query_capabilities(int timeout_ms) {
 }
 
 // Byte-for-byte the same sequence shutdown() writes, but in a static buffer so
-// it can be emitted from a signal handler.
+// it can be emitted from a signal handler.  \x1b[<1u pops the kitty keyboard
+// flags \x1b[>1u pushed at startup: without the pop, Esc stays CSI 27 u after
+// mdt exits and the shell never sees a bare Esc again.
 static const char kPanicExit[] =
-    "\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h\x1b[0m\x1b["
+    "\x1b[<1u\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h\x1b[0m\x1b["
     "?1049l";
 
 void Terminal::panic_restore() {
@@ -390,7 +448,7 @@ void Terminal::panic_restore() {
 void Terminal::shutdown() {
   if (!initialized_) return;
   clear_images();
-  wout("\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h\x1b[0m"
+  wout("\x1b[<1u\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h\x1b[0m"
        "\x1b[?1049l");
   if (raw_saved_) {
     plat::raw_end();
@@ -546,7 +604,14 @@ Terminal::KeyEvent Terminal::read_event(int timeout_ms) {
               default: k.code = 0; break;
             }
             break;
-          case 'u': k.code = p1 == 13 ? K_ENTER : 0; break;
+          case 'u':
+            // kitty keyboard protocol answers: when the terminal honoured the
+            // \x1b[>1u push (kitty, ghostty, Windows Terminal 1.25+, ...),
+            // Esc/Enter/Tab/Backspace arrive as CSI <code> u.  Missing the 27
+            // here is what made Esc dead on Windows Terminal 1.25.
+            k.code = p1 == 13 ? K_ENTER : p1 == 27 ? K_ESC :
+                     p1 == 9 ? K_TAB : p1 == 127 ? K_BACKSPACE : 0;
+            break;
           case 'Z': k.code = K_TAB; break;  // shift-tab: treat as tab
           default: k.code = 0; break;
         }

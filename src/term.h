@@ -207,6 +207,7 @@ class Terminal {
   bool initialized_ = false;
   bool raw_saved_ = false;
   bool kitty_ok_ = false;
+  bool da1_seen_ = false;   // a primary DA answer arrived (content may lack ;4)
   std::string inbuf_;
   int last_cols_ = 0, last_rows_ = 0;
 
