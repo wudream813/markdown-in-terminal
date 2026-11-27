@@ -235,17 +235,36 @@ struct RemoteImageLoader::State {
   bool stop = false;
   bool changed = false;
   int in_flight = 0;
+  // Bumped by clear(): "reload images" wants a fresh copy, so a download that
+  // was already running when the caches were dropped must not land in the new
+  // results (it used to, and the stale bytes/failure stuck until restart).
+  uint64_t gen = 0;
 };
 
 static bool remote_fetch(const std::string& url, RemoteImage& out) {
+  std::string data, err;
+  if (!http_get(url, data, &err)) {
+    out.err = err.empty() ? std::string("download failed") : err;
+    return false;
+  }
+  // An SVG is not decoded here: its rasterisation needs the current theme's
+  // colours, so the bytes travel to asset_for_image instead.  (Before 0.3.27
+  // remote SVGs never reached this loader at all - asset_for_image fetched
+  // them synchronously on the UI thread and a slow host froze the reader.)
+  std::string head = data.substr(0, std::min<size_t>(data.size(), 1024));
+  if (is_svg(url) || head.find("<svg") != std::string::npos) {
+    out.raw = std::move(data);
+    out.svg_raw = true;
+    out.ok = true;
+    return true;
+  }
   Image img;
-  std::string err;
-  if (image_load_source(url, img, &err, nullptr)) {
+  if (image_load_memory((const uint8_t*)data.data(), data.size(), img, &err)) {
     out.img = img;
     out.ok = true;
     return true;
   }
-  out.err = err.empty() ? std::string("download failed") : err;
+  out.err = err.empty() ? std::string("cannot decode image") : err;
   return false;
 }
 
@@ -263,11 +282,13 @@ void RemoteImageLoader::worker_entry(void* self) {
   holder.reset();
   for (;;) {
     std::string url;
+    uint64_t gen = 0;
     {
       std::lock_guard<std::mutex> lk(st->mu);
       if (st->stop) return;
       if (!st->queue.empty()) {
         url = st->queue.front();
+        gen = st->gen;
         st->queue.pop_front();
         st->in_flight++;
       }
@@ -285,6 +306,11 @@ void RemoteImageLoader::worker_entry(void* self) {
     r->done = true;
     std::lock_guard<std::mutex> lk(st->mu);
     st->in_flight--;
+    if (gen != st->gen) {
+      // clear() ran while this was downloading (the "reload images" key): the
+      // user asked for a fresh copy, so this result is dropped silently.
+      continue;
+    }
     st->results[url] = r;
     st->changed = true;
   }
@@ -347,6 +373,7 @@ void RemoteImageLoader::clear() {
   st_->results.clear();
   st_->seen.clear();
   st_->queue.clear();
+  st_->gen++;  // in-flight downloads from this generation are dropped on arrival
 }
 
 }  // namespace mdt

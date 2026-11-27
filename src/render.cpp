@@ -475,9 +475,12 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_image(const std::string&
   // images on a slow host used to block the event loop for the whole download,
   // which looked exactly like a dead keyboard.  Until the bytes are here the
   // picture is a short placeholder line, and the layout is refreshed once.
-  bool remote_raster = is_remote_url(src) && !ends_with(lower, ".svg");
+  // Rasters and SVGs alike: before 0.3.27 a remote .svg skipped the loader and
+  // downloaded synchronously right here (README's "images never block reading"
+  // did not hold for SVGs on a slow server).
+  bool remote = is_remote_url(src);
   RemoteImageLoader::Result loaded;
-  if (remote_raster) {
+  if (remote) {
     if (!opt_.remote_images) {  // no graphics, or a text dump: no network at all
       a->failed = true;
       a->err = "remote image";
@@ -503,16 +506,26 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_image(const std::string&
       a->err = loaded->err;
       asset_map_[key] = a;
       return a;
-    } else {
+    } else if (!loaded->svg_raw) {
       img = loaded->img;       // already downloaded and decoded
     }
   }
-  if (!remote_raster && (ends_with(lower, ".svg") || svg)) {
+  if (ends_with(lower, ".svg") || svg || (loaded && loaded->svg_raw)) {
     std::string xml;
-    if (is_remote_url(src)) {
-      std::string data;
-      if (!http_get(src, data, &err)) { a->failed = true; a->err = err; asset_map_[key] = a; return a; }
-      xml = data;
+    if (remote) {
+      if (loaded && loaded->svg_raw) {
+        xml = loaded->raw;     // bytes from the worker, rasterised below
+      } else if (loaded) {
+        a->failed = true;      // an ".svg" URL that decoded as a raster
+        a->err = "not an svg";
+        asset_map_[key] = a;
+        return a;
+      } else {
+        // no worker (a text dump or a screenshot): fetching here is fine
+        std::string data;
+        if (!http_get(src, data, &err)) { a->failed = true; a->err = err; asset_map_[key] = a; return a; }
+        xml = std::move(data);
+      }
     } else if (!read_file(local, xml)) {
       a->failed = true;
       a->err = "cannot read " + local;
@@ -533,7 +546,7 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_image(const std::string&
       asset_map_[key] = a;
       return a;
     }
-  } else if (!remote_raster || !loaded) {
+  } else if (!remote || !loaded) {
     if (!image_load_source(src, img, &err, &base_dir_)) {
       if (getenv("MDT_DEBUG_IMAGE"))
         fprintf(stderr, "[mdt] image %s: download failed: %s\n", src.c_str(), err.c_str());
@@ -613,10 +626,14 @@ void DocView::relayout() {
 // and one cell high, and the page colour is painted behind the ink.  Placed on
 // the cell it covers the transcription completely, and because the bitmap is
 // already the size of the cells it is drawn into, the terminal does not scale
-// it (that is what keeps formulas sharp elsewhere too).
+// it (that is what keeps formulas sharp elsewhere too).  The baked geometry
+// depends on where the formula sits in the cell (pc.col: the box is clamped to
+// the cell edges and the transcription position inside the bitmap follows it),
+// so the column offset is part of the cache key - without it a formula cached
+// at one column was reused at another and painted over that cell's text.
 std::shared_ptr<DocView::ImageAsset> DocView::cell_math_asset(const TCell::Piece& pc, int cw, int chh,
                                                              int max_cells, RGB bg) {
-  std::string key = fmt("CM|%d|%d|%d|%d|%d|%06x|%s", cw, chh, pc.cols, max_cells,
+  std::string key = fmt("CM|%d|%d|%d|%d|%d|%d|%06x|%s", cw, chh, pc.cols, pc.col, max_cells,
                         pc.display ? 1 : 0, (bg.r << 16) | (bg.g << 8) | bg.b, pc.tex.c_str());
   auto it = asset_map_.find(key);
   if (it != asset_map_.end()) return it->second;
@@ -1283,7 +1300,11 @@ int DocView::layout_range(size_t first, size_t last, int row, std::vector<BlockL
             int maxh = max_img_rows * chh;
             auto a = asset_for_image(sp->link, maxw, maxh, false);
             Line l;
-            l.row = 0;
+            // Every picture gets its own row: this used to be a fixed 0, so a
+            // paragraph with several images stacked them all on the block's
+            // first row (the later ones covered the earlier ones) while the
+            // row counter still reserved space for each - empty gap below.
+            l.row = row - bl.row;
             if (!a->failed) {
               l.kind = Line::Image;
               l.img = (int)assets_.size();

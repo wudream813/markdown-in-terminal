@@ -9,7 +9,11 @@ predate this file, so they are summarised from what their commits did.
 
 An audit pass fixed the cases where content silently disappeared and the ones
 where a full line lost its tail.  Every one has a strict regression check in
-`tests/smoke.sh` (0.3.27 section).
+`tests/smoke.sh` (0.3.27 section).  A second pass over the Windows test report
+fixed four more bugs - two of them in the graphics layer - each with a new
+regression test under `tools/` that fails on the old behaviour.  Two build
+warnings (an unused static on Windows, a `WIN32_LEAN_AND_MEAN` redefinition)
+are gone as well.
 
 ### Fixed
 
@@ -53,6 +57,22 @@ where a full line lost its tail.  Every one has a strict regression check in
   mojibake** ("first text" was parsed from the raw GBK bytes right next to the
   "converted to UTF-8 for rendering" line).  It now parses what the reader
   actually sees and honours the source-repair options like the dump does.
+* **Two block images in one paragraph drew on top of each other.**  The
+  paragraph laid both image lines out on the same row because the row offset
+  was computed once per paragraph instead of once per image; the images now
+  stack (`tools/multi_image_test.py`).
+* **The same formula in two different table columns shared one baked bitmap**
+  and both were drawn at the first formula's column: the bake cache key of a
+  cell formula missed its in-cell column offset.  The offset is part of the
+  key now (`tools/cell_math_pos_test.py`).
+* **A remote `.svg` was downloaded synchronously on the main thread**, so the
+  whole screen stayed blank until a slow download finished (remote rasters
+  already loaded asynchronously).  SVGs now go through the same async loader
+  and show the loading placeholder meanwhile (`tools/remote_stale_test.py` A).
+* **After a reload (`R`) an image download that was still in flight wrote its
+  stale result back into the just-cleared cache**, so the screen showed the old
+  image again until the fresh download replaced it.  A download started before
+  a reload is now dropped (`tools/remote_stale_test.py` B).
 
 ## [0.3.26] — 2026-10-25
 

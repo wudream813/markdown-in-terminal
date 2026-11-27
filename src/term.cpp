@@ -243,10 +243,6 @@ bool Terminal::init(const std::string& gfx_override) {
     else if (gfx_override == "sixel") caps.gfx = GfxProto::Sixel;
     else caps.gfx = GfxProto::None;
   } else {
-    bool env_kitty = caps.term_name.find("kitty") != std::string::npos || getenv("KITTY_WINDOW_ID") ||
-                     caps.term_program == "WezTerm" || caps.term_program == "ghostty" ||
-                     caps.term_program == "Ghostty" || caps.term_name.find("xterm-ghostty") != std::string::npos;
-    bool env_iterm = caps.term_program == "iTerm.app" || getenv("ITERM_SESSION_ID");
 #if defined(_WIN32)
     // On Windows the guess is not good enough to act on.  A console host sits
     // between mdt and the terminal, and it does not pass a long escape sequence
@@ -266,6 +262,10 @@ bool Terminal::init(const std::string& gfx_override) {
     else if (caps.sixel) caps.gfx = GfxProto::Sixel;
     else caps.gfx = GfxProto::None;
 #else
+    bool env_kitty = caps.term_name.find("kitty") != std::string::npos || getenv("KITTY_WINDOW_ID") ||
+                     caps.term_program == "WezTerm" || caps.term_program == "ghostty" ||
+                     caps.term_program == "Ghostty" || caps.term_name.find("xterm-ghostty") != std::string::npos;
+    bool env_iterm = caps.term_program == "iTerm.app" || getenv("ITERM_SESSION_ID");
     if (kitty_ok_) caps.gfx = GfxProto::Kitty;
     else if (env_kitty) caps.gfx = GfxProto::Kitty;
     else if (caps.sixel) caps.gfx = GfxProto::Sixel;

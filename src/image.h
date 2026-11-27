@@ -43,6 +43,10 @@ struct RemoteImage {
   bool ok = false;
   std::string err;
   Image img;  // decoded, at its natural size
+  // An SVG download arrives as raw bytes: it is rasterised with the CURRENT
+  // theme colours where it is used, so the loader's cache stays theme-free.
+  std::string raw;
+  bool svg_raw = false;
 };
 
 class RemoteImageLoader {
