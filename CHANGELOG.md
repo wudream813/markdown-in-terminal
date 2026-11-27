@@ -5,6 +5,55 @@ project uses semantic versioning. The version lives in `VERSION`; the Makefile,
 CMakeLists and `mdt --version` all read it from there. The releases before 0.3.8
 predate this file, so they are summarised from what their commits did.
 
+## [Unreleased]
+
+An audit pass fixed the cases where content silently disappeared and the ones
+where a full line lost its tail.  Every one has a strict regression check in
+`tests/smoke.sh` (0.3.27 section).
+
+### Fixed
+
+* **Lists and tables inside a blockquote vanished entirely.**  The quote layout
+  had no case for `List`/`Table` children and its fallback reads fields those
+  blocks do not fill, so `> - item` and `> | a | b |` rendered as nothing (the
+  plain-text export still printed them).  Both are laid out like their
+  list-item counterparts and keep the quote bar.
+* **Third-level list items were silently dropped**, and with them code blocks,
+  quotes, tables and formula blocks in a second-level item - only plain
+  paragraphs survived one level of nesting.  Nested lists now render every
+  block type at any depth; before, the screen and the text exported with `e`
+  disagreed on what the document said.
+* **`--line-numbers` (and Luogu documents, which turn it on by themselves) ate
+  the tail of every wrapped code line.**  The wrap width ignored the gutter the
+  drawing side reserved, so each full line lost `digits(line count) + 2`
+  characters that were laid out and then clipped away.  Layout and drawing now
+  share one gutter computation.
+* **A wide CJK table never shrank and lost its right side.**  The per-column
+  minimum width counted UTF-8 bytes (3 per Chinese character) while the natural
+  width counts display columns (2), so the shrink loop always bailed out and
+  the overflow was clipped off screen instead of wrapped.  The minimum is now
+  the longest narrow (one-cell) word in display columns - wide characters may
+  wrap anywhere anyway.
+* **A heading ending in `#` lost it** ("# C#" became "# C").  The closing `#`
+  run is now only stripped when CommonMark allows it: preceded by a space or
+  tab ("## Foo ##" still becomes "Foo").
+* **An image URL containing parentheses was cut at the first `)`**
+  (`![d](x_(1).png)` left `.png)` as literal text).  The image branch now
+  scans balanced parentheses like the link branch always has.
+* **A local image with a Windows absolute path failed to load** (`C:\x.png`,
+  `C:/x.png`, `\\server\share\x.png`, `file:///C:/x.png`): the document's
+  directory was glued in front of it.  Absolute-path detection now knows
+  drive letters and UNC paths, on every platform.
+* **A non-interactive Windows run (`--dump`, `--diag`, `--screenshot`,
+  `--version`) left the console code page on 65001**, where a parent shell on
+  CP936/CP437 printed mojibake afterwards.  The saved code pages are restored
+  on every exit path now.
+* **`--diag` ignored `--entities`, `--escapes`, `--loose` and `--math`** (it
+  always reported the defaults) **and previewed a converted 8-bit file as
+  mojibake** ("first text" was parsed from the raw GBK bytes right next to the
+  "converted to UTF-8 for rendering" line).  It now parses what the reader
+  actually sees and honours the source-repair options like the dump does.
+
 ## [0.3.26] — 2026-10-25
 
 Parsing takes a fifth less time, a reload a fifth less until the page is back.

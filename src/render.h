@@ -403,10 +403,19 @@ class DocView {
   // Code blocks: the frame hugs the code instead of spanning the page, and long
   // lines are wrapped rather than cut off at the frame edge.
   int code_frame_width(const Block& b) const;
+  // Columns the line-number gutter occupies inside a code frame (0 when off);
+  // the wrap width and the drawing side must agree on it.
+  int code_gutter_width(const Block& b) const;
   static void wrap_code_line(const std::string& line, int width,
                              std::vector<std::pair<std::string, int>>& out);
   int layout_paragraph(const std::vector<Span>& spans, int indent, int width, int row_start,
                        const Span& base, std::vector<Line>& out);
+  // Lines for a list nested inside a list item or a quote: markers start at
+  // `marker_x`, item text at marker_x + 2 + marker width.  Handles item blocks
+  // of any type at any depth (before 0.3.27 only plain paragraphs survived).
+  void nested_list_lines(const Block& lb, int marker_x, std::vector<Line>& out);
+  // One block inside a nested list item; appends its lines to `out`.
+  void nested_item_lines(const Block& sb, int text_x, std::vector<Line>& out);
   // Lines for one block inside a blockquote (recurses for nested quotes: the
   // nested block gets one more bar and two more columns of indent).
   void quote_lines(std::vector<Line>& out, const Block& qb, int indent, std::vector<int> bars,

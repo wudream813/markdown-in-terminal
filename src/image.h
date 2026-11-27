@@ -25,6 +25,7 @@ bool http_get(const std::string& url, std::string& out, std::string* err = nullp
 bool image_load_source(const std::string& src, Image& out, std::string* err = nullptr,
                        const std::string* base_dir = nullptr);
 bool is_remote_url(const std::string& s);
+bool is_absolute_path(const std::string& p);  // "/x", "C:/x", "\\server\share"
 bool is_svg(const std::string& path_or_data);
 
 std::vector<uint8_t> png_encode(const uint8_t* rgba, int w, int h);

@@ -332,5 +332,44 @@ python3 tools/progressive_test.py "$BIN" || exit 1
 echo "== interrupted from the outside (SIGTERM) =="
 python3 tools/panic_test.py "$BIN"
 
+echo "== deep nesting, quoted blocks, closing hashes, CJK tables, gutter (0.3.27) =="
+# These all failed before 0.3.27: a third-level list (and code/quote/table/
+# math blocks in a second-level item) was dropped, lists and tables inside a
+# blockquote vanished entirely, a heading ending in "#" lost the "#", a wide
+# CJK table refused to shrink and lost its right side, the line-number gutter
+# ate the tail of every wrapped code line, and a ")" inside an image URL ended
+# the destination early.  The assertions here are strict on purpose: each one
+# fails the script instead of just not printing "ok".
+"$BIN" --dump --width=60 tests/fixtures/nested-deep.md > "$TMP/deep.txt"
+grep -q "level three C" "$TMP/deep.txt" || { echo "  FAIL: third-level item text dropped"; exit 1; }
+grep -q "level four D" "$TMP/deep.txt" || { echo "  FAIL: fourth-level item text dropped"; exit 1; }
+grep -q "code in level three" "$TMP/deep.txt" || { echo "  FAIL: code block in a nested item dropped"; exit 1; }
+echo "  nested items of any depth keep their content"
+"$BIN" --dump --width=60 tests/fixtures/headings-hash.md > "$TMP/hhash.txt"
+grep -q '^ # C#' "$TMP/hhash.txt" || { echo "  FAIL: '# C#' lost its '#'"; exit 1; }
+grep -q '## 关于 C#' "$TMP/hhash.txt" || { echo "  FAIL: '## 关于 C#' lost its '#'"; exit 1; }
+grep -q '## Foo' "$TMP/hhash.txt" || { echo "  FAIL: '## Foo ##' closing hashes mishandled"; exit 1; }
+grep -q '^ ## Foo$' "$TMP/hhash.txt" || { echo "  FAIL: '## Foo ##' should strip the closing run"; exit 1; }
+echo "  a closing # run is only stripped after a space"
+"$BIN" --dump --width=60 tests/fixtures/cjk-wide-table.md > "$TMP/cjkt.txt"
+grep -q "第三列" "$TMP/cjkt.txt" || { echo "  FAIL: right CJK column clipped away"; exit 1; }
+grep -q "┐" "$TMP/cjkt.txt" || { echo "  FAIL: wide CJK table has no right border"; exit 1; }
+echo "  a wide CJK table shrinks and wraps instead of being clipped"
+"$BIN" --dump --width=50 tests/fixtures/quote-blocks.md > "$TMP/qblocks.txt"
+grep -q "quoted item one" "$TMP/qblocks.txt" || { echo "  FAIL: list inside a quote vanished"; exit 1; }
+grep -q "nested quoted item" "$TMP/qblocks.txt" || { echo "  FAIL: list inside a nested quote vanished"; exit 1; }
+grep -q "┌" "$TMP/qblocks.txt" || { echo "  FAIL: table inside a quote vanished"; exit 1; }
+grep -q "│ │" "$TMP/qblocks.txt" || { echo "  FAIL: the quote bar is missing along nested content"; exit 1; }
+echo "  lists and tables inside a blockquote render, with the bar"
+"$BIN" --dump --width=100 tests/fixtures/image-paren-url.md > "$TMP/iparen.txt"
+grep -q "\[logo\] tail" "$TMP/iparen.txt" || { echo "  FAIL: image URL with ) broke the surrounding text"; exit 1; }
+grep -q "png) tail" "$TMP/iparen.txt" && { echo "  FAIL: image URL cut at the first )"; exit 1; }
+echo "  an image URL with balanced parentheses stays one destination"
+plain_x=$("$BIN" --dump --width=40 tests/fixtures/code-gutter.md | grep -o x | wc -l)
+nums_x=$("$BIN" --dump --width=40 --line-numbers tests/fixtures/code-gutter.md | grep -o x | wc -l)
+test "$plain_x" -gt 0 || { echo "  FAIL: code fixture has no wrapped content"; exit 1; }
+test "$plain_x" = "$nums_x" || { echo "  FAIL: --line-numbers lost text ($plain_x -> $nums_x x)"; exit 1; }
+echo "  the line-number gutter no longer eats the tail of wrapped code lines"
+
 echo
 echo "all smoke tests passed"

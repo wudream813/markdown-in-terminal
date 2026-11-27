@@ -468,7 +468,7 @@ std::shared_ptr<DocView::ImageAsset> DocView::asset_for_image(const std::string&
   std::string lower = to_lower(src);
   bool svg = ends_with(lower, ".svg") || (is_remote_url(src) == false && file_exists(src) == false && false);
   std::string local = src;
-  if (!is_remote_url(local) && !local.empty() && local[0] != '/' && local[0] != '~') {
+  if (!is_remote_url(local) && !local.empty() && local[0] != '~' && !is_absolute_path(local)) {
     local = base_dir_.empty() ? local : base_dir_ + "/" + local;
   }
   // Pictures on the web are downloaded by a worker thread: a 题解 with three
@@ -800,11 +800,24 @@ void DocView::layout_table(const Block& b, int indent, int avail_w, BlockLayout&
       for (int c = 0; c < (int)r.size(); c++) {
         std::string txt = spans_cell_text(r[(size_t)c].spans);
         natural[c] = std::max(natural[c], str_width(txt));
-        // longest word
+        // Longest unbreakable word, in DISPLAY COLUMNS.  Only narrow (one
+        // cell) characters form words: CJK and emoji wrap between any two
+        // characters anyway (the cell wrapper below breaks anywhere), so a
+        // long Chinese run must not set a minimum.  Counting UTF-8 bytes here
+        // (as before 0.3.27) made minw exceed the natural width of CJK cells
+        // (3 bytes per character vs 2 columns), the shrink loop bailed out at
+        // once and wide tables kept their full width - the right columns and
+        // border were clipped off screen instead of wrapped.
         int cur = 0;
-        for (char ch : txt) {
-          if (ch == ' ') { minw[c] = std::max(minw[c], cur); cur = 0; }
-          else cur++;
+        for (size_t i = 0; i < txt.size();) {
+          uint32_t cp = utf8_next(txt, i);
+          int cwid = cp_width(cp);
+          if (cp == ' ' || cwid > 1) {
+            minw[c] = std::max(minw[c], cur);
+            cur = 0;
+          } else {
+            cur += cwid;
+          }
         }
         minw[c] = std::max(minw[c], cur);
       }
@@ -1042,6 +1055,17 @@ int DocView::code_frame_width(const Block& b) const {
   if (!b.lang.empty()) w = std::max(w, (int)str_width(b.lang) + 9);  // label in the top border
   w = std::min(w, content_w_ + 1);
   return std::max(20, w);
+}
+
+// Columns the line-number gutter takes inside a code frame (0 when off; a
+// Luogu document turns it on by itself).  The layout must subtract this from
+// the wrap width: before 0.3.27 segments were wrapped at frame_w-3 and then
+// clipped by the gutter while drawing, silently dropping the tail of every
+// full line (4 characters lost per line in a 12-line block at width 40).
+int DocView::code_gutter_width(const Block& b) const {
+  if (!(opt_.show_line_numbers || doc_.luogu)) return 0;
+  int nlines = (int)split_lines(b.code).size();
+  return (int)std::to_string(nlines).size() + 2;
 }
 
 // Splits one code line into segments of at most `width` columns, remembering
@@ -1285,7 +1309,10 @@ int DocView::layout_range(size_t first, size_t last, int row, std::vector<BlockL
         std::vector<std::string> clines = split_lines(b.code);
         if (clines.empty()) clines.push_back("");
         int frame_w = code_frame_width(b);
-        int inner = std::max(8, frame_w - 3);
+        // The line-number gutter eats into the wrap width; it used to be
+        // ignored here while draw_code_block reserved it, so every full
+        // segment lost its tail (see code_gutter_width).
+        int inner = std::max(8, frame_w - 3 - code_gutter_width(b));
         // The frame: a top border, the wrapped lines, a bottom border.
         Line top;
         top.kind = Line::Code;
@@ -1418,29 +1445,12 @@ int DocView::layout_range(size_t first, size_t last, int row, std::vector<BlockL
                 break;
               }
               case Block::List: {
-                // nested list: render markers with extra indentation
-                for (size_t kk = 0; kk < sb.items.size(); kk++) {
-                  std::string m2 = sb.ordered ? std::to_string(sb.start_num + (int)kk) + ". " : "\u2022 ";
-                  for (const Block& sbb : sb.items[kk]) {
-                    std::vector<Line> l2;
-                    if (sbb.type == Block::Paragraph)
-                      build_lines(sbb.spans, item_indent + 2 + str_width(m2), content_w_ - item_indent - 2 - str_width(m2), Span{}, l2);
-                    bool firstm = true;
-                    for (auto& l : l2) {
-                      if (firstm) {
-                        Run r;
-                        r.text = m2;
-                        r.x = item_indent;
-                        r.width = str_width(m2);
-                        r.style.has_color = true;
-                        r.style.color = marker_color;
-                        l.runs.insert(l.runs.begin(), r);
-                        firstm = false;
-                      }
-                      lines.push_back(std::move(l));
-                    }
-                  }
-                }
+                // Nested list.  Before 0.3.27 this loop rendered only plain
+                // Paragraph children one level deep: a third-level list and
+                // code/quote/table/math blocks in a second-level item were
+                // silently dropped.  nested_list_lines handles every block
+                // type at any depth (the marker logic is the same).
+                nested_list_lines(sb, item_indent, lines);
                 break;
               }
               case Block::Hr: {
@@ -1738,6 +1748,146 @@ std::string DocView::layout_signature() const {
   return out;
 }
 
+// Lines for a list nested inside a list item or a blockquote.  Markers start
+// at `marker_x`, item text at marker_x + 2 + marker width.  Items may hold
+// blocks of any type at any depth: before 0.3.27 only plain paragraphs were
+// rendered here, so a third-level list - and code/quote/table/math blocks in a
+// second-or-deeper item - were silently dropped (the export path blocks_plain
+// still printed them, so the screen and the copy exported with `e` disagreed).
+void DocView::nested_list_lines(const Block& lb, int marker_x, std::vector<Line>& out) {
+  for (size_t kk = 0; kk < lb.items.size(); kk++) {
+    bool task = kk < lb.item_is_task.size() && lb.item_is_task[kk];
+    bool checked = kk < lb.item_checked.size() && lb.item_checked[kk];
+    std::string m = task ? (checked ? "[x] " : "[ ] ")
+                   : !lb.x().marker.empty() ? lb.x().marker + " "
+                   : lb.ordered ? std::to_string(lb.start_num + (int)kk) + ". "
+                                : "\u2022 ";
+    RGB mcol = task ? (checked ? RGB{140, 195, 140} : theme_.muted) : theme_.bullet;
+    int mw = str_width(m);
+    bool firstm = true;
+    for (const Block& sbb : lb.items[kk]) {
+      std::vector<Line> l2;
+      nested_item_lines(sbb, marker_x + 2 + mw, l2);
+      for (auto& l : l2) {
+        if (firstm) {
+          // The marker rides the item's first line only.  A table or rule
+          // line has no text runs to carry it, so it gets a row of its own.
+          if (l.kind == Line::Text || l.kind == Line::Code) {
+            Run r;
+            r.text = m;
+            r.x = marker_x;
+            r.width = mw;
+            r.style.has_color = true;
+            r.style.color = mcol;
+            l.runs.insert(l.runs.begin(), r);
+          } else {
+            Line ml;
+            Run r;
+            r.text = m;
+            r.x = marker_x;
+            r.width = mw;
+            r.style.has_color = true;
+            r.style.color = mcol;
+            ml.runs.push_back(r);
+            out.push_back(std::move(ml));
+          }
+          firstm = false;
+        }
+        out.push_back(std::move(l));
+      }
+    }
+    if (firstm) {  // an empty item still shows its marker
+      Line l;
+      Run r;
+      r.text = m;
+      r.x = marker_x;
+      r.width = mw;
+      r.style.has_color = true;
+      r.style.color = mcol;
+      l.runs.push_back(r);
+      out.push_back(std::move(l));
+    }
+  }
+}
+
+// One block inside a nested list item (recursion target for lists all the way
+// down).  Appends the lines it produces to `out`, in document order.
+void DocView::nested_item_lines(const Block& sb, int text_x, std::vector<Line>& out) {
+  std::vector<Line> lines;
+  switch (sb.type) {
+    case Block::Heading: {
+      Span base;
+      base.bold = true;
+      base.has_color = true;
+      base.color = theme_.heading[std::min(6, std::max(1, sb.level))];
+      build_lines(sb.spans, text_x, content_w_ - text_x, base, lines);
+      break;
+    }
+    case Block::Paragraph:
+      build_lines(sb.spans, text_x, content_w_ - text_x, Span{}, lines);
+      break;
+    case Block::CodeBlock: {
+      Span cb;
+      cb.has_color = true;
+      cb.color = theme_.code_fg;
+      for (auto& cl : split_lines(sb.code)) {
+        Line l;
+        l.kind = Line::Code;
+        Run r;
+        r.text = cl;
+        r.x = text_x;
+        r.width = str_width(cl);
+        r.style = cb;
+        l.runs.push_back(r);
+        lines.push_back(std::move(l));
+      }
+      break;
+    }
+    case Block::List:
+      nested_list_lines(sb, text_x, lines);
+      break;
+    case Block::Quote:
+      // a quote inside a nested item keeps its bar; quote_lines sets it
+      for (auto& sublist : sb.items)
+        for (const Block& qb : sublist)
+          quote_lines(out, qb, text_x + 2, std::vector<int>{text_x});
+      return;
+    case Block::Table: {
+      // Drawn by draw_table from its own line kind, exactly like the "table in
+      // a top-level list item" case; the rows travel like ordinary lines.
+      BlockLayout tmp;
+      tmp.row = 0;
+      int row = 0;
+      layout_table(sb, text_x, content_w_ - text_x, tmp, row);
+      lines = std::move(tmp.lines);
+      break;
+    }
+    case Block::Hr: {
+      Line l;
+      l.kind = Line::Rule;
+      lines.push_back(std::move(l));
+      break;
+    }
+    default: {
+      // Never drop content: anything else is shown as its plain text - the
+      // same fallback the top-level list-item switch uses.
+      std::string t = sb.type == Block::MathBlock ? latex_to_unicode(sb.code, true)
+                    : !sb.spans.empty()           ? spans_plain_text(sb.spans)
+                                                  : sb.code;
+      if (!t.empty()) {
+        std::vector<Span> sp;
+        Span s2;
+        s2.text = t;
+        if (sb.type == Block::MathBlock) { s2.has_color = true; s2.color = theme_.math_fg; }
+        sp.push_back(s2);
+        build_lines(sp, text_x, content_w_ - text_x, Span{}, lines);
+      }
+      break;
+    }
+  }
+  for (auto& l : lines) out.push_back(std::move(l));
+}
+
 // Builds wrapped, styled lines from a list of spans.
 void DocView::quote_lines(std::vector<Line>& out, const Block& qb, int indent,
                           std::vector<int> bars, std::vector<RGB> bar_cols) {
@@ -1792,14 +1942,43 @@ void DocView::quote_lines(std::vector<Line>& out, const Block& qb, int indent,
       lines.push_back(std::move(l));
       break;
     }
+    case Block::List: {
+      // A list inside a quote (before 0.3.27 it fell through to `default`,
+      // whose spans/code are empty for a list - the whole list vanished).
+      nested_list_lines(qb, indent, lines);
+      // Lines that come back from a deeper quote already carry their own bar
+      // chain, which starts at this level: the enclosing bars go in front of
+      // it instead of overwriting it.
+      for (Line& l : lines) {
+        l.bars.insert(l.bars.begin(), bars.begin(), bars.end());
+        l.bar_rgbs.insert(l.bar_rgbs.begin(), bar_cols.begin(), bar_cols.end());
+        out.push_back(std::move(l));
+      }
+      lines.clear();
+      break;
+    }
+    case Block::Table: {
+      // A table inside a quote (same disappearance as lists before 0.3.27):
+      // laid out like a table in a list item, the rows get the quote bars from
+      // the loop below and draw_table paints them.
+      BlockLayout tmp;
+      tmp.row = 0;
+      int row = 0;
+      layout_table(qb, indent, content_w_ - indent, tmp, row);
+      lines = std::move(tmp.lines);
+      break;
+    }
     default: {
-      std::string t = !qb.spans.empty() ? spans_plain_text(qb.spans) : qb.code;
+      std::string t = qb.type == Block::MathBlock ? latex_to_unicode(qb.code, true)
+                    : !qb.spans.empty()           ? spans_plain_text(qb.spans)
+                                                  : qb.code;
       if (!t.empty()) {
         std::vector<Span> sp;
         Span s2;
         s2.text = t;
         s2.has_color = true;
         s2.color = theme_.quote_fg;
+        if (qb.type == Block::MathBlock) s2.color = theme_.math_fg;
         sp.push_back(s2);
         Span base;
         base.has_color = true;

@@ -1381,8 +1381,24 @@ static bool render_diag(const AppOptions& opt, std::string* err) {
   printf("%s\n", bom ? "  (BOM stripped)" : "");
 
   MdOptions mo;
+  mo.math = (opt.math != "off");
+  mo.entities = opt.entities == "force" ? MdOptions::EntForce : MdOptions::EntOff;
+  mo.escapes = opt.escapes == "off"      ? MdOptions::EscOff
+             : opt.escapes == "force"    ? MdOptions::EscForce
+                                         : MdOptions::EscAuto;
+  mo.loose = opt.loose == "off"      ? MdOptions::LooseOff
+           : opt.loose == "on"       ? MdOptions::LooseOn
+                                     : MdOptions::LooseAuto;
   MarkdownParser parser;
-  MdDocument doc = parser.parse(body, mo);
+  // Parse what the renderer will actually see: decode_text() has already
+  // converted 8-bit encodings, so a GBK file's block stats and preview come
+  // out as the UTF-8 text the reader shows.  Before 0.3.27 the raw bytes were
+  // parsed here, the preview was mojibake right next to "converted ... for
+  // rendering", and --entities/--escapes/--loose were silently ignored (the
+  // defaults were used).  The encoding diagnostics above still read the raw
+  // file, which is what they are about.
+  std::string parse_src = dec.converted ? text : body;
+  MdDocument doc = parser.parse(parse_src, mo);
   int cnt[12] = {0};
   for (auto& b : doc.blocks) {
     int k = (int)b.type;

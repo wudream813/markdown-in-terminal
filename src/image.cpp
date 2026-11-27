@@ -55,6 +55,18 @@ bool image_load_file(const std::string& path, Image& out, std::string* err) {
 bool is_remote_url(const std::string& s) {
   return s.rfind("http://", 0) == 0 || s.rfind("https://", 0) == 0;
 }
+// Absolute local paths: POSIX "/x", Windows drive "C:\x" / "C:/x" and UNC
+// "\\server\share".  A Windows absolute path used to be treated as relative,
+// the document's directory was glued in front of it and the picture failed to
+// load ("cannot read <docdir>/C:/...").
+bool is_absolute_path(const std::string& p) {
+  if (p.empty() || p[0] == '/') return true;
+  if (p.size() >= 2 && p[1] == ':' &&
+      ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')))
+    return true;
+  if (p.size() >= 2 && p[0] == '\\' && p[1] == '\\') return true;
+  return false;
+}
 bool is_svg(const std::string& p) {
   std::string l = to_lower(p);
   return ends_with(l, ".svg") || l.find("<svg") != std::string::npos;
@@ -109,8 +121,15 @@ bool image_load_source(const std::string& src, Image& out, std::string* err, con
     return image_load_memory((const uint8_t*)data.data(), data.size(), out, err);
   }
   std::string path = src;
-  if (path.rfind("file://", 0) == 0) path = path.substr(7);
-  if (path.empty() || path[0] == '/') {
+  if (path.rfind("file://", 0) == 0) {
+    path = path.substr(7);
+    // file:///C:/x.png -> "/C:/x.png": drop the slash the URL form adds in
+    // front of a Windows drive letter, or the path never resolves.
+    if (path.size() >= 3 && path[0] == '/' && path[2] == ':' &&
+        ((path[1] >= 'A' && path[1] <= 'Z') || (path[1] >= 'a' && path[1] <= 'z')))
+      path = path.substr(1);
+  }
+  if (is_absolute_path(path)) {
   } else if (path[0] == '~') {
     const char* home = getenv("HOME");
     if (home) path = std::string(home) + path.substr(1);

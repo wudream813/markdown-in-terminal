@@ -825,6 +825,17 @@ bool is_directory(const std::string& path) {
   return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+// The console code page belongs to the console, not to this process: a
+// --dump / --diag / --screenshot run used to leave the parent shell's console
+// on CP_UTF8 after exit (936 -> 65001 on a Chinese system), where later
+// legacy programs printed mojibake.  Put the saved code pages back on every
+// exit path; raw_end() still restores them on the interactive shutdown path.
+static void console_restore_cp() {
+  if (!g_cp_saved) return;
+  if (g_saved_out_cp) SetConsoleOutputCP(g_saved_out_cp);
+  if (g_saved_in_cp) SetConsoleCP(g_saved_in_cp);
+}
+
 // Do this before anything is printed: --dump, --diag and error messages go
 // through the CRT, which encodes stdout with the console code page.
 void console_init() {
@@ -832,6 +843,7 @@ void console_init() {
     g_saved_out_cp = GetConsoleOutputCP();
     g_saved_in_cp = GetConsoleCP();
     g_cp_saved = true;
+    atexit(console_restore_cp);
   }
   SetConsoleOutputCP(CP_UTF8);
   SetConsoleCP(CP_UTF8);

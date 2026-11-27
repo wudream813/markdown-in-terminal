@@ -987,10 +987,20 @@ struct InlineParser {
       if (c == '!' && i + 1 < s.size() && s[i + 1] == '[') {
         size_t close = s.find(']', i + 2);
         if (close != std::string::npos && close + 1 < s.size() && s[close + 1] == '(') {
-          size_t parend = s.find(')', close + 2);
-          if (parend != std::string::npos) {
+          // Balanced parenthesis scan, the same the link branch below uses:
+          // a ")" inside the destination (x_(1).png style URLs) used to end it
+          // early and left the tail as literal text.
+          size_t parend = close + 2;
+          int pd = 1;
+          while (parend < s.size() && pd > 0) {
+            if (s[parend] == '\\') { parend += 2; continue; }
+            if (s[parend] == '(') pd++;
+            else if (s[parend] == ')') pd--;
+            parend++;
+          }
+          if (pd == 0) {
             std::string alt = s.substr(i + 2, close - i - 2);
-            std::string dest = trim(s.substr(close + 2, parend - close - 2));
+            std::string dest = trim(s.substr(close + 2, parend - close - 3));
             std::string title;
             size_t sp2 = dest.find_first_of(" \t");
             if (sp2 != std::string::npos) {
@@ -1009,7 +1019,7 @@ struct InlineParser {
             sp.is_link = true;
             if (!title.empty()) sp.tex = title;  // reuse tex for the title
             out->push_back(std::move(sp));
-            i = parend + 1;
+            i = parend;  // one past the balanced ')'
             continue;
           }
         }
@@ -1421,9 +1431,17 @@ int heading_level(const std::string& line, std::string& text, bool loose = false
     size_t k = i + h;
     if (!is_cjk_lead(utf8_next(line, k))) return 0;  // "#标题" but not "#hashtag"
   }
-  text = trim(line.substr(i + h));
-  while (!text.empty() && text.back() == '#') text.pop_back();
-  text = trim(text);
+  std::string raw = line.substr(i + h);
+  // The closing "#" run only counts when it is preceded by a space or tab
+  // (CommonMark): "# C#" keeps its "#", "## Foo ##" strips the pair.  Before
+  // 0.3.27 every trailing "#" was eaten, so "C#" headings lost their "#".
+  size_t e = raw.size();
+  while (e > 0 && (raw[e - 1] == ' ' || raw[e - 1] == '\t')) e--;
+  size_t start = e;
+  while (start > 0 && raw[start - 1] == '#') start--;
+  if (start < e && (start == 0 || raw[start - 1] == ' ' || raw[start - 1] == '\t'))
+    raw.resize(start);
+  text = trim(raw);
   return (int)h;
 }
 }  // namespace

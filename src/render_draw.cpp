@@ -353,12 +353,9 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
   int text_x = frame_x + 2;
   // Luogu's editor shows the line-number plugin by default, so Luogu documents
   // get gutters without asking; everybody else opts in with --line-numbers.
-  bool nums = opt_.show_line_numbers || doc_.luogu;
-  int line_no_w = 0;
-  if (nums) {
-    int nlines = (int)split_lines(b.code).size();
-    line_no_w = (int)std::to_string(nlines).size() + 2;
-  }
+  // The layout subtracts the same width from the wrap width
+  // (code_gutter_width) - the two must not drift apart.
+  int line_no_w = code_gutter_width(b);
   for (const Line& l : bl.lines) {
     if (l.kind != Line::Code || l.code_index < 0) continue;  // borders have index -1/-2
     int yy = top + l.row;
@@ -377,7 +374,7 @@ void DocView::draw_code_block(Screen& scr, int x0, int y0, int w, int h, const B
     if (lbg.r != bg.r || lbg.g != bg.g || lbg.b != bg.b)
       for (int xx = frame_x + 1; xx < frame_x + frame_w - 1; xx++)
         scr.put(xx, yy, ' ', theme_.code_fg, lbg);
-    if (nums && l.code_col == 0) {
+    if (line_no_w > 0 && l.code_col == 0) {
       std::string num = fmt("%*d ", line_no_w - 1, l.code_index + 1);
       scr.put_str(text_x, yy, num, theme_.muted, lbg, A_DIM);
     }
@@ -429,6 +426,11 @@ void DocView::draw_table(Screen& scr, int x0, int y0, int w, int h, const BlockL
   for (const Line& l : bl.lines) {
     if (l.kind != Line::Table || l.cells.empty()) continue;
     int yy = y0 + bl.row + l.row;
+    // Quote bars and callout bands belong to the line, not to the table: a
+    // table inside a blockquote keeps the bars like every other line (before
+    // 0.3.27 Table lines skipped draw_line_chrome and the quote bar was
+    // simply missing along the table).
+    draw_line_chrome(scr, x0, yy, l);
     int lx = x0 + l.x;  // nested tables start further right
     int span = 1 + l.cells.back().x + l.cells.back().width + 1;  // border columns
 
