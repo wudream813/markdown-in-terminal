@@ -7,6 +7,8 @@ predate this file, so they are summarised from what their commits did.
 
 ## [Unreleased]
 
+## [0.3.27] — 2026-11-27
+
 An audit pass fixed the cases where content silently disappeared and the ones
 where a full line lost its tail.  Every one has a strict regression check in
 `tests/smoke.sh` (0.3.27 section).  A second pass over the Windows test report
@@ -880,7 +882,8 @@ strikethrough, four themes, an outline panel, search, a scrollbar, mouse input,
 Windows support (Win32 console layer, MinGW-w64 cross build, wine tests) and a
 release workflow.
 
-[Unreleased]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.9...HEAD
+[Unreleased]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.27...HEAD
+[0.3.27]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.26...v0.3.27
 [0.3.12]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.11...v0.3.12
 [0.3.11]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/wudream813/markdown-in-terminal/compare/v0.3.9...v0.3.10
